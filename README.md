@@ -118,13 +118,13 @@ docker\nginx\install-root-ca-windows.cmd
 В `.env` (см. `.env.example`):
 
 ```env
-ODATA_1C_HOST_IP=172.22.0.52
-ODATA_1C_HTTP_HOST=srv-1c.tehnomer.ru
+ODATA_1C_HOST_IP=
+ODATA_1C_HTTP_HOST=
 ODATA_1C_USER=...
 ODATA_1C_PASSWORD=...
 ```
 
-База по умолчанию: `http://srv-1c/erp/odata/standard.odata` (PHP подставляет IP и заголовок Host).
+База по умолчанию: `` (PHP подставляет IP и заголовок Host).
 
 Проверка: `GET /api/odata-1c.php?action=config` или DevTools → Network → `X-OData-Request-URL` в ответе прокси.
 
@@ -134,8 +134,8 @@ ODATA_1C_PASSWORD=...
 
 | Режим | Когда |
 |-------|--------|
-| **Firebird** | `FIREBIRD_DATABASE` в `.env`, схема из `database/` (см. ниже) |
-| **SQLite** | Fallback: `data/tm07_bench.sqlite` (создаётся автоматически) |
+| **Firebird** | `` в `.env`, схема из `database/` (см. ниже) |
+| **SQLite** | Fallback: `` (создаётся автоматически) |
 
 ### Установка схемы Firebird
 
@@ -146,11 +146,11 @@ FIREBIRD_HOST=firebird
 FIREBIRD_DATABASE=/firebird/data/tm07_bench.fdb
 ```
 
-Проверка: `curl http://localhost:8081/api/bench-db-status.php?action=status` → `"driver":"firebird"`.
+Проверка: `` → `"driver":"firebird"`.
 
-Сброс БД: `docker compose down && docker volume rm tm07-bench_firebird_data && docker compose up -d`
+Сброс БД: ``
 
-**Windows / IBExpert (опционально):** см. `database/install_schema.cmd` — без `COMMIT;` в SQL-скриптах.
+**Windows / IBExpert (опционально):** см. `` — без `COMMIT;` в SQL-скриптах.
 
 ### API
 
