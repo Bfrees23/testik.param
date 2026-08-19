@@ -1,0 +1,73 @@
+{
+    "version": 1,
+    "usb": {
+        "vendorIdHex": "0x0403"
+    },
+    "mit": {
+        "baudRate": 9600,
+        "productIdHex": "0x6015",
+        "label": "МИТ 8"
+    },
+    "m90": {
+        "baudRate": 9600,
+        "deviceAddress": 2,
+        "expectedDeviceType": 64,
+        "channels": [
+            {
+                "id": "m90_6044",
+                "productIdHex": "0x6044",
+                "setpointC": -40,
+                "label": "M90 #1 (−40)"
+            },
+            {
+                "id": "m90_6045",
+                "productIdHex": "0x6045",
+                "setpointC": 10,
+                "label": "M90 #2 (+10)"
+            },
+            {
+                "id": "m90_6049",
+                "productIdHex": "0x6049",
+                "setpointC": 60,
+                "label": "M90 #3 (+60)"
+            }
+        ]
+    },
+    "tm07": {
+        "defaultBaudRate": 19200,
+        "modbusAddress": 1,
+        "usbAdapterProductIdHex": "0x604E",
+        "regLkgHex": "07B6",
+        "regDatetimeHex": "0078",
+        "regWriteExampleHex": "07B6",
+        "supplierLkgHex": "",
+        "manufacturerLkgHex": "",
+        "lkgDelayMs": 150
+    },
+    "pkd160": {
+        "baudRate": 9600,
+        "busAddress": 1,
+        "vendorIdHex": "0x04D8",
+        "productIdHex": "0x000A"
+    },
+    "benchRegisters": {
+        "corrRegTRead": "0120",
+        "corrRegTWrite": "0124",
+        "corrRegPabs": "0200",
+        "corrRegPdiff": "0202",
+        "corrLkgHex": ""
+    },
+    "benchScenarioDefaults": {
+        "m90RampMinutes": 10,
+        "stabilityMinutes": 5,
+        "tempToleranceC": 0.5,
+        "flatMinutes": 5,
+        "flatTolC": 0.15,
+        "pressureTolKpa": 0.5,
+        "pkdTargetTolKpa": 0.3,
+        "absPmin": 0,
+        "absPmax": 100,
+        "diffPmin": 0,
+        "diffPmax": 100
+    }
+}

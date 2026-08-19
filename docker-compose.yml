@@ -1,0 +1,138 @@
+# ТМ-07: калибровка и параметризация
+# Запуск: docker compose up -d --build
+# Сайт: http://localhost:8081
+#
+# OData 1С: ODATA_1C_HOST_IP в .env (см. .env.example)
+name: tm07-bench
+
+networks:
+  bench:
+    driver: bridge
+
+services:
+  nginx:
+    build:
+      context: ./docker/nginx
+      dockerfile: dev.Dockerfile
+    container_name: tm07-nginx
+    volumes:
+      - ./src:/var/www
+      - ./docker/nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./docker/nginx/conf.d/bench-locations.inc:/etc/nginx/conf.d/bench-locations.inc:ro
+      - ./docker/nginx/ssl:/etc/nginx/ssl:ro
+      - ./docker/nginx/logs:/var/log/nginx
+    environment:
+      - TZ=Europe/Moscow
+    restart: unless-stopped
+    # TM07_BIND_HOST=127.0.0.1 — только localhost; по умолчанию 0.0.0.0 (LAN + Web Serial HTTPS).
+    ports:
+      - "${TM07_BIND_HOST:-0.0.0.0}:8081:80"
+      - "${TM07_BIND_HOST:-0.0.0.0}:8443:443"
+    depends_on:
+      php:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1/api/bench-db-status.php?action=status | grep -q '\"ok\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+    networks:
+      - bench
+
+  php:
+    build:
+      context: ./docker/php
+      dockerfile: dev.Dockerfile
+    container_name: tm07-php
+    volumes:
+      - ./src:/app
+      - ./data:/app/data
+      - ./database:/app/database:ro
+      - ./.env:/app/.env:ro
+    environment:
+      - TZ=Europe/Moscow
+      - COMPOSER_MEMORY_LIMIT=-1
+      - HOME=/tmp
+      - ODATA_1C_HOST_IP=${ODATA_1C_HOST_IP:-}
+      - ODATA_1C_LAN_HOST=${ODATA_1C_LAN_HOST:-}
+      - ODATA_1C_HTTP_HOST=${ODATA_1C_HTTP_HOST:-}
+      - ODATA_1C_REPLACE_ANY_LAN_HOST=${ODATA_1C_REPLACE_ANY_LAN_HOST:-}
+      - ODATA_1C_USER=${ODATA_1C_USER:-}
+      - ODATA_1C_PASSWORD=${ODATA_1C_PASSWORD:-}
+      - TM07_COUNTERS_SHEET_URL=${TM07_COUNTERS_SHEET_URL:-}
+      - FIREBIRD_HOST=${FIREBIRD_HOST:-firebird}
+      - FIREBIRD_DATABASE=${FIREBIRD_DATABASE:-/firebird/data/tm07_bench.fdb}
+      - FIREBIRD_USER=${FIREBIRD_USER:-SYSDBA}
+      - FIREBIRD_PASSWORD=${FIREBIRD_PASSWORD:-masterkey}
+      - FIREBIRD_CHARSET=${FIREBIRD_CHARSET:-UTF8}
+      - TM07_WORKSTATION_CODE=${TM07_WORKSTATION_CODE:-}
+      - TM07_WORKSTATION_NAME=${TM07_WORKSTATION_NAME:-}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - BENCH_OPERATOR_PIN=${BENCH_OPERATOR_PIN:-}
+      - OPERATOR_PIN=${OPERATOR_PIN:-}
+      - BENCH_OPERATOR_PINS=${BENCH_OPERATOR_PINS:-}
+      - BENCH_REQUIRE_OPERATOR_PIN=${BENCH_REQUIRE_OPERATOR_PIN:-}
+      - TM07_PRINT_AGENT_TOKEN=${TM07_PRINT_AGENT_TOKEN:-}
+      - TM07_REQUIRE_PRINT_AGENT_TOKEN=${TM07_REQUIRE_PRINT_AGENT_TOKEN:-}
+      - TM07_SUPPLIER_LKG_HEX=${TM07_SUPPLIER_LKG_HEX:-}
+      - TM07_CORR_LKG_HEX=${TM07_CORR_LKG_HEX:-}
+      - TM07_MANUFACTURER_LKG_HEX=${TM07_MANUFACTURER_LKG_HEX:-}
+    command: ["bash", "-c", "php /app/api/cli-close-stale-sessions.php 24 2>/dev/null || true; exec docker-php-entrypoint php-fpm"]
+    healthcheck:
+      test: ["CMD-SHELL", "php /app/api/cli-health.php"]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 25s
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    restart: unless-stopped
+    depends_on:
+      firebird-init:
+        condition: service_completed_successfully
+      firebird:
+        condition: service_healthy
+    networks:
+      - bench
+
+  firebird-init:
+    image: jacobalberty/firebird:3.0
+    container_name: tm07-firebird-init
+    entrypoint: ["/bin/bash", "/install-schema.sh"]
+    environment:
+      ISC_PASSWORD: ${FIREBIRD_PASSWORD:-masterkey}
+      FIREBIRD_DATABASE: tm07_bench.fdb
+      SCHEMA_PATH: /schema/schema.firebird.sql
+    volumes:
+      - firebird_data:/firebird/data
+      - ./database/schema.firebird.sql:/schema/schema.firebird.sql:ro
+      - ./docker/firebird/install-schema.sh:/install-schema.sh:ro
+    depends_on:
+      firebird:
+        condition: service_started
+    restart: "no"
+    networks:
+      - bench
+
+  firebird:
+    image: jacobalberty/firebird:3.0
+    container_name: tm07-firebird
+    environment:
+      ISC_PASSWORD: ${FIREBIRD_PASSWORD:-masterkey}
+      FIREBIRD_DATABASE: tm07_bench.fdb
+      EnableLegacyClientAuth: "true"
+    volumes:
+      - firebird_data:/firebird/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /firebird/data/tm07_bench.fdb && pidof fbguard >/dev/null"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    networks:
+      - bench
+
+volumes:
+  firebird_data:

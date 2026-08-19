@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Стенд: корректор ТМ-07 + M90 + МИТ + ПКД</title>
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/css/bench-pages.css" rel="stylesheet">
+    <script src="/js/site-shell.js" defer></script>
+    <script src="/js/site-settings-cache.js" defer></script>
+</head>
+<body class="bench-page">
+
+    <header class="bench-header" data-bench-header></header>
+
+    <main class="bench-main">
+    <div class="container-xl">
+        <div class="bench-page-head row align-items-end g-3">
+            <div class="col-lg-8">
+                <h1 class="bench-hero-title">Калибровка и поверка</h1>
+                <p class="bench-page-lead">ТМ-07, M90, МИТ 8, ПКД-160 — полный цикл калибровки на стенде.</p>
+            </div>
+            <div class="col-lg-4">
+                <div class="alert alert-info border-0 shadow-sm mb-0 py-2 small" role="status">
+                    <i class="bi bi-lightbulb me-1"></i>Порядок как в ТЗ: этапы <strong>1→7</strong> сверху; слева — USB и приборы, справа — регистры и сценарий. Полный цикл идёт в том же порядке, что и фазы 1–7 в аккордеоне. Журнал и отчёт — ниже.
+                </div>
+            </div>
+        </div>
+
+        <p class="bench-op-kicker mb-2">Технологический цикл (ТЗ)</p>
+        <div class="bench-op-workflow bench-op-workflow--tz mb-4" id="benchMacroWorkflow" role="navigation" aria-label="Этапы калибровки и поверки по порядку">
+            <div class="bench-op-step is-current" data-macro-step="1">
+                <span class="bench-op-step-num" aria-hidden="true">1</span>
+                <div>
+                    <p class="bench-op-step-title">Подготовка</p>
+                    <p class="bench-op-step-desc">USB: M90, МИТ, ПКД, корректор ТМ-07. Паспорт и первичная привязка портов.</p>
+                </div>
+            </div>
+            <div class="bench-op-step" data-macro-step="2">
+                <span class="bench-op-step-num is-muted" aria-hidden="true">2</span>
+                <div>
+                    <p class="bench-op-step-title">Стабилизация T</p>
+                    <p class="bench-op-step-desc">Уставки M90, ожидание по допуску, при МИТ — плато. Фаза сценария 1.</p>
+                </div>
+            </div>
+            <div class="bench-op-step" data-macro-step="3">
+                <span class="bench-op-step-num is-muted" aria-hidden="true">3</span>
+                <div>
+                    <p class="bench-op-step-title">Калибровка MIN/MAX</p>
+                    <p class="bench-op-step-desc">Точки MIN и MAX по паспорту (на стенде +20 °C). Фазы 2–3.</p>
+                </div>
+            </div>
+            <div class="bench-op-step" data-macro-step="4">
+                <span class="bench-op-step-num is-muted" aria-hidden="true">4</span>
+                <div>
+                    <p class="bench-op-step-title">Поверка T</p>
+                    <p class="bench-op-step-desc">Сравнение эталона МИТ и корректора по допуску. Фаза 4.</p>
+                </div>
+            </div>
+            <div class="bench-op-step" data-macro-step="5">
+                <span class="bench-op-step-num is-muted" aria-hidden="true">5</span>
+                <div>
+                    <p class="bench-op-step-title">Импульсы</p>
+                    <p class="bench-op-step-desc">Только вручную на стенде; подтверждения в оверлее. Фаза 5.</p>
+                </div>
+            </div>
+            <div class="bench-op-step" data-macro-step="6">
+                <span class="bench-op-step-num is-muted" aria-hidden="true">6</span>
+                <div>
+                    <p class="bench-op-step-title">Поверка давления</p>
+                    <p class="bench-op-step-desc">P абс. (5 точек), затем перепад (3 точки); эталон ПКД при наличии. Фазы 6–7.</p>
+                </div>
+            </div>
+            <div class="bench-op-step" data-macro-step="7">
+                <span class="bench-op-step-num is-muted" aria-hidden="true">7</span>
+                <div>
+                    <p class="bench-op-step-title">Отчёт</p>
+                    <p class="bench-op-step-desc">Итог полного цикла: статус, фазы, допуски — блок «Отчёт по циклу».</p>
+                </div>
+            </div>
+        </div>
+
+        <details class="card bench-card mb-4">
+            <summary class="card-header user-select-none fw-semibold small py-3" style="cursor:pointer;">
+                <i class="bi bi-journal-code me-1 text-secondary"></i>Протоколы и скорости (проверено по коду и документам в репозитории)
+            </summary>
+            <div class="card-body border-top small">
+                <div class="table-responsive">
+                    <table class="table table-sm table-bordered align-middle mb-3">
+                        <thead class="table-light"><tr><th>Устройство</th><th>Порт в коде</th><th>Протокол</th><th>CRC / кадр</th><th>Документ / файл</th></tr></thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>M90 КТ</strong></td>
+                                <td><strong>9600</strong> 8N1</td>
+                                <td>ASCII UAIL: <code>:addr;cmd;…;crc\r</code> → <code>!…\r</code>, addr=<code>2</code></td>
+                                <td>CRC16 Modbus (poly 0xA001, init 0xFFFF) по строке с <code>;</code> перед числом CRC</td>
+                                <td><code>m90-device.js</code>, комм. 0, 40–44, …; тесты — <code>test_protocol.js</code></td>
+                            </tr>
+                            <tr>
+                                <td><strong>МИТ 8</strong></td>
+                                <td><strong>9600</strong> 8N1</td>
+                                <td>Непрерывная телеметрия: фрагменты <code>B 1:TT.TT</code> … по трём каналам</td>
+                                <td>— (без кадра запрос/ответ)</td>
+                                <td><code>serial-direct.js</code> → <code>MIT8Device</code></td>
+                            </tr>
+                            <tr>
+                                <td><strong>ТМ-07</strong></td>
+                                <td>Выбор в блоке корректора (часто <strong>19200</strong> на линии RS485)</td>
+                                <td>Modbus RTU: fc <code>0x03</code>, <code>0x10</code>, <code>0x11</code>; LE для multi-register</td>
+                                <td>CRC16 Modbus RTU (0xA001), младший байт первым в кадре</td>
+                                <td><code>protocol Korrektora.txt</code> v1.03; <code>korrektor-device.js</code>; ключ ЛКГ <code>0x0493</code></td>
+                            </tr>
+                            <tr>
+                                <td><strong>ПКД-160-Н</strong></td>
+                                <td><strong>9600</strong> 8N1 (в панели)</td>
+                                <td>Строки как у UAIL: <code>:addr;cmd;…;crc\r</code> → <code>!…\r</code>; АРМ: cmd <code>11</code>, измерения <code>1</code>, статусы <code>10</code></td>
+                                <td>CRC16 как у M90 (посимвольно, 0xA001)</td>
+                                <td><code>calibrator.txt</code>; <code>pkd160-panel.js</code> (USB Microchip <code>VID 0x04D8</code> / <code>PID 0x000A</code>; опционально FTDI <code>0x0403</code>/<code>0x6014</code>)</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p class="text-body-secondary mb-0">ПКД по USB чаще идёт как CDC Microchip (<code>VID 0x04D8</code>, <code>PID 0x000A</code>); общий VID FTDI <code>0x0403</code> оставлен для M90/МИТ и запасного варианта ПКД. PID M90 — на карточках; МИТ <code>0x6015</code>. Точные VID/PID ПКД задаются в админке. Регистры ТМ-07 для T/P — по паспорту («Параметризация»).</p>
+            </div>
+        </details>
+
+        <div class="row g-4">
+            <div class="col-lg-4">
+                <div class="card bench-card h-100">
+                    <div class="card-header d-flex align-items-center gap-2">
+                        <i class="bi bi-usb-symbol text-secondary"></i>
+                        <span class="fw-semibold">Подключения USB</span>
+                    </div>
+                    <div class="card-body">
+                        <div id="channelsList"></div>
+                        <p class="form-text small mb-0 mt-3">VID <code>0x0403</code>. M90: 6044 / 6045 / 6049. МИТ: 6015.</p>
+                        <div class="d-flex align-items-center gap-2 mt-2">
+                            <button id="autoReconnectToggleBtn" type="button" class="btn btn-outline-secondary btn-sm">Автоподключение: вкл</button>
+                            <span id="autoReconnectHint" class="small text-body-secondary">Сохраняется в браузере.</span>
+                        </div>
+                        <hr class="my-3">
+                        <div class="small fw-semibold mb-2">ПКД-160-Н (АРМ)</div>
+                        <div class="d-flex gap-2 flex-wrap mb-2">
+                            <button id="pkdConnectBtn" type="button" class="btn btn-primary btn-sm">Подключить</button>
+                            <button id="pkdDisconnectBtn" type="button" class="btn btn-outline-danger btn-sm">Отключить</button>
+                            <button id="pkdInitArmBtn" type="button" class="btn btn-outline-primary btn-sm">Init ARM</button>
+                            <button id="pkdExitArmBtn" type="button" class="btn btn-outline-secondary btn-sm">Exit ARM</button>
+                            <button id="pkdReadBtn" type="button" class="btn btn-outline-success btn-sm">Snapshot</button>
+                            <button id="pkdStartPollBtn" type="button" class="btn btn-outline-success btn-sm">Автоопрос</button>
+                            <button id="pkdStopPollBtn" type="button" class="btn btn-outline-warning btn-sm">Стоп</button>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-8">
+                                <label for="pkdDacInput" class="form-label small mb-0">DAC(I), мА</label>
+                                <input id="pkdDacInput" class="form-control form-control-sm" type="number" step="0.00001" value="4.00000">
+                            </div>
+                            <div class="col-4 d-flex align-items-end">
+                                <button id="pkdSetDacBtn" type="button" class="btn btn-outline-primary btn-sm w-100">Установить</button>
+                            </div>
+                        </div>
+                        <div class="small text-muted mb-2">ARM: <strong id="pkdArmState">off</strong></div>
+                        <div class="d-none">
+                            <span id="pkdBattery">—</span><span id="pkdRefPressure">—</span><span id="pkdRefPressureConv">—</span><span id="pkdPCh1">—</span><span id="pkdErrCh1">—</span><span id="pkdRelay1">—</span><span id="pkdRelay2">—</span><span id="pkdAcc">—</span><span id="pkdAlarm">—</span>
+                        </div>
+
+                        <hr class="my-3">
+                        <div class="small fw-semibold mb-2">Корректор ТМ-07 (MODBUS RTU)</div>
+                        <div class="row g-2 align-items-end mb-2">
+                            <div class="col-4">
+                                <label for="corrAddress" class="form-label small mb-0">Адрес</label>
+                                <input id="corrAddress" class="form-control form-control-sm" type="number" min="1" max="15" value="1">
+                            </div>
+                            <div class="col-4">
+                                <label for="corrBaud" class="form-label small mb-0">Скорость</label>
+                                <select id="corrBaud" class="form-select form-select-sm">
+                                    <option value="9600">9600</option>
+                                    <option value="19200" selected>19200</option>
+                                    <option value="38400">38400</option>
+                                    <option value="57600">57600</option>
+                                </select>
+                            </div>
+                            <div class="col-4 d-flex align-items-end">
+                                <button id="corrConnectBtn" type="button" class="btn btn-primary btn-sm w-100">Подключить</button>
+                            </div>
+                        </div>
+                        <div class="d-flex gap-2 flex-wrap mb-2">
+                            <button id="corrDisconnectBtn" type="button" class="btn btn-outline-danger btn-sm">Отключить</button>
+                            <button id="corrIdentifyBtn" type="button" class="btn btn-outline-primary btn-sm">Идентификация</button>
+                            <button id="corrReadDateBtn" type="button" class="btn btn-outline-success btn-sm">DateTime</button>
+                            <button id="corrReadBtn" type="button" class="btn btn-outline-success btn-sm">Читать 0x03</button>
+                            <button id="corrWriteBtn" type="button" class="btn btn-outline-warning btn-sm">Писать 0x10</button>
+                        </div>
+                        <div class="row g-2 mb-2">
+                            <div class="col-6"><input id="corrReadAddr" class="form-control form-control-sm" type="text" value="0078" placeholder="Read reg hex"></div>
+                            <div class="col-6"><input id="corrReadCount" class="form-control form-control-sm" type="number" min="1" max="125" value="4" placeholder="Count"></div>
+                            <div class="col-6"><input id="corrWriteAddr" class="form-control form-control-sm" type="text" value="0493" placeholder="Write reg hex"></div>
+                            <div class="col-6"><input id="corrWriteHex" class="form-control form-control-sm" type="text" value="" placeholder="Данные hex"></div>
+                        </div>
+                        <div class="small">
+                            <div>Статус: <strong id="corrStatus">отключено</strong></div>
+                            <div class="d-none">Идентификация: <span id="corrIdent">—</span></div>
+                            <div class="d-none">DateTime: <span id="corrDateTime">—</span></div>
+                            <div class="d-none">RAW: <code id="corrRaw" class="small">—</code></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-8">
+                <div class="card bench-card mb-4">
+                    <div class="card-header d-flex align-items-center gap-2">
+                        <i class="bi bi-sliders2 text-secondary"></i>
+                        <span class="fw-semibold">Параметризация и регистры</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3 small">
+                            <div class="col-md-6">
+                                <label class="form-label mb-1">Канал МИТ для эталона</label>
+                                <select id="benchMitChannel" class="form-select form-select-sm">
+                                    <option value="avg">Среднее по 3 каналам</option>
+                                    <option value="0">Канал 1</option>
+                                    <option value="1">Канал 2</option>
+                                    <option value="2">Канал 3</option>
+                                </select>
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label mb-1">Читать T (hex)</label>
+                                <input id="benchCorrRegTRead" class="form-control form-control-sm font-monospace" type="text" value="0120" title="По паспорту испытания; пример 0x0120">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label mb-1">Писать калибр. T (hex)</label>
+                                <input id="benchCorrRegTWrite" class="form-control form-control-sm font-monospace" type="text" value="0124" title="Регистр float для записи калибровки T">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label mb-1">P абс. (hex)</label>
+                                <input id="benchCorrRegPabs" class="form-control form-control-sm font-monospace" type="text" value="0200">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label mb-1">P перепада (hex)</label>
+                                <input id="benchCorrRegPdiff" class="form-control form-control-sm font-monospace" type="text" value="0202">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label mb-1">Ключ ЛКГ (hex, 4 байта)</label>
+                                <input id="benchCorrLkgHex" class="form-control form-control-sm" type="text" value="">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label mb-1">Регистр ЛКГ (hex)</label>
+                                <input id="benchCorrLkgRegHex" class="form-control form-control-sm font-monospace" type="text" value="0493" title="Адрес holding для записи ключа ЛКГ">
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label mb-1">Статус замков REG_STATUS_LOCK (hex)</label>
+                                <input id="benchCorrLockStatusHex" class="form-control form-control-sm font-monospace" type="text" value="0019" title="Бит0=1 — калибр. замок открыт; для map из идентификации см. файл карты">
+                            </div>
+                            <div class="col-12 d-flex flex-wrap align-items-center gap-2 pt-1 border-top mt-1">
+                                <span class="text-body-secondary small me-1">Профиль стенда:</span>
+                                <button id="saveBenchSettingsBtn" type="button" class="btn btn-outline-primary btn-sm"><i class="bi bi-cloud-arrow-up me-1"></i>Сохранить в браузер</button>
+                                <button id="loadBenchSettingsBtn" type="button" class="btn btn-outline-secondary btn-sm"><i class="bi bi-cloud-arrow-down me-1"></i>Загрузить</button>
+                                <button id="resetBenchSettingsBtn" type="button" class="btn btn-outline-warning btn-sm"><i class="bi bi-arrow-counterclockwise me-1"></i>По умолчанию</button>
+                                <span id="benchSettingsHint" class="small text-body-secondary ms-md-2">Автосохранение через 1,5 с после правок.</span>
+                            </div>
+                            <div class="col-12">
+                                <div class="bench-field-group">
+                                    <div class="bench-field-group-title">Серийный номер корректора</div>
+                                    <div class="row g-2 align-items-end">
+                                        <div class="col-md-5">
+                                            <label class="form-label mb-1" for="benchCorrSerialInput">SN корректора</label>
+                                            <input id="benchCorrSerialInput" class="form-control form-control-sm font-monospace" type="text" maxlength="40" placeholder="например 2503120001">
+                                        </div>
+                                        <div class="col-md-7 d-flex flex-wrap gap-2">
+                                            <button id="benchReadSerialBtn" type="button" class="btn btn-outline-primary btn-sm"><i class="bi bi-upc-scan me-1"></i>Считать из ТМ-07</button>
+                                            <button id="benchCheckSerialBtn" type="button" class="btn btn-outline-secondary btn-sm"><i class="bi bi-search me-1"></i>Проверить в БД</button>
+                                        </div>
+                                    </div>
+                                    <div id="benchSerialLookupStatus" class="small text-body-secondary mt-2">Введите SN или считайте из прибора, чтобы получить прогресс по этапам из БД.</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card bench-card">
+                    <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
+                        <div class="d-flex align-items-center gap-2">
+                            <i class="bi bi-diagram-3 text-secondary"></i>
+                            <span class="fw-semibold">Сценарий стенда</span>
+                        </div>
+                        <span id="scenarioPhaseTitle" class="badge rounded-pill text-bg-light text-dark border fw-normal">фаза не выбрана</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="row g-3 mb-4 small">
+                            <div class="col-6 col-md-3">
+                                <label class="form-label mb-1">Ramp M90, мин</label>
+                                <input id="m90StabTime" class="form-control form-control-sm" type="number" min="1" max="60" value="10">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label mb-1">Стаб. M90, мин</label>
+                                <input id="stabilityMinutes" class="form-control form-control-sm" type="number" min="1" max="60" value="5">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label mb-1">Допуск T, °C</label>
+                                <input id="tempTolerance" class="form-control form-control-sm" type="number" step="0.05" value="0.5">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label mb-1">Плато МИТ, мин</label>
+                                <input id="flatMinutes" class="form-control form-control-sm" type="number" min="1" max="60" value="5">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label mb-1">Порог плато МИТ, °C</label>
+                                <input id="flatTol" class="form-control form-control-sm" type="number" step="0.05" value="0.15">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label mb-1">Допуск P, кПа</label>
+                                <input id="pressureTolKpa" class="form-control form-control-sm" type="number" step="0.01" value="0.5">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label mb-1">Допуск эталона ПКД, кПа</label>
+                                <input id="pkdTargetTol" class="form-control form-control-sm" type="number" step="0.01" value="0.3">
+                            </div>
+                        </div>
+
+                        <div class="btn-toolbar flex-wrap gap-2 mb-4" role="toolbar">
+                            <div class="btn-group" role="group">
+                                <button id="runFullBtn" type="button" class="btn btn-primary btn-sm"><i class="bi bi-flag me-1"></i>Полный сценарий</button>
+                                <button id="resumeScenarioBtn" type="button" class="btn btn-outline-primary btn-sm" disabled><i class="bi bi-play-circle me-1"></i>Продолжить цикл</button>
+                                <button id="stopScenarioBtn" type="button" class="btn btn-outline-danger btn-sm" disabled><i class="bi bi-stop-fill me-1"></i>Стоп</button>
+                            </div>
+                        </div>
+
+                        <p class="text-uppercase small text-body-secondary fw-semibold mb-2" style="letter-spacing:0.04em;">Фазы</p>
+                        <div class="accordion bench-accordion" id="phaseAccordion">
+                            <div class="accordion-item phase-card" data-phase="m90_mit" data-phase-state="pending">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ph1">
+                                        <span class="badge text-bg-secondary me-2 rounded-pill">1</span>M90 +20 и МИТ
+                                    </button>
+                                </h2>
+                                <div id="ph1" class="accordion-collapse collapse" data-bs-parent="#phaseAccordion">
+                                    <div class="accordion-body small">
+                                        <p class="mb-2">Запуск регуляции на всех подключённых M90, ожидание стабилизации по уставкам.</p>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" data-run-phase="m90_mit">Запустить фазу 1</button>
+                                        <button type="button" class="btn btn-outline-danger btn-sm ms-1" data-stop-phase="m90_mit">Стоп фазу</button>
+                                        <span class="ms-2 badge text-bg-secondary" id="badge_m90_mit">ожидание</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item phase-card" data-phase="cal_min" data-phase-state="pending">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ph2">
+                                        <span class="badge text-bg-secondary me-2 rounded-pill">2</span>Калибровка MIN (+20)
+                                    </button>
+                                </h2>
+                                <div id="ph2" class="accordion-collapse collapse" data-bs-parent="#phaseAccordion">
+                                    <div class="accordion-body small">
+                                        <button type="button" class="btn btn-outline-primary btn-sm" data-run-phase="cal_min">Запустить фазу 2</button>
+                                        <button type="button" class="btn btn-outline-danger btn-sm ms-1" data-stop-phase="cal_min">Стоп фазу</button>
+                                        <span class="ms-2 badge text-bg-secondary" id="badge_cal_min">ожидание</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item phase-card" data-phase="cal_max" data-phase-state="pending">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ph3">
+                                        <span class="badge text-bg-secondary me-2 rounded-pill">3</span>Калибровка MAX (+20)
+                                    </button>
+                                </h2>
+                                <div id="ph3" class="accordion-collapse collapse" data-bs-parent="#phaseAccordion">
+                                    <div class="accordion-body small">
+                                        <button type="button" class="btn btn-outline-primary btn-sm" data-run-phase="cal_max">Запустить фазу 3</button>
+                                        <button type="button" class="btn btn-outline-danger btn-sm ms-1" data-stop-phase="cal_max">Стоп фазу</button>
+                                        <span class="ms-2 badge text-bg-secondary" id="badge_cal_max">ожидание</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item phase-card" data-phase="temp_verify" data-phase-state="pending">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ph4">
+                                        <span class="badge text-bg-secondary me-2 rounded-pill">4</span>Поверка T
+                                    </button>
+                                </h2>
+                                <div id="ph4" class="accordion-collapse collapse" data-bs-parent="#phaseAccordion">
+                                    <div class="accordion-body small">
+                                        <button type="button" class="btn btn-outline-primary btn-sm" data-run-phase="temp_verify">Запустить фазу 4</button>
+                                        <button type="button" class="btn btn-outline-danger btn-sm ms-1" data-stop-phase="temp_verify">Стоп фазу</button>
+                                        <span class="ms-2 badge text-bg-secondary" id="badge_temp_verify">ожидание</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item phase-card" data-phase="impulse" data-phase-state="pending">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ph5">
+                                        <span class="badge text-bg-secondary me-2 rounded-pill">5</span>Импульсы (вручную)
+                                    </button>
+                                </h2>
+                                <div id="ph5" class="accordion-collapse collapse" data-bs-parent="#phaseAccordion">
+                                    <div class="accordion-body small">
+                                        <p class="mb-2">Импульсы только вручную на стенде. Сценарий покажет напоминание и отдельное подтверждение после работы.</p>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" data-run-phase="impulse">Запустить фазу 5</button>
+                                        <button type="button" class="btn btn-outline-danger btn-sm ms-1" data-stop-phase="impulse">Стоп фазу</button>
+                                        <span class="ms-2 badge text-bg-secondary" id="badge_impulse">ожидание</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item phase-card" data-phase="pressure_abs" data-phase-state="pending">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ph6">
+                                        <span class="badge text-bg-secondary me-2 rounded-pill">6</span>P абс. (5 точек)
+                                    </button>
+                                </h2>
+                                <div id="ph6" class="accordion-collapse collapse" data-bs-parent="#phaseAccordion">
+                                    <div class="accordion-body small">
+                                        <div class="row g-2 mb-2">
+                                            <div class="col-md-4">
+                                                <label class="form-label mb-0">Мин, кПа</label>
+                                                <input id="absPmin" class="form-control form-control-sm" type="number" step="0.01" value="0">
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label class="form-label mb-0">Макс, кПа</label>
+                                                <input id="absPmax" class="form-control form-control-sm" type="number" step="0.01" value="100">
+                                            </div>
+                                        </div>
+                                        <p class="text-muted mb-2">5 равномерных точек между мин и макс. ПКД (если подключён) — контроль эталона; корректор — float по регистру P абс.</p>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" data-run-phase="pressure_abs">Запустить фазу 6</button>
+                                        <button type="button" class="btn btn-outline-danger btn-sm ms-1" data-stop-phase="pressure_abs">Стоп фазу</button>
+                                        <span class="ms-2 badge text-bg-secondary" id="badge_pressure_abs">ожидание</span>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="accordion-item phase-card" data-phase="pressure_diff" data-phase-state="pending">
+                                <h2 class="accordion-header">
+                                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ph7">
+                                        <span class="badge text-bg-secondary me-2 rounded-pill">7</span>P перепада
+                                    </button>
+                                </h2>
+                                <div id="ph7" class="accordion-collapse collapse" data-bs-parent="#phaseAccordion">
+                                    <div class="accordion-body small">
+                                        <div class="row g-2 mb-2">
+                                            <div class="col-md-4">
+                                                <label class="form-label mb-0">Мин перепада, кПа</label>
+                                                <input id="diffPmin" class="form-control form-control-sm" type="number" step="0.01" value="0">
+                                            </div>
+                                            <div class="col-md-4">
+                                                <label class="form-label mb-0">Макс перепада, кПа</label>
+                                                <input id="diffPmax" class="form-control form-control-sm" type="number" step="0.01" value="100">
+                                            </div>
+                                        </div>
+                                        <p class="text-muted mb-2">Три точки: минимум, середина, максимум диапазона перепада. Регистр P перепада (float).</p>
+                                        <button type="button" class="btn btn-outline-primary btn-sm" data-run-phase="pressure_diff">Запустить фазу 7</button>
+                                        <button type="button" class="btn btn-outline-danger btn-sm ms-1" data-stop-phase="pressure_diff">Стоп фазу</button>
+                                        <span class="ms-2 badge text-bg-secondary" id="badge_pressure_diff">ожидание</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="workflowStatus" class="alert alert-secondary border-0 small mb-0 mt-4 py-2" role="status">Готово к работе.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bench-card mt-4">
+            <div class="card-header d-flex align-items-center gap-2">
+                <i class="bi bi-clipboard-check text-secondary"></i>
+                <span class="fw-semibold">Отчет по циклу</span>
+            </div>
+            <div class="card-body">
+                <div id="cycleReportStatus" class="small text-body-secondary mb-2">Отчет появится после завершения полного цикла.</div>
+                <pre id="cycleReport" class="small bg-body-secondary border rounded p-3 mb-0" style="white-space: pre-wrap; min-height: 120px;">Отчет пока не сформирован.</pre>
+            </div>
+        </div>
+
+        <div class="card bench-card bench-log-card mt-4">
+            <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-3">
+                <div class="d-flex align-items-center gap-2">
+                    <i class="bi bi-terminal text-secondary"></i>
+                    <span class="fw-semibold">Журнал</span>
+                </div>
+                <div class="d-flex align-items-center gap-2 flex-wrap">
+                    <button id="exportLogBtn" class="btn btn-outline-primary btn-sm" type="button"><i class="bi bi-download me-1"></i>Сохранить журнал</button>
+                    <button id="clearLogBtn" class="btn btn-outline-secondary btn-sm" type="button"><i class="bi bi-trash3 me-1"></i>Очистить</button>
+                    <div class="form-check form-switch mb-0">
+                        <input class="form-check-input" id="autoScrollLog" type="checkbox" checked>
+                        <label class="form-check-label small" for="autoScrollLog">Автопрокрутка</label>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div id="log" class="bg-dark text-light small font-monospace p-3 overflow-auto"></div>
+            </div>
+        </div>
+
+        <div id="proceedOverlay" class="d-none position-fixed top-0 start-0 w-100 h-100" style="z-index: 1050;">
+            <div class="w-100 h-100 bench-proceed-dim d-flex align-items-center justify-content-center p-3">
+                <div class="card bench-card shadow-lg border-0 w-100" style="max-width: 520px;">
+                    <div class="card-body text-center p-4 p-md-5">
+                        <div id="proceedCaption" class="text-uppercase small text-body-secondary mb-3 fw-semibold" style="letter-spacing:0.06em;">Действие оператора</div>
+                        <button id="proceedBtn" type="button" class="btn btn-success btn-lg w-100 py-3 rounded-pill">
+                            <i class="bi bi-check2-circle me-2"></i>Продолжить
+                        </button>
+                        <div id="proceedHint" class="small text-body-secondary mt-3 mb-0"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    </main>
+
+    <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script src="/js/calibration/serial-direct.js"></script>
+    <script src="/js/calibration/m90-device.js"></script>
+    <script src="/js/korrektor-device.js"></script>
+    <script src="/js/calibration/test-process-m90-15c.js"></script>
+    <script src="/js/calibration/pkd160-panel.js"></script>
+    <script src="/js/korrektor-panel.js"></script>
+    <script src="/js/site-nav-auth.js" defer></script>
+</body>
+</html>

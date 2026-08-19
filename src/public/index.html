@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ПК-ТМ · ТМ-07</title>
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/css/bench-pages.css" rel="stylesheet">
+    <script src="/js/site-shell.js" defer></script>
+    <script src="/js/site-settings-cache.js" defer></script>
+</head>
+<body class="bench-page home-dashboard-page">
+
+    <header class="bench-header" data-bench-header></header>
+
+    <main class="bench-main">
+        <div class="container-xl">
+            <div class="bench-page-head mb-4">
+                <h1 class="bench-hero-title">Калибровка и параметризация</h1>
+                <p class="bench-page-lead">Вход оператора и журнал сессий работы с корректором по заказам 1С.</p>
+                <span class="bench-note"><i class="bi bi-browser-chrome"></i> Chrome или Edge · localhost или HTTPS</span>
+            </div>
+
+            <div id="homeAuthGate" class="card bench-card mb-4 border-primary border-opacity-25">
+                <div class="card-body text-center py-5">
+                    <i class="bi bi-person-badge fs-1 text-primary mb-3 d-block" aria-hidden="true"></i>
+                    <h2 class="h5 fw-semibold mb-2">Вход оператора</h2>
+                    <p class="text-body-secondary mb-4 mx-auto" style="max-width:28rem">
+                        Укажите фамилию, имя и свой PIN. Конфигурация этого ПК будет зарегистрирована как рабочее место.
+                    </p>
+                    <button type="button" class="btn btn-primary btn-lg px-4" id="homeLoginBtn">
+                        <i class="bi bi-box-arrow-in-right me-1"></i>Войти
+                    </button>
+                </div>
+            </div>
+
+            <div id="homeDashboard" class="d-none">
+                <div class="card bench-card mb-4">
+                    <div class="card-body d-flex flex-wrap align-items-center gap-3">
+                        <div>
+                            <p class="small text-body-secondary mb-0">Оператор</p>
+                            <p class="fw-semibold mb-0" id="homeOperatorLabel">—</p>
+                        </div>
+                        <div>
+                            <p class="small text-body-secondary mb-0">Рабочее место</p>
+                            <p class="mb-0 small" id="homeWorkstationLabel">—</p>
+                        </div>
+                        <div class="ms-auto d-flex flex-wrap gap-2">
+                            <a class="btn btn-outline-primary" href="/tm07-workbench.html" title="Открыть рабочее место без сброса"><i class="bi bi-tools me-1"></i>Рабочее место</a>
+                            <a class="btn btn-primary" href="/tm07-workbench.html?newSession=1" title="Закрыть текущую сессию и начать нового корректора"><i class="bi bi-plus-lg me-1"></i>Новая сессия</a>
+                            <button type="button" class="btn btn-outline-secondary" id="homeRefreshBtn"><i class="bi bi-arrow-clockwise me-1"></i>Обновить</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="homeLogoutBtn">Выйти</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="homeOpsAlerts" class="card bench-card mb-4 border-danger border-opacity-25 d-none">
+                    <div class="card-header fw-semibold d-flex align-items-center gap-2">
+                        <i class="bi bi-exclamation-triangle text-danger"></i>
+                        <span>Сбои печати / паспорта / сверки</span>
+                        <span class="badge text-bg-danger ms-auto" id="homeOpsAlertsCount">0</span>
+                    </div>
+                    <ul class="list-group list-group-flush small" id="homeOpsAlertsList"></ul>
+                </div>
+
+                <div class="card bench-card mb-4">
+                    <div class="card-header fw-semibold d-flex flex-wrap align-items-center gap-2">
+                        <span><i class="bi bi-journal-bookmark me-1"></i>Сессии параметризации</span>
+                        <span id="homeAdminBadge" class="badge text-bg-dark d-none">Админ · можно удалять</span>
+                        <button type="button" class="btn btn-outline-danger btn-sm d-none" id="homeDeleteAllSessionsBtn" title="Удалить все сессии (только админ)">
+                            <i class="bi bi-trash3 me-1"></i>Удалить все
+                        </button>
+                        <select class="form-select form-select-sm ms-auto" id="homeSessionsFilter" style="max-width:10rem" aria-label="Фильтр сессий">
+                            <option value="all">Все</option>
+                            <option value="active">Активные</option>
+                            <option value="closed">Закрытые</option>
+                        </select>
+                    </div>
+                    <div class="card-body p-0">
+                        <div id="homeSessionsLoading" class="text-center py-4 text-body-secondary d-none">
+                            <div class="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></div>
+                            Загрузка…
+                        </div>
+                        <div id="homeSessionsError" class="alert alert-danger m-3 d-none" role="alert"></div>
+                        <p id="homeSessionsEmpty" class="text-body-secondary text-center py-4 mb-0 d-none">
+                            Сессий пока нет. Откройте <a href="/tm07-workbench.html">рабочее место</a> и войдите в заказ.
+                        </p>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-hover align-middle mb-0 home-sessions-table">
+                                <thead class="table-light">
+                                    <tr>
+                                        <th>Заказ</th>
+                                        <th>Статус 1С</th>
+                                        <th>Оператор</th>
+                                        <th>Стенд</th>
+                                        <th>Сессия</th>
+                                        <th>Этап</th>
+                                        <th>S/N</th>
+                                        <th>Открыта</th>
+                                        <th class="text-end"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="homeSessionsBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="bench-modules">
+                <!--
+                <a class="bench-module" href="/tm07-workbench.html">
+                    <span class="bench-module-icon"><i class="bi bi-briefcase"></i></span>
+                    <div class="bench-module-title">Рабочее место</div>
+                    <p class="bench-module-desc">Заказ 1С, КАО, датчики и запись параметров в корректор</p>
+                </a>
+                -->
+                <!--
+                <a class="bench-module" href="/tm07-parametrization-kao.html">
+                    <span class="bench-module-icon"><i class="bi bi-list-check"></i></span>
+                    <div class="bench-module-title">Параметризация</div>
+                    <p class="bench-module-desc">Пошаговая запись параметров корректора и комплекса</p>
+                </a>
+                -->
+                <!--
+                <a class="bench-module" href="/order-1c.html">
+                    <span class="bench-module-icon"><i class="bi bi-file-earmark-spreadsheet"></i></span>
+                    <div class="bench-module-title">Заказ 1С</div>
+                    <p class="bench-module-desc">Загрузка заказа на производство через OData</p>
+                </a>
+                -->
+                <!--
+                <a class="bench-module" href="/nameplate-template-editor.html">
+                    <span class="bench-module-icon"><i class="bi bi-bounding-box"></i></span>
+                    <div class="bench-module-title">Редактор шильдика</div>
+                    <p class="bench-module-desc">Настройка координат полей шаблона для печати PDF/TSPL</p>
+                </a>
+                -->
+                <!--
+                <a class="bench-module" href="/btw-viewer.html">
+                    <span class="bench-module-icon"><i class="bi bi-file-earmark-binary"></i></span>
+                    <div class="bench-module-title">Просмотр .btw</div>
+                    <p class="bench-module-desc">Метаданные шаблонов BarTender и встроенные PNG</p>
+                </a>
+                -->
+            </div>
+        </div>
+    </main>
+
+    <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script src="/js/tm07-bench-events.js" defer></script>
+    <script src="/js/site-operator-auth.js" defer></script>
+    <script src="/js/site-home-dashboard.js" defer></script>
+    <script src="/js/site-nav-auth.js" defer></script>
+</body>
+</html>

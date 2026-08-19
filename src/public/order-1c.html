@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Заказ на производство — OData 1С</title>
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/css/bench-pages.css" rel="stylesheet">
+    <script src="/js/site-shell.js" defer></script>
+    <script src="/js/site-settings-cache.js" defer></script>
+</head>
+<body class="bench-page">
+
+    <header class="bench-header" data-bench-header></header>
+
+    <main class="bench-main">
+    <div class="container-xl">
+        <div class="bench-page-head">
+            <h1 class="bench-hero-title">Заказ на производство</h1>
+            <p class="bench-page-lead">Введите номер заказа — страница выполнит OData-запросы через <code>/api/odata-1c.php</code>.</p>
+        </div>
+
+        <div class="card bench-card shadow-sm mb-4">
+            <div class="card-body">
+                <div class="row g-3 align-items-end">
+                    <div class="col-md-6 col-lg-4">
+                        <label for="orderNumberInput" class="form-label mb-0">Номер заказа</label>
+                        <input type="text" id="orderNumberInput" class="form-control" placeholder="539 или ТМ00-000539" autocomplete="off">
+                    </div>
+                    <div class="col-md-auto">
+                        <input type="hidden" id="orderEntityInput" value="Document_ЗаказНаПроизводство2_2">
+                        <input type="hidden" id="orderBaseUrlInput" value="">
+                        <input type="hidden" id="orderLanHostInput" value="srv-1c">
+                        <input type="hidden" id="orderOdataUser" value="">
+                        <input type="hidden" id="orderOdataPassword" value="">
+                        <input type="hidden" id="orderFullUrlInput" value="">
+                        <input type="hidden" id="orderProxyRoot" value="">
+                        <button type="button" id="orderLoadBtn" class="btn btn-primary">
+                            <i class="bi bi-cloud-download me-1"></i>Получить заказ
+                        </button>
+                    </div>
+                </div>
+                <div class="mt-3 d-none">
+                    <button type="button" id="orderParseFullUrlBtn" class="btn btn-outline-secondary">Разобрать</button>
+                    <input type="text" id="orderOdataLink" class="form-control font-monospace small" readonly placeholder="">
+                    <button type="button" id="orderCopyLinkBtn" class="btn btn-outline-secondary">Копировать</button>
+                    <a id="orderOpenLink" class="btn btn-link btn-sm p-0 disabled text-muted pe-none" href="#" target="_blank" rel="noopener">Открыть в новой вкладке</a>
+                </div>
+                <p id="orderStatus" class="small text-body-secondary mt-3 mb-0"></p>
+            </div>
+        </div>
+
+        <div id="orderProxyRow" class="d-none" aria-hidden="true"></div>
+
+        <div id="orderResultCard" class="card bench-card shadow-sm mb-4 d-none">
+            <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+                <span class="fw-semibold"><i class="bi bi-table me-1"></i>Реквизиты заказа (Ref_Key … Ответственный)</span>
+                <div class="d-flex flex-wrap gap-2">
+                    <button type="button" id="orderExportExcelBtn" class="btn btn-sm btn-outline-success">EXP</button>
+                    <a class="btn btn-sm btn-primary" id="orderGoWorkbenchBtn" href="/tm07-workbench.html" title="Открыть заказ на рабочем месте (сессия оператора)">Рабочее место</a>
+                    <a class="btn btn-sm btn-outline-primary" href="/tm07-parametrization-kao.html?fromOrder1c=1" title="Расширенная параметризация КАО">КАО напрямую</a>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div class="table-responsive">
+                    <table id="orderResultTable" class="table table-sm table-striped mb-0 align-middle">
+                        <tbody id="orderResultBody"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bench-card shadow-sm mb-4 d-none">
+            <div class="card-body">
+                <details class="mb-0">
+                    <summary class="fw-semibold mb-2">Резерв: вставить JSON вручную</summary>
+                    <p class="small text-muted">Если прокси недоступен.</p>
+                    <textarea id="orderJsonInput" class="form-control font-monospace small" rows="6" placeholder='{"value":[...]}'></textarea>
+                    <button type="button" id="orderParseBtn" class="btn btn-outline-primary btn-sm mt-2">Разобрать вставленный JSON</button>
+                </details>
+            </div>
+        </div>
+
+        <div id="orderJsonWrap" class="mb-4">
+            <details class="bench-card shadow-sm rounded overflow-hidden">
+                <summary class="px-3 py-2 bg-body-secondary cursor-pointer small fw-semibold">Полный JSON объекта</summary>
+                <pre id="orderJsonPre" class="mb-0 p-3 small bg-dark text-light d-none" style="max-height:28rem;overflow:auto;"></pre>
+            </details>
+        </div>
+
+        <div class="alert alert-light border shadow-sm small mb-0" role="note" id="orderOdataConfigNote">
+            Прокси <code>/api/odata-1c.php</code> · база по умолчанию <code>http://srv-1c/erp/odata/standard.odata</code> · IP и Host из <code>.env</code> (<code>ODATA_1C_HOST_IP</code>, <code>ODATA_1C_HTTP_HOST</code>).
+        </div>
+    </div>
+    </main>
+
+    <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/gh/linways/table-to-excel@v1.0.4/dist/tableToExcel.js"></script>
+    <script src="/js/tm07-bench-events.js"></script>
+    <script src="/js/site-operator-auth.js"></script>
+    <script src="/js/parametrization/order-1c-odata.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var O = window.Order1cOdata;
+            if (!O || typeof O.bootstrapOdataConfig !== 'function') return;
+            O.bootstrapOdataConfig().then(function (cfg) {
+                var note = document.getElementById('orderOdataConfigNote');
+                if (!note || !cfg) return;
+                var parts = ['База: ' + (cfg.defaultBase || '—')];
+                if (cfg.hostIp) parts.push('IP: ' + cfg.hostIp);
+                if (cfg.httpHost) parts.push('Host: ' + cfg.httpHost);
+                if (cfg.authConfigured) parts.push('Auth: .env');
+                note.innerHTML = parts.join(' · ') + ' · запросы через <code>/api/odata-1c.php</code>';
+            });
+        });
+    </script>
+    <script src="/js/site-nav-auth.js" defer></script>
+</body>
+</html>

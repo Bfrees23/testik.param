@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход · ПК-ТМ</title>
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/css/bench-pages.css" rel="stylesheet">
+</head>
+<body class="bench-page bench-page--auth">
+
+    <div class="container bench-auth-card">
+        <div class="card bench-card">
+            <div class="card-body p-4">
+                <div class="d-flex align-items-center gap-2 mb-3">
+                    <span class="bench-logo-mark">07</span>
+                    <span class="bench-logo-text">Администратор</span>
+                </div>
+                <div id="loginError" class="alert alert-danger py-2 small d-none" role="alert"></div>
+                <form id="loginForm" novalidate>
+                    <div class="mb-3">
+                        <label for="password" class="form-label">Пароль</label>
+                        <input type="password" class="form-control" id="password" autocomplete="current-password" required autofocus>
+                    </div>
+                    <button type="submit" class="btn btn-primary w-100" id="submitBtn">Войти</button>
+                </form>
+                <p class="small text-muted mt-3 mb-0">Пароль: <code>ADMIN_PASSWORD</code> или <code>admin</code> по умолчанию.</p>
+                <p class="small mt-2 mb-0"><a href="/index.html">← На главную</a></p>
+            </div>
+        </div>
+    </div>
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const err = document.getElementById('loginError');
+            const btn = document.getElementById('submitBtn');
+            const pwd = document.getElementById('password').value;
+            err.classList.add('d-none');
+            btn.disabled = true;
+            try {
+                const r = await fetch('/api/auth.php?action=login', {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ password: pwd }),
+                });
+                const j = await r.json();
+                if (!j.success) {
+                    err.textContent = j.error || 'Ошибка входа';
+                    err.classList.remove('d-none');
+                    return;
+                }
+                window.location.href = '/admin.html';
+            } catch (x) {
+                err.textContent = 'Нет связи с сервером. Запущен ли PHP / Docker?';
+                err.classList.remove('d-none');
+            } finally {
+                btn.disabled = false;
+            }
+        });
+    </script>
+</body>
+</html>

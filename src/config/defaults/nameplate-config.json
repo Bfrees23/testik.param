@@ -1,0 +1,33 @@
+{
+    "autoSerialOnOrderOpen": true,
+    "autoPrintOnOrderOpen": true,
+    "engine": "raster",
+    "htmlFallback": false,
+    "html": {
+        "templateCorrector": "tm07-corrector.html",
+        "templateComplex": "pktm-complex.html",
+        "pageWidthMm": 58,
+        "pageHeightMm": 20,
+        "dpi": 203,
+        "chromiumPath": ""
+    },
+    "pdf": {
+        "useTemplate": true,
+        "templateCorrector": "corrector-nameplate-template.pdf"
+    },
+    "printAgent": {
+        "enabled": true,
+        "agentUrl": "http://127.0.0.1:18778",
+        "printer": "TSC TE200",
+        "format": "tspl",
+        "dpi": 203,
+        "gapMm": 2.0,
+        "direction": 1,
+        "yOffsetMm": 0.0,
+        "density": 15,
+        "speed": 2,
+        "threshold": 0.72,
+        "homeBeforePrint": false,
+        "fallbackPreview": true
+    }
+}

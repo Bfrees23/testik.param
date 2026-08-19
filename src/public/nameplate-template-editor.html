@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Редактор шаблона шильда</title>
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/css/bench-pages.css" rel="stylesheet">
+    <link href="/css/nameplate-template-editor.css" rel="stylesheet">
+    <script src="/js/site-shell.js" defer></script>
+</head>
+<body class="bench-page bt-page">
+    <header class="bench-header" data-bench-header></header>
+    <main class="bench-main">
+        <div class="container-fluid px-3 px-lg-4">
+            <div class="bench-page-head py-2 mb-2">
+                <h1 class="bench-hero-title h4 mb-1">Редактор шаблона шильда <span class="bt-dirty-badge d-none" id="btDirtyBadge" title="Есть несохранённые изменения">*</span></h1>
+                <p class="bench-page-lead mb-0 small">Шаблоны · группы · thermal/TSC · пакет по диапазону. F1 — клавиши.</p>
+            </div>
+            <div id="btStatus" class="alert alert-secondary py-2 small mb-2 d-none"></div>
+            <div class="bt-app" id="btApp">
+                <div class="bt-toolbar">
+                    <div class="bt-menubar bt-menubar-primary">
+                        <div class="bt-toolbar-group">
+                            <span class="bt-toolbar-label">Файл</span>
+                            <button type="button" class="btn btn-success btn-sm" id="btNewTemplate" title="Создать новый шаблон"><i class="bi bi-file-earmark-plus me-1"></i>Новый</button>
+                            <button type="button" class="btn btn-primary btn-sm" id="btSave" title="Ctrl+S"><i class="bi bi-floppy me-1"></i>Сохранить</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="btUndo" title="Ctrl+Z"><i class="bi bi-arrow-counterclockwise"></i></button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="btRedo" title="Ctrl+Y"><i class="bi bi-arrow-clockwise"></i></button>
+                        </div>
+                        <span class="bt-menubar-divider"></span>
+                        <div class="bt-toolbar-group">
+                            <span class="bt-toolbar-label">Печать</span>
+                            <button type="button" class="btn btn-outline-info btn-sm" id="btApplyReference" title="Сборный шаблон по чертежу ТМР.754463.091"><i class="bi bi-rulers me-1"></i>По чертежу</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="btPreview"><i class="bi bi-file-earmark-pdf me-1"></i>Превью</button>
+                            <button type="button" class="btn btn-primary btn-sm" id="btPrint" title="Печать на TSC TE200"><i class="bi bi-printer-fill me-1"></i>Печать</button>
+                        </div>
+                        <button type="button" class="btn btn-outline-secondary btn-sm ms-auto" id="btHelpBtn" title="Горячие клавиши (F1)"><i class="bi bi-question-lg"></i></button>
+                    </div>
+                    <div class="bt-menubar bt-menubar-secondary">
+                        <div class="btn-group btn-group-sm bt-toolbox">
+                            <button type="button" class="btn btn-outline-dark" id="btAddText" title="Добавить текст"><i class="bi bi-fonts me-1"></i>Текст</button>
+                            <button type="button" class="btn btn-outline-dark" id="btAddQr" title="Добавить QR / Code128"><i class="bi bi-qr-code me-1"></i>QR</button>
+                            <button type="button" class="btn btn-outline-dark" id="btAddLine" title="Линия"><i class="bi bi-slash-lg"></i></button>
+                            <button type="button" class="btn btn-outline-dark" id="btAddBox" title="Прямоугольник"><i class="bi bi-square"></i></button>
+                            <button type="button" class="btn btn-outline-dark" id="btAddImage" title="Картинка"><i class="bi bi-image"></i></button>
+                            <button type="button" class="btn btn-outline-dark" id="btDuplicate" title="Ctrl+D"><i class="bi bi-copy"></i></button>
+                            <button type="button" class="btn btn-outline-dark" id="btCopy" title="Ctrl+C"><i class="bi bi-clipboard"></i></button>
+                            <button type="button" class="btn btn-outline-dark" id="btPaste" title="Ctrl+Shift+V"><i class="bi bi-clipboard-plus"></i></button>
+                            <button type="button" class="btn btn-outline-danger" id="btDelete" title="Delete"><i class="bi bi-trash"></i></button>
+                        </div>
+                        <span class="bt-menubar-divider"></span>
+                        <div class="btn-group btn-group-sm">
+                            <button type="button" class="btn btn-outline-secondary" id="btZoomOut" title="Уменьшить (Ctrl+-)">&minus;</button>
+                            <button type="button" class="btn btn-outline-secondary dropdown-toggle" id="btZoomLabel" data-bs-toggle="dropdown" aria-expanded="false" title="Масштаб" style="min-width:4.5rem">100%</button>
+                            <ul class="dropdown-menu" aria-labelledby="btZoomLabel">
+                                <li><button type="button" class="dropdown-item" data-zoom="0.5">50%</button></li>
+                                <li><button type="button" class="dropdown-item" data-zoom="1">100%</button></li>
+                                <li><button type="button" class="dropdown-item" data-zoom="1.5">150%</button></li>
+                                <li><button type="button" class="dropdown-item" data-zoom="2">200%</button></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><button type="button" class="dropdown-item" data-zoom="fit">По окну</button></li>
+                            </ul>
+                            <button type="button" class="btn btn-outline-secondary" id="btZoomIn" title="Увеличить (Ctrl+=)">+</button>
+                            <button type="button" class="btn btn-outline-secondary" id="btZoomFit" title="По размеру окна (Ctrl+0)"><i class="bi bi-arrows-angle-expand"></i></button>
+                        </div>
+                        <div class="dropdown ms-1">
+                            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="btViewMenu" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false">Вид</button>
+                            <ul class="dropdown-menu dropdown-menu-end bt-view-menu" aria-labelledby="btViewMenu">
+                                <li><label class="dropdown-item d-flex align-items-center gap-2 mb-0" for="btShowGrid"><input class="form-check-input m-0" type="checkbox" id="btShowGrid" checked> Сетка</label></li>
+                                <li><label class="dropdown-item d-flex align-items-center gap-2 mb-0" for="btSnap"><input class="form-check-input m-0" type="checkbox" id="btSnap" checked> Привязка</label></li>
+                                <li><label class="dropdown-item d-flex align-items-center gap-2 mb-0" for="btShowMargins"><input class="form-check-input m-0" type="checkbox" id="btShowMargins" checked> Отступы</label></li>
+                                <li><label class="dropdown-item d-flex align-items-center gap-2 mb-0" for="btShowBg"><input class="form-check-input m-0" type="checkbox" id="btShowBg" checked> Фон .btw</label></li>
+                                <li><label class="dropdown-item d-flex align-items-center gap-2 mb-0" for="btShowOverlay"><input class="form-check-input m-0" type="checkbox" id="btShowOverlay"> Эталон</label></li>
+                                <li><div class="dropdown-item-text py-1">
+                                    <label class="small text-muted mb-1 d-block" for="btOverlayOpacity">Прозрачность эталона</label>
+                                    <input type="range" class="form-range form-range-sm" id="btOverlayOpacity" min="0" max="100" value="35" disabled>
+                                </div></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><button type="button" class="dropdown-item" id="btClearGuides"><i class="bi bi-slash-lg me-2"></i>Очистить направляющие</button></li>
+                            </ul>
+                        </div>
+                        <div class="dropdown ms-1">
+                            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" id="btMoreMenu" data-bs-toggle="dropdown" aria-expanded="false">Ещё</button>
+                            <ul class="dropdown-menu dropdown-menu-end" aria-labelledby="btMoreMenu">
+                                <li><h6 class="dropdown-header">Выравнивание</h6></li>
+                                <li><button type="button" class="dropdown-item" id="btAlignLeft"><i class="bi bi-align-start me-2"></i>Влево</button></li>
+                                <li><button type="button" class="dropdown-item" id="btAlignCenter"><i class="bi bi-align-center me-2"></i>По центру</button></li>
+                                <li><button type="button" class="dropdown-item" id="btAlignRight"><i class="bi bi-align-end me-2"></i>Вправо</button></li>
+                                <li><button type="button" class="dropdown-item" id="btAlignTop"><i class="bi bi-align-top me-2"></i>Вверх</button></li>
+                                <li><button type="button" class="dropdown-item" id="btAlignMiddle"><i class="bi bi-distribute-vertical me-2"></i>По середине</button></li>
+                                <li><button type="button" class="dropdown-item" id="btAlignBottom"><i class="bi bi-align-bottom me-2"></i>Вниз</button></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><h6 class="dropdown-header">Распределение (≥3)</h6></li>
+                                <li><button type="button" class="dropdown-item" id="btDistH"><i class="bi bi-distribute-horizontal me-2"></i>По горизонтали</button></li>
+                                <li><button type="button" class="dropdown-item" id="btDistV"><i class="bi bi-distribute-vertical me-2"></i>По вертикали</button></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><h6 class="dropdown-header">Слой</h6></li>
+                                <li><button type="button" class="dropdown-item" id="btBringFront"><i class="bi bi-front me-2"></i>На передний план</button></li>
+                                <li><button type="button" class="dropdown-item" id="btBringFwd"><i class="bi bi-layer-forward me-2"></i>Вперёд</button></li>
+                                <li><button type="button" class="dropdown-item" id="btSendBack"><i class="bi bi-layer-backward me-2"></i>Назад</button></li>
+                                <li><button type="button" class="dropdown-item" id="btSendRear"><i class="bi bi-back me-2"></i>На задний план</button></li>
+                                <li><button type="button" class="dropdown-item" id="btLock"><i class="bi bi-lock me-2"></i>Блокировать</button></li>
+                                <li><button type="button" class="dropdown-item" id="btHide"><i class="bi bi-eye-slash me-2"></i>Скрыть</button></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><h6 class="dropdown-header">Размер / стиль</h6></li>
+                                <li><button type="button" class="dropdown-item" id="btMatchSize"><i class="bi bi-bounding-box-circles me-2"></i>Как у активного</button></li>
+                                <li><button type="button" class="dropdown-item" id="btSameW"><i class="bi bi-arrows-expand-vertical me-2"></i>Одинаковая ширина</button></li>
+                                <li><button type="button" class="dropdown-item" id="btSameH"><i class="bi bi-arrows-expand me-2"></i>Одинаковая высота</button></li>
+                                <li><button type="button" class="dropdown-item" id="btCenterLabel"><i class="bi bi-bullseye me-2"></i>По центру этикетки</button></li>
+                                <li><button type="button" class="dropdown-item" id="btCopyStyle"><i class="bi bi-paint-bucket me-2"></i>Копировать стиль</button></li>
+                                <li><button type="button" class="dropdown-item" id="btPasteStyle"><i class="bi bi-brush me-2"></i>Вставить стиль</button></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><h6 class="dropdown-header">Группа</h6></li>
+                                <li><button type="button" class="dropdown-item" id="btGroup"><i class="bi bi-collection me-2"></i>Сгруппировать</button></li>
+                                <li><button type="button" class="dropdown-item" id="btUngroup"><i class="bi bi-collection me-2"></i>Разгруппировать</button></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><button type="button" class="dropdown-item" id="btImport"><i class="bi bi-box-arrow-in-down me-2"></i>Импорт из .btw</button></li>
+                                <li><button type="button" class="dropdown-item" id="btImportJson"><i class="bi bi-upload me-2"></i>Импорт JSON</button></li>
+                                <li><button type="button" class="dropdown-item" id="btExportJson"><i class="bi bi-filetype-json me-2"></i>Экспорт JSON</button></li>
+                                <li><button type="button" class="dropdown-item" id="btDownloadPdf"><i class="bi bi-download me-2"></i>Скачать PDF</button></li>
+                                <li><button type="button" class="dropdown-item" id="btLabelSetup"><i class="bi bi-bounding-box me-2"></i>Макет</button></li>
+                                <li><a class="dropdown-item" id="btReferencePdf" href="/api/nameplate-template.php?action=reference-pdf" target="_blank" rel="noopener"><i class="bi bi-file-earmark-pdf me-2"></i>Чертёж PDF</a></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><button type="button" class="dropdown-item" id="btResetZero"><i class="bi bi-arrow-repeat me-2"></i>Сброс до нуля</button></li>
+                                <li><button type="button" class="dropdown-item" id="btReset"><i class="bi bi-x-circle me-2"></i>Отменить изменения</button></li>
+                                <li><button type="button" class="dropdown-item text-danger" id="btClearAll"><i class="bi bi-trash3 me-2"></i>Очистить всё</button></li>
+                                <li><hr class="dropdown-divider"></li>
+                                <li><button type="button" class="dropdown-item" id="btHelp"><i class="bi bi-keyboard me-2"></i>Горячие клавиши (F1)</button></li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+                <div class="bt-body">
+                    <aside class="bt-panel bt-panel-left" id="btPanelLeft">
+                        <div class="bt-panel-head">
+                            <span class="bt-panel-head-title">Шаблон / слои</span>
+                            <button type="button" class="bt-panel-toggle" id="btCollapseLeft" title="Свернуть панель"><i class="bi bi-chevron-left"></i></button>
+                        </div>
+                        <div class="bt-panel-body">
+                            <label class="form-label small mb-1" for="btTemplateSelect">Шаблон</label>
+                            <div class="d-flex gap-1 mb-2 flex-wrap">
+                                <select class="form-select form-select-sm flex-grow-1" id="btTemplateSelect" style="min-width:7rem"></select>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="btRenameTemplate" title="Переименовать"><i class="bi bi-pencil"></i></button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="btDuplicateTemplate" title="Дублировать"><i class="bi bi-files"></i></button>
+                                <button type="button" class="btn btn-outline-danger btn-sm" id="btDeleteTemplate" title="Удалить выбранный шаблон"><i class="bi bi-trash"></i></button>
+                            </div>
+                            <div class="bt-template-gallery mb-2" id="btTemplateGallery"></div>
+                            <div class="bt-template-info" id="btTemplateInfo">—</div>
+                            <div class="bt-empty-template-banner d-none alert alert-warning py-2 small mb-2" id="btEmptyTemplateBanner">
+                                Шаблон пуст.
+                                <button type="button" class="btn btn-sm btn-warning ms-1" id="btFillReference">Заполнить по чертежу</button>
+                            </div>
+                            <div class="bt-fields-panel mb-2" id="btFieldsPanel"></div>
+                            <input type="search" class="form-control form-control-sm mb-2" id="btLayerSearch" placeholder="Поиск слоя…" autocomplete="off">
+                            <ul class="bt-obj-list" id="btObjList"></ul>
+                            <details class="bt-sample-details">
+                                <summary>Данные для превью</summary>
+                                <div class="bt-sample-body">
+                                    <label class="form-label small mb-1" for="btSampleSerial">Serial</label>
+                                    <input class="form-control form-control-sm font-monospace mb-2" id="btSampleSerial" maxlength="10">
+                                    <label class="form-label small mb-1" for="btSampleTitle">Название</label>
+                                    <input class="form-control form-control-sm mb-2" id="btSampleTitle" placeholder="Корректор объёма газа ТМ-07">
+                                    <label class="form-label small mb-1" for="btSampleConfig">SpecLine1–3</label>
+                                    <textarea class="form-control form-control-sm font-monospace mb-2" id="btSampleConfig" rows="3"></textarea>
+                                    <label class="form-label small mb-1" for="btSampleRelease">ReleaseLabel</label>
+                                    <input class="form-control form-control-sm mb-0" id="btSampleRelease">
+                                </div>
+                            </details>
+                            <details class="bt-sample-details mt-2">
+                                <summary>Калибровка TSC</summary>
+                                <div class="bt-sample-body">
+                                    <label class="form-label small mb-1" for="btCalibDensity">Density <span id="btCalibDensityVal">15</span></label>
+                                    <input type="range" class="form-range form-range-sm mb-2" id="btCalibDensity" min="0" max="15" step="1" value="15">
+                                    <label class="form-label small mb-1" for="btCalibSpeed">Speed <span id="btCalibSpeedVal">2</span></label>
+                                    <input type="range" class="form-range form-range-sm mb-2" id="btCalibSpeed" min="1" max="6" step="0.5" value="2">
+                                    <label class="form-label small mb-1" for="btCalibYOffset">yOffset мм <span id="btCalibYOffsetVal">2.5</span></label>
+                                    <input type="range" class="form-range form-range-sm mb-2" id="btCalibYOffset" min="-5" max="10" step="0.1" value="2.5">
+                                    <label class="form-label small mb-1" for="btCalibThreshold">Threshold <span id="btCalibThresholdVal">0.72</span></label>
+                                    <input type="range" class="form-range form-range-sm mb-2" id="btCalibThreshold" min="0.4" max="0.95" step="0.01" value="0.72">
+                                    <div class="d-flex gap-1 flex-wrap">
+                                        <button type="button" class="btn btn-outline-primary btn-sm" id="btCalibSave">Сохранить</button>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="btCalibTest">Тест-печать</button>
+                                    </div>
+                                </div>
+                            </details>
+                            <details class="bt-sample-details mt-2">
+                                <summary>Пакетная печать</summary>
+                                <div class="bt-sample-body">
+                                    <label class="form-label small mb-1" for="btBatchRange">Диапазон S/N</label>
+                                    <input class="form-control form-control-sm font-monospace mb-2" id="btBatchRange" placeholder="3002607001-3002607010">
+                                    <label class="form-label small mb-1" for="btBatchSerials">S/N по строкам (10 цифр)</label>
+                                    <textarea class="form-control form-control-sm font-monospace mb-2" id="btBatchSerials" rows="4" placeholder="3002607001&#10;3002607002"></textarea>
+                                    <div class="d-flex gap-1 flex-wrap">
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" id="btBatchExpand">Развернуть диапазон</button>
+                                        <button type="button" class="btn btn-primary btn-sm" id="btBatchPrint">Печать пакета</button>
+                                        <button type="button" class="btn btn-outline-danger btn-sm" id="btBatchStop" disabled>Стоп</button>
+                                    </div>
+                                </div>
+                            </details>
+                        </div>
+                    </aside>
+                    <section class="bt-workspace-wrap">
+                        <button type="button" class="bt-rail-restore bt-restore-left" id="btRestoreLeft" title="Показать слои"><i class="bi bi-chevron-right"></i></button>
+                        <button type="button" class="bt-rail-restore bt-restore-right" id="btRestoreRight" title="Показать свойства"><i class="bi bi-chevron-left"></i></button>
+                        <div class="bt-ruler-corner"></div>
+                        <div class="bt-ruler-h"><canvas id="btRulerH"></canvas><div class="bt-ruler-hair is-hidden" id="btRulerHairV"></div></div>
+                        <div class="bt-ruler-v"><canvas id="btRulerV"></canvas><div class="bt-ruler-hair is-hidden" id="btRulerHairH"></div></div>
+                        <div class="bt-canvas-scroll" id="btCanvasScroll">
+                            <div class="bt-label-outer" id="btLabelOuter">
+                                <div class="bt-label-stage" id="btLabelStage">
+                                    <img class="bt-label-bg" id="btLabelBg" alt="" draggable="false">
+                                    <img class="bt-label-overlay is-hidden" id="btLabelOverlay" alt="" draggable="false">
+                                    <div class="bt-grid-layer" id="btGrid"></div>
+                                    <div class="bt-margin-guide is-hidden" id="btMarginGuide"></div>
+                                    <div class="bt-objects-layer" id="btObjects"></div>
+                                    <div class="bt-guides-layer" id="btGuides"></div>
+                                    <div class="bt-pinned-guides" id="btPinnedGuides"></div>
+                                    <div class="bt-marquee is-hidden" id="btMarquee"></div>
+                                    <div class="bt-crosshair is-hidden" id="btCrosshairV"></div>
+                                    <div class="bt-crosshair is-hidden" id="btCrosshairH"></div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="bt-workspace-size" id="btWorkspaceSize">58×20 мм</div>
+                    </section>
+                    <aside class="bt-panel bt-panel-right" id="btPanelRight">
+                        <div class="bt-panel-head">
+                            <span class="bt-panel-head-title" id="btPropsHead">Свойства</span>
+                            <button type="button" class="bt-panel-toggle" id="btCollapseRight" title="Свернуть панель"><i class="bi bi-chevron-right"></i></button>
+                        </div>
+                        <div class="bt-panel-body" id="btProps">
+                            <p class="text-body-secondary small">Выберите объект на этикетке</p>
+                        </div>
+                        <div class="bt-preview-pane">
+                            <div class="d-flex align-items-center justify-content-between gap-2 mb-1 flex-wrap">
+                                <span class="small text-uppercase fw-semibold text-secondary" style="letter-spacing:.04em;font-size:.68rem">Превью</span>
+                                <span class="d-flex align-items-center gap-2 flex-wrap">
+                                    <label class="small mb-0 d-flex align-items-center gap-1" title="1-bit как TSC"><input type="checkbox" id="btThermalPreview" class="form-check-input m-0"> TSC</label>
+                                    <label class="small mb-0 d-flex align-items-center gap-1" title="Рядом с эталоном"><input type="checkbox" id="btSideBySide" class="form-check-input m-0"> Эталон</label>
+                                    <button type="button" class="btn btn-link btn-sm p-0" id="btDownloadPngBtn" title="Скачать PNG"><i class="bi bi-filetype-png"></i></button>
+                                    <button type="button" class="btn btn-link btn-sm p-0" id="btDownloadPdfBtn" title="Скачать PDF"><i class="bi bi-download"></i></button>
+                                    <span class="bt-preview-busy d-none small text-muted" id="btPreviewBusy"><span class="spinner-border spinner-border-sm me-1" role="status"></span>обновление…</span>
+                                </span>
+                            </div>
+                            <div class="bt-preview-split" id="btPreviewSplit">
+                                <iframe class="bt-preview-frame" id="btPreviewFrame" title="PDF"></iframe>
+                                <img class="bt-preview-thermal d-none" id="btPreviewThermal" alt="Thermal">
+                                <img class="bt-preview-ref d-none" id="btPreviewRef" alt="Эталон">
+                            </div>
+                        </div>
+                    </aside>
+                </div>
+                <div class="bt-statusbar" id="btStatusbar">
+                    <span class="bt-page-size-badge" id="btPageSizeBadge">58×20 мм</span>
+                    <span>X: <strong id="btCursorX">—</strong></span>
+                    <span>Y: <strong id="btCursorY">—</strong></span>
+                    <span>W×H: <strong id="btSelSize">—</strong></span>
+                    <span>Объект: <strong id="btSelName">—</strong></span>
+                    <span>Выбрано: <strong id="btSelCount">0</strong></span>
+                    <span>Масштаб: <strong id="btStatusZoom">100%</strong></span>
+                    <span class="bt-agent-status is-offline ms-auto" id="btAgentStatus" title="Агент печати"><i class="bi bi-printer"></i> агент</span>
+                    <span id="btDirtyStatus" class="bt-dirty-status d-none">не сохранено</span>
+                </div>
+                <input type="file" id="btImportJsonFile" accept="application/json,.json" class="d-none">
+                <input type="file" id="btAddImageFile" accept="image/png,image/jpeg,image/webp,image/*" class="d-none">
+            </div>
+            <div id="btCtxMenu" class="bt-ctx-menu d-none" role="menu" hidden>
+                <button type="button" class="bt-ctx-item" data-ctx="props"><i class="bi bi-sliders me-2"></i>Свойства</button>
+                <button type="button" class="bt-ctx-item" data-ctx="dup"><i class="bi bi-copy me-2"></i>Дублировать</button>
+                <button type="button" class="bt-ctx-item" data-ctx="copy"><i class="bi bi-clipboard me-2"></i>Копировать</button>
+                <button type="button" class="bt-ctx-item" data-ctx="paste"><i class="bi bi-clipboard-plus me-2"></i>Вставить</button>
+                <hr class="bt-ctx-sep">
+                <button type="button" class="bt-ctx-item" data-ctx="lock"><i class="bi bi-lock me-2"></i>Блок / разблок.</button>
+                <button type="button" class="bt-ctx-item" data-ctx="hide"><i class="bi bi-eye-slash me-2"></i>Скрыть / показать</button>
+                <button type="button" class="bt-ctx-item" data-ctx="fwd"><i class="bi bi-layer-forward me-2"></i>Вперёд</button>
+                <button type="button" class="bt-ctx-item" data-ctx="back"><i class="bi bi-layer-backward me-2"></i>Назад</button>
+                <button type="button" class="bt-ctx-item" data-ctx="front"><i class="bi bi-front me-2"></i>На передний план</button>
+                <button type="button" class="bt-ctx-item" data-ctx="rear"><i class="bi bi-back me-2"></i>На задний план</button>
+                <button type="button" class="bt-ctx-item" data-ctx="copyStyle"><i class="bi bi-paint-bucket me-2"></i>Копировать стиль</button>
+                <button type="button" class="bt-ctx-item" data-ctx="pasteStyle"><i class="bi bi-brush me-2"></i>Вставить стиль</button>
+                <button type="button" class="bt-ctx-item" data-ctx="center"><i class="bi bi-bullseye me-2"></i>По центру этикетки</button>
+                <button type="button" class="bt-ctx-item" data-ctx="rename"><i class="bi bi-pencil me-2"></i>Переименовать</button>
+                <hr class="bt-ctx-sep">
+                <button type="button" class="bt-ctx-item" data-ctx="addText"><i class="bi bi-fonts me-2"></i>Добавить текст</button>
+                <button type="button" class="bt-ctx-item" data-ctx="addQr"><i class="bi bi-qr-code me-2"></i>Добавить QR</button>
+                <button type="button" class="bt-ctx-item text-danger" data-ctx="del"><i class="bi bi-trash me-2"></i>Удалить</button>
+            </div>
+        </div>
+    </main>
+    <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script src="/js/parametrization/tm07-nameplate-print.js" defer></script>
+    <script src="/js/nameplate-template-editor.js" defer></script>
+
+    <div class="modal fade" id="btNewTemplateModal" tabindex="-1" aria-labelledby="btNewTemplateModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="btNewTemplateModalLabel">Новый шаблон</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                </div>
+                <div class="modal-body">
+                    <label class="form-label small" for="btNewName">Название</label>
+                    <input type="text" class="form-control form-control-sm mb-2" id="btNewName" placeholder="Мой шаблон">
+                    <label class="form-label small" for="btNewSlug">ID файла (необяз.)</label>
+                    <input type="text" class="form-control form-control-sm mb-2 font-monospace" id="btNewSlug" placeholder="auto">
+                    <div class="row g-2 mb-2">
+                        <div class="col-6">
+                            <label class="form-label small" for="btNewWidth">Ширина, мм</label>
+                            <input type="number" step="0.1" class="form-control form-control-sm" id="btNewWidth" value="58">
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label small" for="btNewHeight">Высота, мм</label>
+                            <input type="number" step="0.1" class="form-control form-control-sm" id="btNewHeight" value="20">
+                        </div>
+                    </div>
+                    <label class="form-label small" for="btNewMode">Содержимое</label>
+                    <select class="form-select form-select-sm mb-2" id="btNewMode">
+                        <option value="blank">Пустой (белая этикетка без фона)</option>
+                        <option value="reference" selected>По чертежу ТМР.754463.091 (58×20 мм)</option>
+                        <option value="btw">Импорт координат из .btw</option>
+                        <option value="copy">Копия текущего шаблона</option>
+                    </select>
+                    <label class="form-label small" for="btNewBtw">Файл .btw</label>
+                    <input type="text" class="form-control form-control-sm" id="btNewBtw" value="corrector-300.btw">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" data-bs-dismiss="modal">Отмена</button>
+                    <button type="button" class="btn btn-success btn-sm" id="btNewCreate"><i class="bi bi-check2 me-1"></i>Создать</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="btHelpModal" tabindex="-1" aria-labelledby="btHelpModalLabel" aria-hidden="true">
+        <div class="modal-dialog modal-dialog-centered modal-lg">
+            <div class="modal-content">
+                <div class="modal-header py-2">
+                    <h5 class="modal-title" id="btHelpModalLabel">Горячие клавиши</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                </div>
+                <div class="modal-body small">
+                    <div class="row g-3">
+                        <div class="col-md-6">
+                            <h6 class="text-uppercase text-muted" style="font-size:.7rem">Правка</h6>
+                            <ul class="list-unstyled mb-3 bt-help-list">
+                                <li><kbd>Ctrl</kbd>+<kbd>S</kbd> Сохранить</li>
+                                <li><kbd>Ctrl</kbd>+<kbd>Z</kbd> / <kbd>Y</kbd> Отменить / Повторить</li>
+                                <li><kbd>Ctrl</kbd>+<kbd>C</kbd> / <kbd>D</kbd> Копировать / Дублировать</li>
+                                <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> Вставить объект</li>
+                                <li><kbd>Delete</kbd> Удалить</li>
+                                <li><kbd>Ctrl</kbd>+<kbd>A</kbd> Выбрать все</li>
+                                <li><kbd>Esc</kbd> Снять выбор</li>
+                                <li><kbd>Tab</kbd> / <kbd>Shift</kbd>+<kbd>Tab</kbd> След. объект</li>
+                            </ul>
+                            <h6 class="text-uppercase text-muted" style="font-size:.7rem">Вид</h6>
+                            <ul class="list-unstyled mb-0 bt-help-list">
+                                <li><kbd>Ctrl</kbd>+колёсико / <kbd>+</kbd><kbd>-</kbd> Зум</li>
+                                <li><kbd>Ctrl</kbd>+<kbd>0</kbd> По размеру</li>
+                                <li><kbd>Пробел</kbd>+drag Панорама</li>
+                                <li><kbd>G</kbd> Сетка · <kbd>M</kbd> Отступы · <kbd>E</kbd> Эталон</li>
+                                <li><kbd>F1</kbd> Эта справка</li>
+                            </ul>
+                        </div>
+                        <div class="col-md-6">
+                            <h6 class="text-uppercase text-muted" style="font-size:.7rem">Холст</h6>
+                            <ul class="list-unstyled mb-3 bt-help-list">
+                                <li>Drag на пустом — рамка выделения</li>
+                                <li><kbd>Ctrl</kbd>+клик — мультивыбор</li>
+                                <li><kbd>Shift</kbd>+стрелки — шаг 1 мм</li>
+                                <li><kbd>Alt</kbd>+drag — только по одной оси</li>
+                                <li><kbd>[</kbd> / <kbd>]</kbd> Слой · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>[</kbd>/<kbd>]</kbd> край</li>
+                                <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>C</kbd>/<kbd>V</kbd> Стиль</li>
+                                <li><kbd>F2</kbd> Переименовать · <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> центр</li>
+                                <li>Клик по линейке — направляющая (привязка при drag)</li>
+                                <li>ПКМ — контекстное меню</li>
+                                <li>Двойной клик — свойства</li>
+                            </ul>
+                            <h6 class="text-uppercase text-muted" style="font-size:.7rem">Выравнивание</h6>
+                            <p class="mb-0 text-body-secondary">При ≥2 объектах кнопки в «Ещё» выравнивают относительно выделения. Распределение — при ≥3.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</body>
+</html>

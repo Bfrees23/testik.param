@@ -1,0 +1,353 @@
+================================================================================
+АУДИТ ПРОЕКТА TM-07 (LAST VERSION)
+Дата: 2026-07-27
+Путь: /home/user/last_calib_param/LAST VERSION
+================================================================================
+Формат: [SEVERITY] краткий заголовок
+         Путь / доказательство
+         Рекомендация
+
+SEVERITY: CRITICAL | HIGH | MEDIUM | LOW | INFO
+
+================================================================================
+1. КРИТИЧЕСКИЕ (логика производства / безопасность ключей)
+================================================================================
+
+[CRITICAL] #1 Сверка после записи сравнивает прибор сам с собой
+  Файл: src/parametrization/js/tm07-workbench.js
+  Функция: verifyDeviceAgainstOrderAfterWrite()
+  Доказательство: сначала вызывается readAllSections() (обновляет val_* из прибора),
+  затем collectExpectedFieldSnapshot() читает уже перезаписанные val_*,
+  compareReadbackWithExpected сравнивает их с out_* того же опроса.
+  В runSessionResumeSurvey снимок ожидаемого берётся ДО чтения — правильно.
+  Эффект: неудачная запись может дать «Сверка OK»; сессия уже помечена done.
+  Рекомендация: снимать expected ДО readAllSections, либо читать с updateInput:false.
+
+[CRITICAL] #2 writeAllSections молча выходит при отключении КАО ? сессия «успешна»
+  Файлы:
+    src/parametrization/kao/js/tm07-parametrization-kao.js
+      (early return: if (!isKaoConnected()) return; в начале и после основных)
+    src/parametrization/js/tm07-workbench.js
+      (после await writeAllSections всегда logStage parametrization/done)
+  Эффект: обрыв связи mid-write ? void return ? workbench считает запись OK.
+  Рекомендация: бросать Error / возвращать {ok:false}; done только при успехе.
+
+[CRITICAL] #3 Живые секреты в .env (plaintext, mode 644)
+  Файл: .env
+  Содержит: ODATA_1C_PASSWORD, FIREBIRD_PASSWORD=masterkey,
+            BENCH_OPERATOR_PIN=123, TM07_SUPPLIER_LKG_HEX=AD 9E A9 C0
+  Рекомендация: ротация всех скомпрометированных секретов; chmod 600;
+  не хранить прод-пароли в общем дереве/бэкапах.
+
+[CRITICAL] #4 Ключ ЛКГ поставщика захардкожен в публичных ассетах
+  Пути (тот же AD 9E A9 C0, что в .env):
+    src/public/test-process-m90-15c.html
+    src/public/js/calibration/test-process-m90-15c.js
+    src/calibration/js/test-process-m90-15c.js
+    src/parametrization/kao/pages/tm07-parametrization-kao.html (value=…)
+    src/parametrization/pages/tm07-parametrization-kao-counters.html
+  Примечание: public/tm07-parametrization-kao.html уже с пустым hidden paramLkgHex —
+  но source-копии и M90-страница всё ещё светят ключ.
+  Рекомендация: убрать дефолты из HTML/JS; ключ только через admin-settings
+  после auth; ротировать ключ на приборах после удаления из репо.
+
+[CRITICAL] #5 Firebird init ожидает 7 типов событий, схема сидит 11
+  Файлы:
+    docker/firebird/install-schema.sh (grep COUNT = 7)
+    database/schema.firebird.sql (11 INSERT INTO TM07_EVENT_TYPE)
+    src/api/db_bench.php (PHP сидит ещё больше типов: nameplate_print,
+      parametrization_verify, assembly_confirm и др.)
+  Эффект: на свежем volume apply проходит с 11 строками ? final check fail ?
+  firebird-init exit 1 ? php зависит от service_completed_successfully и
+  может не стартовать; на повторных попытках — шум «already exists».
+  Рекомендация: считать схему OK по наличию таблиц / COUNT >= 11;
+  идемпотентный DDL; выровнять Windows install_schema.cmd.
+
+[CRITICAL] #6 Каталог data/ с правами 777
+  Путь: data/ (drwxrwxrwx) — admin_password.hash, device_settings.json,
+        sqlite, nameplate-config, паспорта/шильды.
+  Рекомендация: chmod 750 (или жёстче) + владелец контейнера.
+
+================================================================================
+2. ВЫСОКИЙ ПРИОРИТЕТ
+================================================================================
+
+[HIGH] #7 Слабый общий PIN оператора — единственный затвор к ЛКГ / 1С / print token
+  .env: BENCH_REQUIRE_OPERATOR_PIN=1, BENCH_OPERATOR_PIN=123
+  Любые ФИО + PIN 123 ? сессия оператора ? LKG в JSON, OData, printAgentToken.
+  Нет per-user секретов, нет lockout.
+  Рекомендация: сильный уникальный PIN/пароль; rate-limit + lockout;
+  по возможности не отдавать полный LKG hex в браузер.
+
+[HIGH] #8 Admin password fallback «admin»; ADMIN_PASSWORD в .env не задан
+  src/api/auth_common.php — auth_ensure_password_hash(): getenv ?: 'admin'
+  Нет rate-limit на login.
+  Рекомендация: fail-closed без сильного ADMIN_PASSWORD; throttling; ротация hash.
+
+[HIGH] #9 clearOrder / confirmAssembly без явного bench_require_operator_session
+  src/api/bench-db-status.php:
+    clearOrder ? bench_close_order_session() (по WORKSTATION_ID, без оператора)
+    confirmAssembly ? bench_confirm_assembly ? bench_require_order_session
+  bench_get_active_order_session при отсутствии operatorId может выбрать сессию
+  только по workstation после registerWorkstation.
+  Рекомендация: требовать оператора на всех мутациях; фильтровать по OPERATOR_ID.
+
+[HIGH] #10 Fingerprint skip может пропустить почти все основные параметры
+  tm07-parametrization-kao.js: isMainSectionAlreadyOnDevice()
+  fingerprintIds = [6, 7, 8, 9, 3] — при ?4 совпадениях пропускается весь DOC.steps.
+  Эффект: похожий предыдущий заказ / reused устройство ? газ/Q/? не пишутся.
+  Рекомендация: skip основных только в явном resume; усилить fingerprint;
+  после fail>0 не продолжать без подтверждения оператора.
+
+[HIGH] #11 Порты nginx на 0.0.0.0 (8081/8443)
+  docker-compose.yml — доступ со всей сети.
+  Рекомендация: bind на LAN/VPN или localhost + firewall.
+
+[HIGH] #12 Firebird masterkey + EnableLegacyClientAuth
+  docker-compose.yml / .env
+  Рекомендация: сильный ISC_PASSWORD; отключить legacy auth если клиенты позволяют.
+
+[HIGH] #13 ЛКГ в sessionStorage (5 мин)
+  src/public/js/site-settings-cache.js — KEY_BENCH
+  XSS / чужой профиль браузера ? утечка supplier/manufacturer hex.
+  Рекомендация: только memory; clear on logout; CSP.
+
+[HIGH] #14 Print-agent token не задан (опционален)
+  .env: TM07_PRINT_AGENT_TOKEN пуст/закомментирован
+  Без токена агент 127.0.0.1:18778 принимает POST /print от любой локальной страницы.
+  Рекомендация: требовать токен на агенте и сервере в prod.
+
+[HIGH] #15 .gitignore не покрывает реальные секреты data/
+  Игнорируется src/data/admin_password.hash, но файл лежит в data/admin_password.hash.
+  Не игнорируются data/*.sqlite, device_settings.json, nameplate-config.json.
+  Рекомендация: ignore чувствительных артефактов в data/.
+
+[HIGH] #16 Dual HTML trees: source ? served
+  Served: src/public/*.html
+  Stale: parametrization/kao/pages/tm07-parametrization-kao.html (старый navbar +
+         hardcoded LKG), pages/order-1c.html, counters.html
+  scripts/sync-public-js.sh синхронизирует только JS, НЕ HTML.
+  Рекомендация: public = source of truth для HTML; удалить/синхронизировать
+  устаревшие pages; документировать.
+
+[HIGH] #17 Сообщения UI ссылаются на порт 8080 вместо 8081
+  src/parametrization/js/order-1c-odata.js (и mirror в public)
+  Compose/README/CI используют 8081 / 8443.
+  Рекомендация: исправить строки ? sync-public-js.sh.
+
+[HIGH] #18 Dual data directories
+  Docker: ./data:/app/data + ./src:/app
+  На хосте также есть src/data/device_settings.json (в контейнере перекрыт ./data).
+  Легко править «не тот» файл.
+  Рекомендация: один канонический data/; stub/убрать src/data; документировать.
+
+[HIGH] #19 Сборка не требует факта печати шильдика
+  confirmAssemblyStep требует только S/N 300…;
+  fallbackPreview по умолчанию true ? preview считается «успехом» в UX.
+  Рекомендация: gate на printed===true или явный override; preview ? warning/fail.
+
+[HIGH] #20 Карта регистров: connect не блокирует несовместимую карту
+  ALLOWED = [49,50], UI_MAP_VERSION = 50
+  Несовместимая карта логируется, connect успешен; write падает позже.
+  Рекомендация: fail connect / disable write при !mapCheck.ok;
+  49 — warn-only или отдельная карта регистров.
+
+================================================================================
+3. СРЕДНИЙ ПРИОРИТЕТ
+================================================================================
+
+[MEDIUM] #21 OData proxy: CORS Access-Control-Allow-Origin: *
+  odata-1c.php — action=config без auth (утечка топологии).
+  Рекомендация: ограничить origin; по возможности auth и на config.
+
+[MEDIUM] #22 Клиентские Basic-credentials OData при пустом env user
+  odata_resolve_basic_credentials()
+  Рекомендация: в prod только env credentials.
+
+[MEDIUM] #23 forceTakeover / автосоздание операторов по ФИО
+  bench_resolve_operator / bench_reopen_order_session
+  Рекомендация: provisioned operators; takeover только admin.
+
+[MEDIUM] #24 Нет session_regenerate_id после PIN login
+  selectOperator в отличие от auth_login
+  Рекомендация: session_regenerate_id(true) после успешного PIN.
+
+[MEDIUM] #25 Доверие к X-Forwarded-* без списка proxy
+  auth_request_is_https / site_file_log_client_ip
+  Рекомендация: только от известных reverse-proxy IP.
+
+[MEDIUM] #26 Неаутентифицированные read API
+  counters.php list|get
+  nameplate-print.php config|health (health отдаёт generatedDir path)
+  nameplate-template.php preview-image
+  site-action-log.php write (rate-limit spoofable через X-Forwarded-For)
+  Рекомендация: требовать session; убрать filesystem paths из health.
+
+[MEDIUM] #27 printAgentToken уходит в browser в JSON job
+  nameplate_with_print_agent_token + tm07-nameplate-print.js
+  Public config токен не отдаёт (хорошо), но job + слабый PIN = кража токена.
+  Рекомендация: short-lived nonce или secret только на агенте.
+
+[MEDIUM] #28 Ошибки API отдают $e->getMessage() клиенту
+  bench-events, bench-db-status, passport-generate и др.
+  Рекомендация: generic client message; детали в server log.
+
+[MEDIUM] #29 sync-public-js.sh --check ложно падает на mtime
+  rsync itemize >f..t...... при идентичном содержимом ? CI FAIL.
+  Рекомендация: --checksum / diff -qr; игнорировать time-only.
+
+[MEDIUM] #30 Resume записи только в DOM (out_* === 'ok')
+  lastWriteAbort / isStepWriteMarkedOk — reload теряет состояние;
+  fingerprint может неверно пропустить основные.
+  Рекомендация: persist abort step в session/localStorage или re-probe device.
+
+[MEDIUM] #31 Сессия done до verify/passport
+  tm07-workbench.js — комментарий: verify/passport не блокируют.
+  В связке с #1 completed-сессии могут быть ложными.
+  Рекомендация: done только после critical verify (или fail/stay).
+
+[MEDIUM] #32 Мягкий gate скана датчиков
+  tm07-workbench-ops.js markSensorScanned: serial || '1'
+  Пустой скан удовлетворяет DA/DT.
+  Рекомендация: требовать реальный серийник; не подставлять '1'.
+
+[MEDIUM] #33 Q-hints из заказа 1С могут перехватить PAD/PTG диапазоны
+  tm07-order1c-to-param.js extractOrderMeterHints
+  Fallback /(\d+)\s*-\s*(\d+)/ по всему blob ? неверный qmin/qmax / G-size.
+  Рекомендация: только контекст DN…; исключить PAD/PTG/давление.
+
+[MEDIUM] #34 Concurrent Firebird init vs сервер
+  firebird-init isql на том же .fdb, пока firebird уже started.
+  Рекомендация: init через exec в healthy контейнер / one-shot entrypoint.
+
+[MEDIUM] #35 Варианты schema*.sql рассинхронизированы
+  schema.firebird.sql vs ibexpert vs firebird25 (7 типов, нет SESSION_STAGE…)
+  README event list ? SQL seed.
+  Рекомендация: один source of truth; deprecate FB2.5 или регенерация.
+
+[MEDIUM] #36 Nginx API allow-list ручной
+  docker/nginx/conf.d/bench-locations.inc — location = для каждого php.
+  Новый API без строки ? 404 (generic .php смотрит в public/, api там нет).
+  Рекомендация: location ^~ /api/ ? SCRIPT_FILENAME /app$uri или codegen.
+
+[MEDIUM] #37 Env contract drift
+  Compose: OPERATOR_PIN (нет в .env.example)
+  PHP: TM07_DATA_DIR (нет в example)
+  .env без ADMIN_PASSWORD / manufacturer LKG / print token
+  Selenium .env.example PIN закомментирован при BENCH_REQUIRE_OPERATOR_PIN=1
+  Рекомендация: выровнять примеры и compose.
+
+[MEDIUM] #38 SSL private keys на диске
+  docker/nginx/ssl/ca.key, prod.key (в .gitignore, но дерево не git-repo здесь)
+  Рекомендация: per-host генерация; не копировать в shared trees.
+
+[MEDIUM] #39 .env.example комментирует реальный формат ключа AD 9E A9 C0
+  Рекомендация: нейтральный placeholder (AA BB CC DD).
+
+================================================================================
+4. НИЗКИЙ ПРИОРИТЕТ / UX / TECH DEBT
+================================================================================
+
+[LOW] #40 Дефолтный пароль замка поставщика «-22» в defaults/JS
+  device_settings.json, korrektor-device.js — это протоколный дефолт;
+  public API редактирует (admin_redact_device_secrets) — OK.
+  Документировать; не отдавать в public.
+
+[LOW] #41 data/admin_password.hash mode 644
+  Рекомендация: 0600.
+
+[LOW] #42 Verify пропускает пустые/ошибка actuals
+  compareReadbackWithExpected — меньше критичных проверок ? ложный OK.
+  Рекомендация: missing critical = mismatch.
+
+[LOW] #43 getDeviceReadValue fallback на val_*
+  При out_ = «—» сравнение с формой ? тавтология.
+  Рекомендация: только device out_*.
+
+[LOW] #44 Resume survey race с Modbus
+  scheduleSessionResumeSurvey + tm07-session-resume-survey могут конфликтовать
+  с поздним стартом записи.
+
+[LOW] #45 prepareOrderFromInput(true) внутри runFullParametrization
+  Повторный fetch 1С после валидации может затереть QR/поля оператора.
+
+[LOW] #46 Прямой /tm07-parametrization-kao.html обходит assembly/PIN workbench
+  Advanced path — риск misuse.
+
+[LOW] #47 Manufacturer LKG только warning
+  Без ключа п.3/4/5 пропускаются; старый S/N может остаться на приборе.
+
+[LOW] #48 Site-shell nav узкий vs README
+  Nav: Home / Параметризация / Workbench / Заказ 1С
+  Нет admin, M90, counters — только direct URL.
+  Документировать secondary pages.
+
+[LOW] #49 start.sh брендинг «ЭЛЕМЕР-КТ (М90)», порт 3000
+  Легко перепутать с Docker 8081.
+  Рекомендация: ясный TM-07 messaging.
+
+[LOW] #50 Xdebug всегда включён в PHP image
+  Рекомендация: profile/build-arg.
+
+[LOW] #51 Deprecated API в JS (m90 prepareFile*, и т.п.)
+  Не блокирует; запланировать cleanup.
+
+[LOW] #52 Selenium README слегка устарел vs CI --api-only
+  Выровнять docs; OPERATOR_PIN обязателен при BENCH_REQUIRE_OPERATOR_PIN=1.
+
+[LOW] #53 Self-signed CA скачивается без auth (/bench-ca.crt)
+  OK для закрытой LAN; иначе OOB.
+
+[INFO] #54 Хорошие практики (уже сделано)
+  - Public config nameplate не отдаёт agentToken (только agentTokenConfigured)
+  - admin_redact_device_secrets для action=public
+  - OData SSRF mitigations (allowlist host, no FOLLOWLOCATION)
+  - CLI php не в nginx allowlist
+  - .env в .gitignore; SSL keys mode 600
+  - Healthchecks php/nginx/firebird
+  - Порты 8081/8443 согласованы в compose/README/CI (кроме строк #17)
+  - Workbench badge print-агента / resume write (недавние улучшения)
+
+================================================================================
+5. ПРИОРИТЕТНЫЙ ПЛАН ИСПРАВЛЕНИЙ
+================================================================================
+
+P0 (сделать сразу):
+  1. Починить verify snapshot (#1)
+  2. Не помечать done при silent return writeAllSections (#2)
+  3. Исправить Firebird init COUNT (#5)
+  4. Убрать hardcoded LKG из public/HTML/JS (#4); ротировать ключ (#3)
+  5. Ротация PIN / OData / admin / Firebird паролей (#3,#7,#8,#12)
+
+P1:
+  6. Auth на clearOrder/confirmAssembly (#9)
+  7. Ужесточить fingerprint skip (#10)
+  8. Harden data/ perms + .gitignore (#6,#15)
+  9. Закрыть dual HTML + sync script (#16,#29)
+  10. Порт 8080?8081 в сообщениях (#17)
+  11. Require print-agent token (#14)
+  12. Gate сборки на реальную печать (#19)
+
+P2:
+  13. OData CORS / counters / site-log auth (#21,#26)
+  14. SessionStorage без LKG (#13)
+  15. Sensor scan / Q-hints / map gate (#32,#33,#20)
+  16. Schema variants + nginx /api/ + env examples (#35,#36,#37)
+  17. Selenium coverage write?print?passport?PIN
+
+================================================================================
+6. ОБЛАСТИ, КОТОРЫЕ СТОИТ ДОПОЛНИТЕЛЬНО ПРОТЕСТИРОВАТЬ ВРУЧНУЮ
+================================================================================
+
+  - Свежий docker compose up -d --build на чистом volume (firebird-init)
+  - Запись с обрывом USB mid-write ? кнопка «Продолжить с п.N»
+  - Сверка после намеренно неверной записи (должна FAIL после фикса #1)
+  - Печать шильдика без агента (preview) vs с агентом
+  - PIN wrong / lockout (сейчас lockout нет)
+  - Два браузера / два оператора на одном workstation fingerprint
+  - Карта прибора 49 vs UI 50
+  - Заказ с PAD/PTG в тексте без явного DN qmin-qmax
+
+================================================================================
+Конец отчёта
+================================================================================

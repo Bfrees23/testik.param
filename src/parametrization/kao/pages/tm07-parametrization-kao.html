@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Параметризация ТМ-07</title>
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/css/bench-pages.css" rel="stylesheet">
+    <script src="/js/site-shell.js" defer></script>
+    <script src="/js/site-settings-cache.js" defer></script>
+</head>
+<body class="bench-page param-page">
+
+    <header class="bench-header" data-bench-header></header>
+
+    <main class="bench-main">
+    <div class="container-xl">
+        <div class="bench-page-head">
+            <h1 class="bench-hero-title">Параметризация ТМ-07</h1>
+            <p class="bench-page-lead">Запись настроек корректора через адаптер КАО и Web Serial.</p>
+        </div>
+
+        <!--<div class="bench-op-workflow mb-4" role="navigation" aria-label="Порядок параметризации">
+            <div class="bench-op-step">
+                <span class="bench-op-step-num" aria-hidden="true">1</span>
+                <div>
+                    <p class="bench-op-step-title">Подключение</p>
+                    <p class="bench-op-step-desc">Выберите порт КАО, адрес Modbus и скорость. Дождитесь статуса «подключено».</p>
+                </div>
+            </div>
+            <div class="bench-op-step">
+                <span class="bench-op-step-num is-muted" aria-hidden="true">2</span>
+                <div>
+                    <p class="bench-op-step-title">Данные заказа</p>
+                    <p class="bench-op-step-desc">Загрузите заказ из 1С или кэша — поля таблицы заполнятся автоматически.</p>
+                </div>
+            </div>
+            <div class="bench-op-step">
+                <span class="bench-op-step-num is-muted" aria-hidden="true">3</span>
+                <div>
+                    <p class="bench-op-step-title">Проверка</p>
+                    <p class="bench-op-step-desc">Просмотрите значения в таблице, при необходимости отредактируйте вручную.</p>
+                </div>
+            </div>
+            <div class="bench-op-step">
+                <span class="bench-op-step-num is-muted" aria-hidden="true">4</span>
+                <div>
+                    <p class="bench-op-step-title">Запись в прибор</p>
+                    <p class="bench-op-step-desc">«Прочитать все» для сверки, затем «Записать все» для переноса в корректор.</p>
+                </div>
+            </div>
+        </div>-->
+
+        <div class="row g-3 mb-3">
+            <div class="col-12">
+                <details class="param-panel h-100" open>
+                    <summary>Подключение к корректору</summary>
+                    <div class="param-panel-body">
+                        <div class="row g-3 align-items-end">
+                            <div class="col-sm-4 d-none">
+                                <label class="form-label fw-semibold small" for="paramAddr">Адрес Modbus</label>
+                                <input type="number" class="form-control" id="paramAddr" min="1" max="15" value="1" aria-describedby="paramAddrHelp" tabindex="-1">
+                                <div id="paramAddrHelp" class="form-text">От 1 до 15</div>
+                            </div>
+                            <div class="col-sm-4">
+                                <label class="form-label fw-semibold small" for="paramBaud">Скорость, бод</label>
+                                <select class="form-select" id="paramBaud">
+                                    <option value="9600">9600</option>
+                                    <option value="19200" selected>19200</option>
+                                    <option value="38400">38400</option>
+                                </select>
+                            </div>
+                            <div class="col-12">
+                                <div class="d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-primary" id="paramConnectKao"><i class="bi bi-plug me-1"></i>Подключить КАО</button>
+                                    <button type="button" class="btn btn-outline-primary" id="paramConnectAny"><i class="bi bi-usb-symbol me-1"></i>Любой COM</button>
+                                    <button type="button" class="btn btn-outline-danger" id="paramDisconnect"><i class="bi bi-x-lg me-1"></i>Отключить</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 mt-3 pt-3 border-top flex-wrap">
+                            <span class="small text-body-secondary">Связь:</span>
+                            <span id="paramConnStatus" class="badge rounded-pill text-bg-secondary param-conn-badge">отключено</span>
+                            <span class="small text-body-secondary ms-1">Замки:</span>
+                            <span id="paramLockStatus" class="badge rounded-pill text-bg-secondary param-lock-badge" title="Статус замков">Закрыт*</span>
+                            <button type="button" class="btn btn-outline-success btn-sm" id="paramOpenLocks" title="Открыть калибровочный замок (AutoPass 0x06A7, пароль по дате/времени прибора)"><i class="bi bi-unlock me-1"></i>Открыть калибр. замок</button>
+                            <button type="button" class="btn btn-outline-danger btn-sm" id="paramCloseLocks" title="Закрыть калибровочный замок: 0x06AA ← 0 перед очисткой регистров"><i class="bi bi-lock me-1"></i>Закрыть калибр. замок</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="paramRefreshLock" title="Прочитать статус замков"><i class="bi bi-arrow-clockwise me-1"></i>Статус</button>
+                        </div>
+                        <p class="small text-body-secondary mb-0 mt-2">Закрытие калибровочного замка — перед очисткой регистров в финале. AutoPass открывает замки при подключении и перед записью.</p>
+                        <div id="paramLockBanner" class="alert alert-warning py-2 small mt-2 mb-0 d-none" role="status"></div>
+                    </div>
+                </details>
+            </div>
+        </div>
+
+        <details class="param-panel mb-3">
+            <summary><i class="bi bi-qr-code-scan me-1"></i>QR / штрихкод датчика MIDA</summary>
+            <div class="param-panel-body">
+                <p class="small text-body-secondary mb-2">
+                    Сканируйте этикетку датчика или вставьте строку. Раскладка клавиатуры не важна.
+                    Формат (погрешн.; Pmin; Pmax):
+                    <code class="user-select-all">24428615;MIDA;DA;15;EX;IP65;0.25;0.08;0.2;MPa;064;DINC</code>
+                </p>
+                <div class="row g-2 align-items-end">
+                    <div class="col-lg">
+                        <label class="form-label small fw-semibold mb-1" for="paramQrSensor">Данные QR</label>
+                        <input type="text" class="form-control font-monospace small" id="paramQrSensor" placeholder="Сканер или Ctrl+V…" autocomplete="off" spellcheck="false">
+                    </div>
+                    <div class="col-lg-auto d-flex gap-2">
+                        <button type="button" class="btn btn-primary btn-sm" id="paramQrApply"><i class="bi bi-box-arrow-in-down me-1"></i>Подставить</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramQrClear">Очистить</button>
+                    </div>
+                </div>
+                <p id="paramQrStatus" class="small text-body-secondary mt-2 mb-0" role="status"></p>
+                <div class="d-flex flex-wrap gap-2 mt-1">
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="sensorParamsOpen" title="Таблица параметров датчиков (п.55–68)"><i class="bi bi-table me-1"></i>Параметры датчиков</button>
+                </div>
+                <div class="row g-2 align-items-end mt-3 pt-3 border-top">
+                    <div class="col-lg">
+                        <label class="form-label fw-semibold small mb-1" for="paramTelemetrySerial">БПЭК — штрихкод блока телеметрии (п.228)</label>
+                        <input type="text" class="form-control form-control-lg font-monospace" id="paramTelemetrySerial" placeholder="Сканируйте штрихкод БПЭК (только при .БТ в обозначении)" autocomplete="off" spellcheck="false" inputmode="numeric">
+                    </div>
+                    <div class="col-lg-auto">
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="paramTelemetryApply"><i class="bi bi-box-arrow-in-down me-1"></i>Подставить → п.228</button>
+                    </div>
+                </div>
+                <p id="paramTelemetryStatus" class="small text-body-secondary mt-2 mb-0" role="status"></p>
+            </div>
+        </details>
+
+        <details class="param-panel mb-3">
+            <summary>Серийные номера (300 / 400)</summary>
+            <div class="param-panel-body">
+                <p class="small text-body-secondary mb-2">
+                    Формат <strong>PPPYYMMNNN</strong>: <code>300</code> — корректор (п.3), <code>400</code> — комплекс (п.201);
+                    <strong>YY</strong> — год, <strong>MM</strong> — месяц, <strong>NNN</strong> — порядковый номер в месяце (с 001).
+                    Сейчас счётчик хранится локально в браузере; позже — Firebird.
+                </p>
+                <div class="d-flex flex-wrap gap-2 mb-2">
+                    <button type="button" class="btn btn-primary btn-sm" id="paramSerialGenCorrector"><i class="bi bi-hash me-1"></i>Корректор → п.3</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="paramSerialGenComplex"><i class="bi bi-hash me-1"></i>Комплекс → п.201</button>
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="paramSerialGenPair"><i class="bi bi-collection me-1"></i>Пара (300 + 400)</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="paramSerialPrintCorrector" title="Печать шильдика корректора"><i class="bi bi-printer me-1"></i>Шильдик 300</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="paramSerialPrintComplex" title="Печать шильдика комплекса"><i class="bi bi-printer me-1"></i>Шильдик 400</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="paramSerialRegistryRefresh" title="Показать следующие номера без выдачи"><i class="bi bi-arrow-clockwise"></i></button>
+                </div>
+                <p id="paramSerialRegistryHint" class="small text-body-secondary mb-1">—</p>
+                <p id="paramSerialRegistryStatus" class="small text-body-secondary mb-0" role="status"></p>
+            </div>
+        </details>
+
+        <details class="param-panel mb-3">
+            <summary class="d-flex flex-wrap align-items-center gap-2">
+                <span>Заказ из 1С</span>
+                <a href="/order-1c.html" class="btn btn-sm btn-outline-primary ms-auto" onclick="event.stopPropagation()"><i class="bi bi-box-arrow-up-right me-1"></i>Страница заказа</a>
+            </summary>
+            <div class="param-panel-body">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-5">
+                        <label class="form-label fw-semibold small" for="paramOrder1cNumber">Номер заказа</label>
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            <input type="text" class="form-control" id="paramOrder1cNumber" placeholder="000 или ТМ00-000000" autocomplete="off" style="max-width:14rem">
+                            <span id="paramOrder1cOrderStatus" class="badge rounded-pill text-bg-secondary param-order-status-badge" role="status" title="Статус заказа в 1С">Статус: —</span>
+                        </div>
+                    </div>
+                    <!-- <div class="col-md-5">
+                        <label class="form-label fw-semibold small" for="paramOrder1cEntity">Сущность OData</label>
+                        <input type="text" class="form-control font-monospace small" id="paramOrder1cEntity" value="Document_ЗаказНаПроизводство2_2" autocomplete="off">
+                    </div> -->
+                    <!-- <div class="col-md-4">
+                        <label class="form-label fw-semibold small" for="paramOrder1cBase">URL базы 1С</label>
+                        <input type="url" class="form-control font-monospace small" id="paramOrder1cBase" placeholder="http://…/standard.odata" autocomplete="off">
+                    </div> -->
+                </div>
+                <div class="bench-phase-actions mb-3">
+                    <button type="button" class="btn btn-primary" id="paramOrder1cLoad"><i class="bi bi-cloud-download me-1"></i>Загрузить и подставить</button>
+                    <button type="button" class="btn btn-outline-primary" id="paramOrder1cFromCache"><i class="bi bi-clock-history me-1"></i>Из кэша сессии</button>
+                    <p class="bench-phase-hint mb-0"><i class="bi bi-info-circle me-1"></i>Кэш появляется после загрузки заказа на странице «Заказ 1С» или кнопкой выше.</p>
+                </div>
+                <details class="mb-3">
+                    <summary class="small fw-semibold text-body-secondary user-select-none" style="cursor:pointer"><i class="bi bi-code-slash me-1"></i>Вставить JSON вручную</summary>
+                    <div class="mt-2">
+                        <label class="form-label small mb-1" for="paramOrder1cJson">JSON одной записи заказа</label>
+                        <textarea id="paramOrder1cJson" class="form-control font-monospace small" rows="3" placeholder='{"Ref_Key":"…","Number":"…", …}'></textarea>
+                        <button type="button" class="btn btn-outline-secondary btn-sm mt-2" id="paramOrder1cApplyJson">Подставить из вставки</button>
+                    </div>
+                </details>
+                <p id="paramOrder1cStatus" class="small param-order-status mb-0" role="status"></p>
+                <input type="hidden" id="paramOrder1cEntity" value="Document_ЗаказНаПроизводство2_2">
+                <input type="hidden" id="paramOrder1cBase" value="">
+            </div>
+        </details>
+
+        <div class="accordion bench-accordion mb-4" id="paramAdvancedAccordion">
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#paramAdvMap" aria-expanded="false" aria-controls="paramAdvMap">
+                        <i class="bi bi-map me-2 text-secondary"></i>Справка: карта регистров и прошивка
+                    </button>
+                </h2>
+                <div id="paramAdvMap" class="accordion-collapse collapse" data-bs-parent="#paramAdvancedAccordion">
+                    <div class="accordion-body small text-body-secondary">
+                        <p class="mb-2">Таблица параметров по <strong>карте регистров 50</strong> («Параметризация (1).docx»). Эталон адресов: <a href="https://docs.google.com/spreadsheets/d/1buoNnFdObJ2WqdNSXfwbjF7REi2zk_kKTz-KBSakXjM/edit?gid=1646055743" target="_blank" rel="noopener">карта регистров ТМ-07 (Google Таблица)</a>.</p>
+                        <ul class="mb-2 ps-3">
+                            <li>Номер карты смотрите в идентификации прибора (<code>0x11</code>, ожидается <code>0x000B=50</code>).</li>
+                            <li>Колонка «№ п/п» в Google Таблице ≠ номер шага на этой странице; сверяйте по <strong>адресу HEX</strong> и define.</li>
+                            <li>Ошибка Modbus <code>0x02</code> — нет holding по адресу в данной прошивке.</li>
+                            <li>Загрузка прошивки (шаг 1) в браузере не выполняется.</li>
+                        </ul>
+                        <p class="mb-0">Перед записью параметров ключ доступа подставляется автоматически (настройки администратора).</p>
+                    </div>
+                </div>
+            </div>
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#paramAdvRegs" aria-expanded="false" aria-controls="paramAdvRegs">
+                        <i class="bi bi-wrench-adjustable me-2 text-secondary"></i>Расширенные настройки: замена адресов регистров
+                    </button>
+                </h2>
+                <div id="paramAdvRegs" class="accordion-collapse collapse" data-bs-parent="#paramAdvancedAccordion">
+                    <div class="accordion-body">
+                        <p class="small text-body-secondary mb-3">Заполняйте только если адреса в вашем паспорте отличаются от таблицы по умолчанию.</p>
+                        <div class="row g-3">
+                            <div class="col-md-6">
+                                <label class="form-label small fw-semibold" for="ovSerialReg">Серийный номер (шаг 3), reg hex</label>
+                                <input type="text" class="form-control form-control-sm font-monospace" id="ovSerialReg" value="" placeholder="пусто = 0x000F" title="0x000F">
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label small fw-semibold" for="ovDateReg">Дата/время (шаг 20), reg hex</label>
+                                <input type="text" class="form-control form-control-sm font-monospace" id="ovDateReg" value="" placeholder="пусто = 0x008C" title="0x008C">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <details class="param-panel mb-3" open>
+            <summary>Таблица параметров</summary>
+            <div class="param-toolbar border-top border-bottom">
+                <div class="row g-2 align-items-center">
+                    <div class="col-lg">
+                        <label class="form-label small fw-semibold mb-1" for="paramFilter">Поиск</label>
+                        <div class="input-group input-group-sm">
+                            <span class="input-group-text"><i class="bi bi-search"></i></span>
+                            <input type="search" class="form-control" id="paramFilter" placeholder="Название, регистр, #108…" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="col-lg-auto d-flex flex-wrap gap-2 align-items-end">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramNowToDatetime" title="Текущий unix в поле даты/времени"><i class="bi bi-clock me-1"></i>Сейчас → дата</button>
+                        <button type="button" class="btn btn-success btn-sm" id="paramReadAll" title="Поочерёдное чтение всех holding"><i class="bi bi-arrow-down-circle me-1"></i>Прочитать все</button>
+                        <button type="button" class="btn btn-warning btn-sm" id="paramWriteAll" title="Поочерёдная запись; пустые поля пропускаются"><i class="bi bi-arrow-up-circle me-1"></i>Записать все</button>
+                        <span id="paramTimer" class="badge rounded-pill text-bg-dark d-none fw-semibold" title="Прогресс параметризации (прошло · осталось примерно)" role="status">⏱</span>
+                    </div>
+                </div>
+            </div>
+            <div class="table-responsive param-table-wrap">
+                <table class="table table-sm table-hover table-striped align-middle small mb-0">
+                    <thead class="table-light position-sticky top-0 z-1">
+                        <tr>
+                            <th class="text-end" style="width:2.5rem">#</th>
+                            <th style="width:4.5rem">Рег.</th>
+                            <th style="min-width:14rem">Параметр</th>
+                            <th style="min-width:8rem">Значение</th>
+                            <th style="width:1%"></th>
+                        </tr>
+                    </thead>
+                    <tbody id="paramTbody"></tbody>
+                </table>
+            </div>
+        </details>
+
+        <div class="accordion bench-accordion mb-4" id="paramExtraAccordion">
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#paramMeterPanel" aria-expanded="true" aria-controls="paramMeterPanel">
+                        <i class="bi bi-speedometer me-2 text-secondary"></i>Параметры счётчика <span class="text-body-secondary fw-normal ms-2 small">0x082A…0x086C · п.100+</span>
+                    </button>
+                </h2>
+                <div id="paramMeterPanel" class="accordion-collapse collapse show" data-bs-parent="#paramExtraAccordion">
+                    <div class="accordion-body p-0">
+                        <div class="param-toolbar border-top border-bottom">
+                            <div class="row g-2 align-items-center px-3 py-2">
+                                <div class="col-lg">
+                                    <input type="search" class="form-control form-control-sm" id="paramMeterFilter" placeholder="Название, регистр, #108…" autocomplete="off">
+                                </div>
+                                <div class="col-lg-auto d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-success btn-sm" id="paramMeterReadAll"><i class="bi bi-arrow-down-circle me-1"></i>Прочитать все</button>
+                                    <button type="button" class="btn btn-warning btn-sm" id="paramMeterWriteAll"><i class="bi bi-arrow-up-circle me-1"></i>Записать все</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="table-responsive param-table-wrap" style="max-height:min(50vh,480px)">
+                            <table class="table table-sm table-hover table-striped align-middle small mb-0">
+                                <thead class="table-light position-sticky top-0 z-1">
+                                    <tr>
+                                        <th class="text-end" style="width:2.5rem">#</th>
+                                        <th style="width:4.5rem">Рег.</th>
+                                        <th style="min-width:14rem">Параметр</th>
+                                        <th style="min-width:8rem">Значение</th>
+                                        <th style="width:1%"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="paramMeterTbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#paramComplexPanel" aria-expanded="false" aria-controls="paramComplexPanel">
+                        <i class="bi bi-diagram-3 me-2 text-secondary"></i>Параметры комплекса <span class="text-body-secondary fw-normal ms-2 small">0x08D1…0x0928</span>
+                    </button>
+                </h2>
+                <div id="paramComplexPanel" class="accordion-collapse collapse" data-bs-parent="#paramExtraAccordion">
+                    <div class="accordion-body p-0">
+                        <div class="param-toolbar border-top border-bottom">
+                            <div class="row g-2 align-items-center px-3 py-2">
+                                <div class="col-lg">
+                                    <input type="search" class="form-control form-control-sm" id="paramComplexFilter" placeholder="Название, регистр, #219…" autocomplete="off">
+                                </div>
+                                <div class="col-lg-auto d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-success btn-sm" id="paramComplexReadAll"><i class="bi bi-arrow-down-circle me-1"></i>Прочитать все</button>
+                                    <button type="button" class="btn btn-warning btn-sm" id="paramComplexWriteAll"><i class="bi bi-arrow-up-circle me-1"></i>Записать все</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="table-responsive param-table-wrap" style="max-height:min(50vh,480px)">
+                            <table class="table table-sm table-hover table-striped align-middle small mb-0">
+                                <thead class="table-light position-sticky top-0 z-1">
+                                    <tr>
+                                        <th class="text-end" style="width:2.5rem">#</th>
+                                        <th style="width:4.5rem">Рег.</th>
+                                        <th style="min-width:14rem">Параметр</th>
+                                        <th style="min-width:8rem">Значение</th>
+                                        <th style="width:1%"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="paramComplexTbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#paramFinalPanel" aria-expanded="false" aria-controls="paramFinalPanel">
+                        <i class="bi bi-flag me-2 text-secondary"></i>Финальные параметры <span class="text-body-secondary fw-normal ms-2 small">п.300–322</span>
+                    </button>
+                </h2>
+                <div id="paramFinalPanel" class="accordion-collapse collapse" data-bs-parent="#paramExtraAccordion">
+                    <div class="accordion-body p-0">
+                        <div class="param-toolbar border-top border-bottom">
+                            <div class="row g-2 align-items-center px-3 py-2">
+                                <div class="col-lg">
+                                    <input type="search" class="form-control form-control-sm" id="paramFinalFilter" placeholder="Название, регистр, #309…" autocomplete="off">
+                                </div>
+                                <div class="col-lg-auto d-flex flex-wrap gap-2">
+                                    <button type="button" class="btn btn-success btn-sm" id="paramFinalReadAll"><i class="bi bi-arrow-down-circle me-1"></i>Прочитать все</button>
+                                    <button type="button" class="btn btn-warning btn-sm d-none" id="paramFinalRun" title="Даты комплекса, моточасы, токи, очистка"><i class="bi bi-play-fill me-1"></i>Прогнать финальные</button>
+                                    <button type="button" class="btn btn-outline-warning btn-sm" id="paramFinalWriteAll"><i class="bi bi-arrow-up-circle me-1"></i>Записать все</button>
+                                    <button type="button" class="btn btn-primary btn-sm d-none" id="paramFinalContinue"><i class="bi bi-forward-fill me-1"></i>Продолжить после закрытия замка</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="table-responsive param-table-wrap" style="max-height:min(50vh,480px)">
+                            <table class="table table-sm table-hover table-striped align-middle small mb-0">
+                                <thead class="table-light position-sticky top-0 z-1">
+                                    <tr>
+                                        <th class="text-end" style="width:2.5rem">#</th>
+                                        <th style="width:4.5rem">Рег.</th>
+                                        <th style="min-width:14rem">Параметр</th>
+                                        <th style="min-width:8rem">Значение</th>
+                                        <th style="width:1%"></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="paramFinalTbody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <details class="param-panel bench-log-card">
+            <summary class="d-flex flex-wrap align-items-center gap-2">
+                <span><i class="bi bi-journal-text me-1"></i>Журнал операций</span>
+                <button type="button" class="btn btn-outline-secondary btn-sm ms-auto" id="paramClearLog" onclick="event.stopPropagation()"><i class="bi bi-trash me-1"></i>Очистить</button>
+            </summary>
+            <div class="param-panel-body p-0">
+                <div id="paramLog" class="log-container border-0" style="min-height:6rem; max-height:18rem; overflow-y:auto; font-size:0.8rem; padding:0.5rem 0.75rem"></div>
+                <div class="d-flex flex-wrap gap-2 p-2 border-top">
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="paramExportPrm" title="Считать все параметры с корректора и сохранить в .prm">
+                        <i class="bi bi-download me-1"></i>Считать все параметры в файл
+                    </button>
+                </div>
+            </div>
+        </details>
+    </div>
+    </main>
+
+    <input type="hidden" id="paramLkgHex" value="">
+    <input type="hidden" id="paramLkgReg" value="">
+    <input type="hidden" id="paramLkgDelayMs" value="">
+
+    <div class="modal fade" id="sensorParamsModal" tabindex="-1" aria-labelledby="sensorParamsTitle" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-scrollable">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="sensorParamsTitle"><i class="bi bi-table me-1"></i>Параметры датчиков</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="small text-body-secondary mb-2">Значения из QR/заказа для каналов датчиков (п.55–68). Можно править здесь и применить в таблицу параметризации.</p>
+                    <div class="table-responsive">
+                        <table class="table table-sm align-middle">
+                            <thead>
+                                <tr><th>Датчик</th><th>П.</th><th>Параметр</th><th class="w-25">Значение</th></tr>
+                            </thead>
+                            <tbody id="sensorParamsTableBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <p id="sensorParamsStatus" class="small text-body-secondary me-auto mb-0" role="status"></p>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="sensorParamsRefresh"><i class="bi bi-arrow-clockwise me-1"></i>Обновить из ввода</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="sensorParamsApply"><i class="bi bi-check2 me-1"></i>Применить</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script src="/js/korrektor-device.js"></script>
+    <script src="/js/parametrization/tm07-parametrization-data.js"></script>
+    <script src="/js/parametrization/tm07-parametrization-extra-data.js"></script>
+    <script src="/js/parametrization/tm07-emis-rgs245-data.js"></script>
+    <script src="/js/parametrization/tm07-complex-meter-types-data.js"></script>
+    <script src="/js/parametrization/tm07-volume-error-limits-data.js"></script>
+    <script src="/js/parametrization/tm07-corrector-execution-data.js"></script>
+    <script src="/js/parametrization/tm07-corrector-error-limits-data.js"></script>
+    <script src="/js/parametrization/tm07-param-auto-fill-data.js"></script>
+    <script src="/js/parametrization/tm07-mida-qr-parser.js"></script>
+    <script src="/js/tm07-bench-events.js"></script>
+    <script src="/js/site-operator-auth.js"></script>
+    <script src="/js/parametrization/tm07-serial-registry.js"></script>
+    <script src="/js/parametrization/order-1c-odata.js"></script>
+    <script src="/js/parametrization-kao/tm07-parametrization-kao.js"></script>
+    <script src="/js/parametrization/tm07-passport-generate.js"></script>
+    <script src="/js/parametrization/tm07-nameplate-print.js"></script>
+    <script src="/js/parametrization/tm07-serial-registry-ui.js"></script>
+    <script src="/js/parametrization/tm07-order1c-to-param.js"></script>
+    <script src="/js/parametrization/tm07-workbench-state.js"></script>
+    <script>
+        document.getElementById('paramClearLog')?.addEventListener('click', function () {
+            var p = document.getElementById('paramLog');
+            if (p) p.innerHTML = '';
+        });
+        (function () {
+            var st = document.getElementById('paramConnStatus');
+            if (!st) return;
+            function paintConn() {
+                var t = (st.textContent || '').toLowerCase();
+                st.className = 'badge rounded-pill param-conn-badge ' + (
+                    t.indexOf('подключ') >= 0 && t.indexOf('отключ') < 0 ? 'text-bg-success' :
+                    t.indexOf('ошиб') >= 0 ? 'text-bg-danger' : 'text-bg-secondary'
+                );
+            }
+            paintConn();
+            new MutationObserver(paintConn).observe(st, { childList: true, characterData: true, subtree: true });
+        })();
+        (function () {
+            var st = document.getElementById('paramOrder1cStatus');
+            if (!st) return;
+            new MutationObserver(function () {
+                var t = (st.textContent || '').trim();
+                st.classList.toggle('text-danger', /ошиб|не удал|нет/i.test(t));
+                st.classList.toggle('text-success', !!t && !/ошиб|не удал|нет/i.test(t));
+            }).observe(st, { childList: true, characterData: true, subtree: true });
+        })();
+    </script>
+    <script src="/js/site-nav-auth.js" defer></script>
+</body>
+</html>
