@@ -346,6 +346,19 @@
         return setMeterStepInput(stepId, value, lines, note);
     }
 
+    /** Реальные маски И1…И4 — в поля финальной секции (val_final_*). */
+    function setFinalMaskInput(stepId, value, lines, note) {
+        const inp = document.getElementById('val_final_' + stepId);
+        if (!inp || inp.disabled || value == null || value === '') {
+            return false;
+        }
+        inp.value = window.TM07_param_formatStepValue
+            ? window.TM07_param_formatStepValue(stepId, value)
+            : String(value);
+        lines.push('п.' + stepId + ' (финал) ← ' + note);
+        return true;
+    }
+
     function resolveMeterPassport(profile, row, primaryFullName) {
         if (!profile || !profile.passport) {
             return null;
@@ -634,6 +647,9 @@
     }
 
     /** Полное автозаполнение по «Параметризация (1)» + зеркало комплекса. */
+    // Маски в параметризации всегда staging 0/0/3/3/0; реальные И1…И4 — в финальную секцию.
+    const MASK_STAGING_AUTOFILL = { 71: '0', 72: '0', 74: '3', 75: '3', 77: '0' };
+
     function applyParamAutoFillToInputs(row, primaryFullName, complexDesignation, lines) {
         const A = window.TM07_PARAM_AUTO_FILL;
         if (!A) {
@@ -697,12 +713,7 @@
             222: 1,
             223: 1,
             224: 1,
-            // Финал: маски (реальные И1…И4) + моточасы/очистка
-            71: 1,
-            72: 1,
-            74: 1,
-            75: 1,
-            77: 1,
+            // Финал: моточасы/очистка (маски 71/72/74/75/77 обрабатываются отдельно)
             298: 1,
             299: 1,
             302: 1,
@@ -723,6 +734,17 @@
             const sid = parseInt(sidStr, 10);
             const note = resolved.notes[sid] || 'автозаполнение';
             const val = resolved.steps[sidStr];
+            if (MASK_STAGING_AUTOFILL[sid] != null) {
+                // Маски: в полях параметризации — staging 0/0/3/3/0,
+                // реальные И1…И4 (из исполнения) — в финальную секцию (val_final_*).
+                if (setMeterStepInput(sid, MASK_STAGING_AUTOFILL[sid], lines, 'staging 0/0/3/3/0 (реальные И1…И4 — в финале)')) {
+                    n += 1;
+                }
+                if (val != null && val !== '' && setFinalMaskInput(sid, val, lines, note)) {
+                    n += 1;
+                }
+                return;
+            }
             const setter = alwaysSet[sid] ? setMeterStepInput : setMeterStepInputIfEmpty;
             if (setter(sid, val, lines, note)) {
                 n += 1;

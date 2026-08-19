@@ -86,7 +86,9 @@
      * п.78/79 — writeFinalComplexModeFlags перед этой секцией.
      */
     const FINAL_STEPS = [
-        // Маски (из основных п.71/72/74/75/77) — в основной записи staging 0/3, здесь реальные И1…И4
+        // Маски (из основных п.71/72/74/75/77) — в основном разделе staging 0/3,
+        // здесь реальные И1…И4. Поля финала — отдельные id (val_final_*), чтобы
+        // не пересекаться с полями параметризации (там автоподстановка staging 0 0 3 3 0).
         {
             id: 71,
             reg: 0x04d2,
@@ -97,6 +99,7 @@
             defaultHex: '0x3C003',
             writeLkg: true,
             finalMask: true,
+            inputId: 'val_final_71',
         },
         {
             id: 72,
@@ -107,6 +110,7 @@
             hint: 'И1=0x3C3FF · И2=0x3CFFF · И3=0x3F3FF · И4=0x3FFFF',
             writeLkg: true,
             finalMask: true,
+            inputId: 'val_final_72',
         },
         {
             id: 74,
@@ -117,6 +121,7 @@
             hint: 'И1=0x43FF · И2=0x4FFF · И3=0x73FF · И4=0x7FFF',
             writeLkg: true,
             finalMask: true,
+            inputId: 'val_final_74',
         },
         {
             id: 75,
@@ -127,6 +132,7 @@
             hint: 'И1=0x43FF · И2=0x4FFF · И3=0x73FF · И4=0x7FFF',
             writeLkg: true,
             finalMask: true,
+            inputId: 'val_final_75',
         },
         {
             id: 77,
@@ -138,6 +144,7 @@
             defaultVal: '0x33',
             writeLkg: true,
             finalMask: true,
+            inputId: 'val_final_77',
         },
 
         // Даты поверки комплекса — дубль в финале (как в таблице финализации)

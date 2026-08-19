@@ -1201,11 +1201,11 @@
             log(`>>> - Received data. [${formatHoldingAddr(r)}](${title})`);
             log(`Записано значение: ${val}`);
 
-            const vin = el('val_' + s.id);
+            const vin = el(stepInputId(s));
             if (vin) {
                 vin.value = String(val);
             }
-            const out = el('out_' + s.id);
+            const out = el(stepOutId(s));
             if (out) {
                 setOutStatus(out, 'ok', 'ok');
             }
@@ -1645,7 +1645,7 @@
 
     function fillInputFromRead(step, resp) {
         if (!shouldFillInputFromRead(step)) return;
-        const vin = el('val_' + step.id);
+        const vin = el(stepInputId(step));
         if (!vin) return;
         const v = decodeReadForInput(step, resp);
         if (v != null && v !== '') vin.value = v;
@@ -2608,6 +2608,17 @@
         return hay.includes(q);
     }
 
+    // Финальные маски (71/72/74/75/77) живут со своими полями (val_final_*/out_final_*),
+    // чтобы не конфликтовать с полями параметризации (там автоподстановка staging 0 0 3 3 0).
+    function stepInputId(step) {
+        return (step && step.inputId) || 'val_' + step.id;
+    }
+
+    function stepOutId(step) {
+        if (step && step.inputId) return 'out' + step.inputId.slice(3);
+        return 'out_' + step.id;
+    }
+
     function buildStepsTable(tbody, steps, groups) {
         steps.forEach((step) => {
             // type x — только ПК / без Modbus: не рисуем пустые строки в таблице.
@@ -2616,7 +2627,7 @@
             }
 
             const reg = step.reg != null ? formatHoldingAddr(step.reg) : '—';
-            const valId = `val_${step.id}`;
+            const valId = stepInputId(step);
             let defaultVal = '';
             if (step.defaultVal != null) defaultVal = String(step.defaultVal);
             else if (step.defaultNum != null) {
@@ -2737,7 +2748,7 @@
                                 ? ' title="Регистр производителя — нужен ключ в админке (ТМ-07)"'
                                 : ''
                         }>Записать</button>`) +
-                ` <span class="font-monospace out text-body-secondary" id="out_${step.id}">—</span></td></tr>`;
+                 ` <span class="font-monospace out text-body-secondary" id="${stepOutId(step)}">—</span></td></tr>`;
             tbody.appendChild(tr);
             if (step.type === 't') {
                 const inp = el(valId);
@@ -2877,7 +2888,7 @@
             for (const step of steps) {
                 if (step.type === 'x' || !step.reg || step.writeOnly) continue;
                 const oreg = getRegOverrideForStep(step);
-                const out = el('out_' + step.id);
+                const out = el(stepOutId(step));
                 if (out) setOutStatus(out, '…', 'pending');
                 try {
                     // Опрос не должен затирать поля «Значение» (ожидание из заказа) — только out_*.
@@ -3005,8 +3016,8 @@
                     await new Promise((r) => setTimeout(r, BATCH_GAP_MANUFACTURER_MS));
                 }
                 const oreg = getRegOverrideForStep(step);
-                const out = el('out_' + step.id);
-                const vin = el('val_' + step.id);
+                const out = el(stepOutId(step));
+                const vin = el(stepInputId(step));
                 if (isSensorMemoryCmd(step)) {
                     const batchSkipMem = batchWriteSkipReason(step);
                     if (batchSkipMem) {
@@ -3277,11 +3288,20 @@
         const br = ev.target.closest('.btn-r');
         const bw = ev.target.closest('.btn-w') || ev.target.closest('.btn-w-default');
         if (!br && !bw) return;
-        const step = findStep((br || bw).getAttribute('data-sid'));
+        const sid = (br || bw).getAttribute('data-sid');
+        // В финальной секции маски (71/72/74/75/77) — отдельные шаги с val_final_*;
+        // кнопки строки должны работать со своим шагом, а не с шагом из основных.
+        let step = null;
+        const tbody = (br || bw).closest('tbody');
+        if (tbody && tbody.id === 'paramFinalTbody') {
+            const finalSec = (EXTRA?.sections || []).find((s) => s.key === 'final');
+            step = ((finalSec && finalSec.steps) || []).find((s) => String(s.id) === String(sid));
+        }
+        if (!step) step = findStep(sid);
         if (!step) return;
         const oreg = getRegOverrideForStep(step);
-        const out = el('out_' + step.id);
-        const vin = el('val_' + step.id);
+        const out = el(stepOutId(step));
+        const vin = el(stepInputId(step));
         try {
             if (br) {
                 if (out) setOutStatus(out, '…', 'pending');
@@ -3666,10 +3686,10 @@
                     }
                     const oreg = getRegOverrideForStep(step);
                     const addr = formatHoldingAddr(oreg != null ? oreg : step.reg);
-                    const out = el('out_' + step.id);
-                    if (out) {
-                        setOutStatus(out, '…', 'pending');
-                    }
+                const out = el(stepOutId(step));
+                if (out) {
+                    setOutStatus(out, '…', 'pending');
+                }
                     try {
                         const decoded = await doReadStep(step, oreg, { updateInput: false });
                         const prmVal = formatPrmValue(step, decoded);
