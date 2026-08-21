@@ -954,7 +954,7 @@
             setWbStatus('Опрос корректора…', false);
 
             if (typeof K.readAllSections === 'function') {
-                await K.readAllSections();
+                await K.readAllSections({ skipFinal: true });
             } else if (typeof K.runReadAllSteps === 'function') {
                 await K.runReadAllSteps(window.TM07_PARAM_DOC && window.TM07_PARAM_DOC.steps, 'основные');
             }
@@ -1381,7 +1381,7 @@
         plog('Сверка: полный опрос параметров…');
         setWbStatus('Сверка с заказом…', false);
         if (typeof K.readAllSections === 'function') {
-            await K.readAllSections();
+            await K.readAllSections({ skipFinal: true });
         } else if (typeof K.runReadAllSteps === 'function') {
             await K.runReadAllSteps(window.TM07_PARAM_DOC && window.TM07_PARAM_DOC.steps, 'основные');
         } else {
@@ -2079,6 +2079,106 @@
         }
     }
 
+    /**
+     * Дозапись дат поверки корректора п.80/81 после основной параметризации
+     * (REG_SYS_LAST_VERIF_DATE 0x0024 / REG_SYS_NEXT_VERIF_DATE 0x0026).
+     */
+    async function writeCorrectorParamsLater() {
+        const Ops = window.TM07_WORKBENCH_OPS;
+        const K = window.TM07_PARAM_KAO;
+        const Guide = window.TM07_WORKBENCH_GUIDE;
+        if (!Ops || typeof Ops.validateCorrectorForWrite !== 'function') {
+            throw new Error('Модуль параметров корректора недоступен.');
+        }
+        if (!K || typeof K.writeStepsByIds !== 'function') {
+            throw new Error('Модуль записи недоступен.');
+        }
+        if (typeof K.isConnected === 'function' && !K.isConnected()) {
+            throw new Error('Подключите КАО.');
+        }
+        const v = Ops.validateCorrectorForWrite();
+        if (!v.ok) {
+            if (Guide && typeof Guide.showErrors === 'function') {
+                Guide.showErrors(v.errors);
+            }
+            throw new Error(v.errors[0] || 'Проверьте данные корректора');
+        }
+        const btn = $('paramCorrectorWrite');
+        if (btn) {
+            btn.disabled = true;
+        }
+        setWbStatus('Запись корректора (п.3, 80, 81)…', false);
+        plog('Дозапись корректора: п.3, 80, 81…');
+        try {
+            await K.writeStepsByIds([3, 80, 81], { label: 'корректор' });
+            plog('Корректор записан (п.3, 80, 81).');
+            setWbStatus('Корректор записан.', false);
+            if (Ops.paintWorkflowSteps) {
+                Ops.paintWorkflowSteps();
+            }
+            if (Ops.syncCorrectorVerifFieldsFromSteps) {
+                Ops.syncCorrectorVerifFieldsFromSteps();
+            }
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+            }
+        }
+    }
+
+    /**
+     * Дозапись данных комплекса п.201–203 после основной параметризации.
+     */
+    async function writeComplexParamsLater() {
+        const Ops = window.TM07_WORKBENCH_OPS;
+        const K = window.TM07_PARAM_KAO;
+        const Guide = window.TM07_WORKBENCH_GUIDE;
+        if (!Ops || typeof Ops.validateComplexForWrite !== 'function') {
+            throw new Error('Модуль параметров комплекса недоступен.');
+        }
+        if (!K || typeof K.writeStepsByIds !== 'function') {
+            throw new Error('Модуль записи недоступен.');
+        }
+        if (typeof K.isConnected === 'function' && !K.isConnected()) {
+            throw new Error('Подключите КАО.');
+        }
+        const serial = Ops.applyComplexSerial(($('paramComplexSerial') || {}).value);
+        if (!serial.ok) {
+            throw new Error(serial.error || 'S/N комплекса');
+        }
+        if (typeof Ops.applyComplexVerifFieldsToSteps === 'function') {
+            Ops.applyComplexVerifFieldsToSteps();
+        }
+        const v = Ops.validateComplexForWrite();
+        if (!v.ok) {
+            if (Guide && typeof Guide.showErrors === 'function') {
+                Guide.showErrors(v.errors);
+            }
+            throw new Error(v.errors[0] || 'Проверьте данные комплекса');
+        }
+        const btn = $('paramComplexWrite');
+        if (btn) {
+            btn.disabled = true;
+        }
+        setWbStatus('Запись комплекса (п.201–203)…', false);
+        plog('Дозапись комплекса: п.201–203…');
+        try {
+            await K.writeStepsByIds([201, 202, 203], { label: 'комплекс' });
+            plog('Комплекс записан (п.201–203).');
+            setWbStatus('Комплекс записан.', false);
+            if (Ops.paintWorkflowSteps) {
+                Ops.paintWorkflowSteps();
+            }
+            if (Ops.syncComplexVerifFieldsFromSteps) {
+                Ops.syncComplexVerifFieldsFromSteps();
+            }
+        } finally {
+            if (btn) {
+                btn.disabled = false;
+            }
+        }
+    }
+
     function initWorkbench() {
         if (!document.body.classList.contains('wb-page')) {
             return;
@@ -2209,6 +2309,50 @@
                 plog('Счётчик: ' + (err.message || String(err)));
                 setWbStatus(err.message || String(err), true);
             });
+        });
+
+        $('paramCorrectorWrite')?.addEventListener('click', function () {
+            void writeCorrectorParamsLater().catch(function (err) {
+                plog('Корректор: ' + (err.message || String(err)));
+                setWbStatus(err.message || String(err), true);
+            });
+        });
+
+        $('paramCorrectorDatesToday')?.addEventListener('click', function () {
+            const Ops = window.TM07_WORKBENCH_OPS;
+            if (!Ops) {
+                return;
+            }
+            if (typeof Ops.applyCorrectorVerificationDates === 'function') {
+                Ops.applyCorrectorVerificationDates(true);
+                const st = $('paramCorrectorStatus');
+                if (st) {
+                    st.textContent = '✓ п.80/81 ← сегодня / +4 года';
+                    st.classList.remove('text-danger');
+                }
+            }
+        });
+
+        $('paramComplexWrite')?.addEventListener('click', function () {
+            void writeComplexParamsLater().catch(function (err) {
+                plog('Комплекс: ' + (err.message || String(err)));
+                setWbStatus(err.message || String(err), true);
+            });
+        });
+
+        $('paramComplexDatesToday')?.addEventListener('click', function () {
+            const Ops = window.TM07_WORKBENCH_OPS;
+            if (!Ops) {
+                return;
+            }
+            if (typeof Ops.applyComplexVerificationDates === 'function') {
+                Ops.applyComplexVerificationDates(true);
+                const st = $('paramComplexStatus');
+                if (st) {
+                    st.textContent = '✓ п.202/203 ← сегодня / +МПИ';
+                    st.classList.remove('text-danger');
+                }
+            }
         });
 
         // Перехватываем «Прочитать» до kao-модуля: полный опрос + сверка с заказом.

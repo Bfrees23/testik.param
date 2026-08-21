@@ -2784,8 +2784,11 @@
         const totalSeconds = Math.max(0, Math.round((ms || 0) / 1000));
         const m = Math.floor(totalSeconds / 60);
         const s = totalSeconds % 60;
-        return m + ' мин ' + String(s).padStart(2, '0') + ' с';
+        return m + ':' + String(s).padStart(2, '0');
     }
+
+    /** Обратный отсчёт параметризации — «⏱ 2:00» (2 минуты), простой таймер. */
+    const BATCH_TIMER_SECONDS = 120;
 
     let batchTimer = null; // { t0, total, done, count, tick }
 
@@ -2850,8 +2853,11 @@
         }
         const past = formatElapsed(elapsed);
         const left = done > 0 && remaining > 0 ? formatElapsed(etaMs) : '';
+        // Простой таймер «⏱ 2:00» — обратный отсчёт фиксированной длительности параметризации.
+        const countdownMs = Math.max(0, BATCH_TIMER_SECONDS * 1000 - elapsed);
         if (b) {
-            b.textContent = '⏱ ' + past + (left ? ' · осталось ≈ ' + left : ' · осталось ≈ …');
+            b.textContent = '⏱ ' + formatElapsed(countdownMs);
+            b.title = 'Параметризация: осталось ≈ ' + formatElapsed(countdownMs);
         }
         const wl = el('wbWriteTimerLeft');
         if (wl) {
@@ -3413,6 +3419,38 @@
             log('Секция «Финальные параметры» не найдена.');
             return { ok: 0, fail: 0, skip: 0, aborted: true };
         }
+        // Перед прогоном финалов проверяем всё: обязательные S/N/датчики/ЛКГ/направление
+        // И все незаполненные строки параметризации (основные + счётчик + комплекс).
+        const OpsBeforeFinal = window.TM07_WORKBENCH_OPS;
+        const hardErrors = [];
+        if (OpsBeforeFinal && typeof OpsBeforeFinal.validateBeforeParametrize === 'function') {
+            try {
+                const v = OpsBeforeFinal.validateBeforeParametrize();
+                if (v && !v.ok && v.errors && v.errors.length) {
+                    v.errors.forEach((msg) => hardErrors.push(String(msg || '')));
+                }
+            } catch (_eBeforeFinal) {
+                /* валидация не должна останавливать прогон при сбоях модуля */
+            }
+        }
+        if (OpsBeforeFinal && typeof OpsBeforeFinal.collectEmptyRequiredSteps === 'function') {
+            try {
+                const missing = OpsBeforeFinal.collectEmptyRequiredSteps();
+                (missing || []).forEach(function (m) {
+                    hardErrors.push('не заполнено: п.' + m.id + ' — ' + (m.title || '').replace(/<\/?[^>]+>/g, ''));
+                });
+            } catch (_eBeforeEmpty) {
+                /* аналогично — не критично при сбое модуля */
+            }
+        }
+        if (hardErrors.length) {
+            // Выводим по строке; для «не заполнено» — без тегов, читаемо.
+            hardErrors.forEach(function (msg) {
+                log('<span class="text-danger">Не хватает: ' + msg.replace(/<\/?[^>]+>/g, '') + '</span>');
+            });
+            log('Прогон финальных параметров остановлен — заполните недостающее.');
+            return { ok: 0, fail: 0, skip: 0, aborted: true, validationErrors: hardErrors };
+        }
         // Дубль дат поверки комплекса (п.202/203 → п.298/299) перед прогоном.
         (finalSec.steps || []).forEach(function (step) {
             if (!step || step.syncFrom == null) {
@@ -3755,7 +3793,7 @@
         runFinalParameters: runFinalParameters,
         writeDefaultSettings: (options) => doWriteDefaultSettingsCmd(findStep(2), options),
         tryAutoReconnect: tryAutoReconnectKao,
-        readAllSections: async function () {
+        readAllSections: async function (options) {
             if (!isKaoPortOpen()) {
                 throw new Error('КАО не подключён');
             }
@@ -3764,6 +3802,7 @@
             if (passport && passport.mapVersion != null) {
                 applyDeviceMapVersion(passport.mapVersion);
             }
+            const skipFinal = !!(options && options.skipFinal);
             log('<strong>Полный опрос корректора (все разделы)…</strong>');
             const t0 = performance.now();
             let totalOk = 0;
@@ -3777,6 +3816,11 @@
             for (const sec of sections) {
                 if (!writeComplex && (sec.key === 'meter' || sec.key === 'complex')) {
                     continue;
+                }
+                if (sec.final || sec.key === 'final') {
+                    if (skipFinal) {
+                        continue;
+                    }
                 }
                 if (!isKaoPortOpen()) {
                     break;
@@ -3808,6 +3852,7 @@
             if (!isKaoConnected()) {
                 throw new Error('КАО не подключён — запись невозможна.');
             }
+            const t0 = performance.now();
             const resume = !!(options && options.resume);
             const skipAlreadyOk = resume || !!(options && options.skipAlreadyOk);
             await waitModbusIdle(120000);

@@ -573,10 +573,10 @@
 
     /** Группы датчиков для окна «Параметры датчиков» (шаги из CHANNELS). */
     const SENSOR_STEP_GROUPS = [
-        { key: 'DA', label: 'Давление (DA)', types: ['DA'] },
-        { key: 'DT', label: 'Темп. газа (DT)', types: ['DT', 'TG'] },
-        { key: 'DD', label: 'Перепад (DD)', types: ['DD', 'DP'] },
-        { key: 'TT', label: 'Темп. ТП (TT)', types: ['TT', 'TP'] },
+        { key: 'DA', label: 'Давление (DA)', types: ['DA'], badgeBg: 'bg-primary-subtle', badgeBorder: 'border-primary', badgeText: 'text-primary' },
+        { key: 'DT', label: 'Темп. газа (DT)', types: ['DT', 'TG'], badgeBg: 'bg-success-subtle', badgeBorder: 'border-success', badgeText: 'text-success' },
+        { key: 'DD', label: 'Перепад (DD)', types: ['DD', 'DP'], badgeBg: 'bg-warning-subtle', badgeBorder: 'border-warning', badgeText: 'text-warning' },
+        { key: 'TT', label: 'Темп. ТП (TT)', types: ['TT', 'TP'], badgeBg: 'bg-info-subtle', badgeBorder: 'border-info', badgeText: 'text-info' },
     ];
 
     function escAttr(v) {
@@ -616,12 +616,22 @@
         }
         let html = '';
         buildSensorStepGroups().forEach(function (grp) {
+            const badge =
+                '<span class="d-inline-block align-middle px-2 py-1 rounded border ' +
+                grp.badgeBg + ' ' + grp.badgeBorder + ' ' + grp.badgeText +
+                '" style="font-size:.85rem;min-width:52px;text-align:center;font-weight:600">' +
+                escAttr(grp.key) + '</span>';
+            html +=
+                '<tr class="' + grp.badgeBg + '">' +
+                '<td colspan="4" class="fw-bold ' + grp.badgeText + '" style="font-size:.9rem;padding:.35rem .75rem">' +
+                escAttr(grp.label) + '</td>' +
+                '</tr>';
             grp.stepIds.forEach(function (sid) {
                 const inp = document.getElementById('val_' + sid);
                 const val = inp ? String(inp.value || '') : '';
                 html +=
                     '<tr>' +
-                    '<td class="text-nowrap fw-semibold">' + escAttr(grp.key) + '</td>' +
+                    '<td class="text-nowrap fw-semibold">' + badge + '</td>' +
                     '<td class="text-nowrap">п.' + sid + '</td>' +
                     '<td>' + escAttr(stepTitleFor(sid)) + '</td>' +
                     '<td><input type="text" class="form-control form-control-sm font-monospace sensor-param-val" data-step="' + sid + '" value="' + escAttr(val) + '"></td>' +
@@ -691,6 +701,14 @@
         });
     }
 
+    /** Показывать/скрывать панель БПЭК (штрихкод блока телеметрии) — только при .БТ в заказе. */
+    function setTelemetryPanelVisible(visible) {
+        const panel = document.getElementById('paramTelemetryPanel');
+        if (panel) {
+            panel.classList.toggle('d-none', !visible);
+        }
+    }
+
     function initMidaQrPanel() {
         const inp = document.getElementById('paramQrSensor');
         if (!inp) {
@@ -753,6 +771,7 @@
         initMidaQrPanel: initMidaQrPanel,
         initTelemetryBarcodePanel: initTelemetryBarcodePanel,
         initSensorParamsPanel: initSensorParamsPanel,
+        setTelemetryPanelVisible: setTelemetryPanelVisible,
     };
 
     if (document.readyState === 'loading') {

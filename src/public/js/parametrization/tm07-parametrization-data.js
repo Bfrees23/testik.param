@@ -112,6 +112,10 @@
 
         },
 
+        { id: 80, reg: 0x0024, g: 'P', type: 'dt', regCount: 2, title: 'Дата поверки корректора (Повер.1) (Меню 1.3.5) (*)', hint: 'REG_SYS_LAST_VERIF_DATE, 0x0024', defaultVal: '01.01.2000', writeLkg: true },
+
+        { id: 81, reg: 0x0026, g: 'P', type: 'dt', regCount: 2, title: 'Дата следующей поверки корректора (Повер.2) (Меню 1.3.6) (*)', hint: 'REG_SYS_NEXT_VERIF_DATE, 0x0026', defaultVal: '01.01.2000', writeLkg: true },
+
         { id: 6, reg: 0x0029, g: 'D', type: 'f', title: 'Минимальное значение диапазона измерений абсолютного давления газа корректора (Pmin) (Меню 1.3.8) (*)', hint: 'кПа', writeLkg: true },
 
         { id: 7, reg: 0x002b, g: 'D', type: 'f', title: 'Максимальное значение диапазона измерений абсолютного давления газа корректора (Pmax) (Меню 1.3.9) (*)', hint: 'кПа', writeLkg: true },

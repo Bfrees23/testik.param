@@ -1621,6 +1621,13 @@
         if (btName) {
             setMeterStepInput(227, btName, lines, 'блок телеметрии / БТ');
         }
+        // Панель сканирования штрихкода БПЭК — только для заказов с телеметрией (.БТ).
+        try {
+            const isBt = !!btName && btName !== TELEMETRY_NAME_DEFAULT;
+            if (window.TM07_MIDA_QR && typeof window.TM07_MIDA_QR.setTelemetryPanelVisible === 'function') {
+                window.TM07_MIDA_QR.setTelemetryPanelVisible(isBt);
+            }
+        } catch (_eBt) {}
         try {
             if (
                 window.TM07_WORKBENCH_OPS &&

@@ -627,11 +627,21 @@
         const meterPanel = $('paramMeterPanel') && $('paramMeterPanel').closest('.accordion-item');
         const complexPanel = $('paramComplexPanel') && $('paramComplexPanel').closest('.accordion-item');
         const meterSerialCard = $('wbMeterCard') || ($('paramMeterSerial') && $('paramMeterSerial').closest('.card'));
+        const complexCard = $('wbComplexCard');
         [meterSerialCard, meterPanel, complexPanel].forEach(function (el) {
             if (el) {
                 el.classList.toggle('d-none', !complex);
             }
         });
+        if (complexCard) {
+            complexCard.classList.toggle('d-none', !complex);
+            if (complex && typeof syncComplexVerifFieldsFromSteps === 'function') {
+                syncComplexVerifFieldsFromSteps();
+            }
+        }
+        if (typeof syncCorrectorVerifFieldsFromSteps === 'function') {
+            syncCorrectorVerifFieldsFromSteps();
+        }
         // Перепад / TT: скрыть строки, если датчика нет в заказе (основные + комплекс + финал-зеркала).
         document.querySelectorAll('#paramTbody tr[data-step-id], #paramMeterTbody tr[data-step-id], #paramComplexTbody tr[data-step-id], #paramFinalTbody tr[data-step-id]').forEach(function (tr) {
             const sid = parseInt(tr.getAttribute('data-step-id'), 10);
@@ -985,6 +995,11 @@
         if (qrSt) {
             qrSt.textContent = '';
         }
+        try {
+            if (window.TM07_MIDA_QR && typeof window.TM07_MIDA_QR.setTelemetryPanelVisible === 'function') {
+                window.TM07_MIDA_QR.setTelemetryPanelVisible(false);
+            }
+        } catch (_eBtReset) {}
         paintSensorBadges();
         paintMeterBadge();
         paintWorkflowSteps();
@@ -1134,6 +1149,165 @@
             errors.push('Укажите дату следующей поверки счётчика (п.104, ДД.ММ.ГГГГ).');
         }
         return { ok: errors.length === 0, errors: errors };
+    }
+
+    /** S/N корректора п.3 из шага или карточки сборки. */
+    function correctorSerialFromSteps() {
+        const v = readStepVal(3);
+        if (v) {
+            return v;
+        }
+        const wb = window.TM07_WORKBENCH;
+        if (wb && typeof wb.correctorSerialValue === 'function') {
+            return String(wb.correctorSerialValue() || '').trim();
+        }
+        const d = $('paramCorrectorSerialDisplay');
+        return d ? String(d.value || '').trim() : '';
+    }
+
+    function syncCorrectorVerifFieldsFromSteps() {
+        const d = $('paramCorrectorSerialDisplay');
+        const serial = correctorSerialFromSteps();
+        if (d) {
+            d.value = serial;
+        }
+        const d80 = $('paramCorrectorVerifyDate');
+        const d81 = $('paramCorrectorVerifyNext');
+        const v80 = readStepVal(80);
+        const v81 = readStepVal(81);
+        if (d80 && v80) {
+            d80.value = v80;
+        }
+        if (d81 && v81) {
+            d81.value = v81;
+        }
+    }
+
+    function applyCorrectorVerifFieldsToSteps() {
+        const d80 = String(($('paramCorrectorVerifyDate') || {}).value || '').trim();
+        const d81 = String(($('paramCorrectorVerifyNext') || {}).value || '').trim();
+        if (d80 && /^\d{2}\.\d{2}\.\d{4}$/.test(d80)) {
+            setStepValue(80, d80, null, 'дата поверки корректора');
+        }
+        if (d81 && /^\d{2}\.\d{2}\.\d{4}$/.test(d81)) {
+            setStepValue(81, d81, null, 'след. дата поверки корректора');
+        }
+    }
+
+    function validateCorrectorForWrite() {
+        const errors = [];
+        const serial = correctorSerialFromSteps();
+        if (!serial) {
+            errors.push('Нет S/N корректора (п.3) — сначала подтвердите сборку.');
+        }
+        applyCorrectorVerifFieldsToSteps();
+        const d80 = readStepVal(80);
+        const d81 = readStepVal(81);
+        if (!d80 || !/^\d{2}\.\d{2}\.\d{4}$/.test(d80)) {
+            errors.push('Укажите дату поверки корректора (п.80, ДД.ММ.ГГГГ).');
+        }
+        if (!d81 || !/^\d{2}\.\d{2}\.\d{4}$/.test(d81)) {
+            errors.push('Укажите дату следующей поверки корректора (п.81, ДД.ММ.ГГГГ).');
+        }
+        return { ok: errors.length === 0, errors: errors };
+    }
+
+    function applyCorrectorVerificationDates(force) {
+        const out = [];
+        if (!correctorSerialFromSteps() && !force) {
+            return 0;
+        }
+        const today = todayTDate();
+        const next = addYearsTDate(today, 4);
+        const setFn = force ? setStepValue : setStepIfEmpty;
+        setFn(80, today, out, 'дата поверки корректора (сегодня)');
+        setFn(81, next, out, '+4 года (МПИ корректора)');
+        syncCorrectorVerifFieldsFromSteps();
+        return out.length;
+    }
+
+    function applyComplexSerial(raw) {
+        const sn = String(raw || '').trim();
+        if (!sn) {
+            return { ok: false, error: 'Введите серийный номер комплекса.' };
+        }
+        const ui = $('paramComplexSerial');
+        if (ui) {
+            ui.value = sn;
+        }
+        setStepValue(201, sn, null, 'S/N комплекса');
+        paintMeterBadge();
+        paintWorkflowSteps();
+        syncComplexVerifFieldsFromSteps();
+        const st = $('paramComplexStatus');
+        if (st) {
+            st.textContent = '✓ п.201 ← ' + sn;
+            st.classList.remove('text-danger');
+        }
+        return { ok: true };
+    }
+
+    function syncComplexVerifFieldsFromSteps() {
+        const ui = $('paramComplexSerial');
+        const v = readStepVal(201);
+        if (ui && !String(ui.value || '').trim()) {
+            ui.value = v || '';
+        }
+        const d202 = $('paramComplexVerifyDate');
+        const d203 = $('paramComplexVerifyNext');
+        const v202 = readStepVal(202);
+        const v203 = readStepVal(203);
+        if (d202 && v202) {
+            d202.value = v202;
+        }
+        if (d203 && v203) {
+            d203.value = v203;
+        }
+    }
+
+    function applyComplexVerifFieldsToSteps() {
+        const d202 = String(($('paramComplexVerifyDate') || {}).value || '').trim();
+        const d203 = String(($('paramComplexVerifyNext') || {}).value || '').trim();
+        if (d202 && /^\d{2}\.\d{2}\.\d{4}$/.test(d202)) {
+            setStepValue(202, d202, null, 'дата поверки комплекса');
+        }
+        if (d203 && /^\d{2}\.\d{2}\.\d{4}$/.test(d203)) {
+            setStepValue(203, d203, null, 'след. дата поверки комплекса');
+        }
+    }
+
+    function validateComplexForWrite() {
+        const errors = [];
+        const ui = $('paramComplexSerial');
+        if (!ui || !String(ui.value || '').trim()) {
+            errors.push('Введите серийный номер комплекса (п.201).');
+        }
+        applyComplexVerifFieldsToSteps();
+        const d202 = readStepVal(202);
+        const d203 = readStepVal(203);
+        if (!d202 || !/^\d{2}\.\d{2}\.\d{4}$/.test(d202)) {
+            errors.push('Укажите дату поверки комплекса (п.202, ДД.ММ.ГГГГ).');
+        }
+        if (!d203 || !/^\d{2}\.\d{2}\.\d{4}$/.test(d203)) {
+            errors.push('Укажите дату следующей поверки комплекса (п.203, ДД.ММ.ГГГГ).');
+        }
+        return { ok: errors.length === 0, errors: errors };
+    }
+
+    function applyComplexVerificationDates(force) {
+        const out = [];
+        const ui = $('paramComplexSerial');
+        if ((!ui || !String(ui.value || '').trim()) && !force) {
+            return 0;
+        }
+        const today = todayTDate();
+        const years = complexVerifyYearsForDesignation(readStepVal(200));
+        const next = addYearsTDate(today, years);
+        const setFn = force ? setStepValue : setStepIfEmpty;
+        setFn(202, today, out, 'дата поверки комплекса (сегодня)');
+        setFn(203, next, out, '+' + years + ' лет (МПИ комплекса)');
+        syncComplexVerifFieldsFromSteps();
+        return out.length;
     }
 
     function applyVerificationAndDefaults(lines) {
@@ -1481,6 +1655,16 @@
         syncMeterDateFieldsFromSteps: syncMeterDateFieldsFromSteps,
         applyMeterDateFieldsToSteps: applyMeterDateFieldsToSteps,
         validateMeterForWrite: validateMeterForWrite,
+        correctorSerialFromSteps: correctorSerialFromSteps,
+        syncCorrectorVerifFieldsFromSteps: syncCorrectorVerifFieldsFromSteps,
+        applyCorrectorVerifFieldsToSteps: applyCorrectorVerifFieldsToSteps,
+        applyCorrectorVerificationDates: applyCorrectorVerificationDates,
+        validateCorrectorForWrite: validateCorrectorForWrite,
+        applyComplexSerial: applyComplexSerial,
+        syncComplexVerifFieldsFromSteps: syncComplexVerifFieldsFromSteps,
+        applyComplexVerifFieldsToSteps: applyComplexVerifFieldsToSteps,
+        applyComplexVerificationDates: applyComplexVerificationDates,
+        validateComplexForWrite: validateComplexForWrite,
         paintLkgStatusBadge: paintLkgStatusBadge,
         refreshLkgStatusFromServer: refreshLkgStatusFromServer,
         shouldWriteSensorMemory: function (stepId) {
