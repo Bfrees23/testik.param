@@ -24,7 +24,7 @@ services:
     environment:
       - TZ=Europe/Moscow
     restart: unless-stopped
-    # TM07_BIND_HOST=127.0.0.1 — только localhost; по умолчанию 0.0.0.0 (LAN + Web Serial HTTPS).
+    # HTTP :8081 и HTTPS :8443 в LAN. Хостовый 443 не публикуем.
     ports:
       - "${TM07_BIND_HOST:-0.0.0.0}:8081:80"
       - "${TM07_BIND_HOST:-0.0.0.0}:8443:443"
@@ -48,6 +48,7 @@ services:
     volumes:
       - ./src:/app
       - ./data:/app/data
+      - ./firmware:/app/firmware:ro
       - ./database:/app/database:ro
       - ./.env:/app/.env:ro
     environment:
@@ -78,6 +79,11 @@ services:
       - TM07_SUPPLIER_LKG_HEX=${TM07_SUPPLIER_LKG_HEX:-}
       - TM07_CORR_LKG_HEX=${TM07_CORR_LKG_HEX:-}
       - TM07_MANUFACTURER_LKG_HEX=${TM07_MANUFACTURER_LKG_HEX:-}
+      - TM07_FIRMWARE_DIR=${TM07_FIRMWARE_DIR:-/app/firmware}
+      - TM07_SERIAL_XLSX=${TM07_SERIAL_XLSX:-/app/data/serial/Номера корректоров.xlsx}
+      - TM07_SERIAL_XLSX_UNC=${TM07_SERIAL_XLSX_UNC:-\\\\srv-fs\\FileServer\\Production\\BD_Corrector\\Инструкция по выпуску корректоров\\Номера корректоров.xlsx}
+      - TM07_SERIAL_AUTO_SYNC=${TM07_SERIAL_AUTO_SYNC:-1}
+      - GOTENBERG_URL=${GOTENBERG_URL:-http://gotenberg:3000}
     command: ["bash", "-c", "php /app/api/cli-close-stale-sessions.php 24 2>/dev/null || true; exec docker-php-entrypoint php-fpm"]
     healthcheck:
       test: ["CMD-SHELL", "php /app/api/cli-health.php"]
@@ -93,6 +99,17 @@ services:
         condition: service_completed_successfully
       firebird:
         condition: service_healthy
+      gotenberg:
+        condition: service_started
+    networks:
+      - bench
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: tm07-gotenberg
+    environment:
+      - TZ=Europe/Moscow
+    restart: unless-stopped
     networks:
       - bench
 

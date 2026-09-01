@@ -22,16 +22,22 @@ class KorrektorDevice {
         this._rs485RtsTxHigh = true;
     }
 
-    /** @throws {Error} если Web Serial недоступен (HTTP по LAN, не Chrome и т.д.) */
+    /** @throws {Error} если Web Serial недоступен (HTTP по LAN, не Chrome/Edge и т.д.) */
     static assertWebSerialAvailable() {
         if (typeof window !== 'undefined' && window.isSecureContext === false) {
             const host = window.location.hostname || 'HOST';
+            const origin = window.location.origin || 'http://' + host;
             throw new Error(
-                'Web Serial недоступен по HTTP с другого ПК. Откройте https://'
-                    + host
-                    + ':8443'
-                    + window.location.pathname
-                    + ' и примите сертификат (Chrome/Edge).'
+                'Web Serial (КАО) на HTTP с IP недоступен: нужен secure context. ' +
+                    'Варианты: 1) Edge → edge://flags → «Insecure origins treated as secure» → добавить ' +
+                    origin +
+                    ' → Restart; 2) открыть https://' +
+                    host +
+                    ':8443' +
+                    (window.location.pathname || '/') +
+                    '; 3) на этом ПК — http://127.0.0.1' +
+                    (window.location.pathname || '/') +
+                    '.'
             );
         }
         if (typeof navigator === 'undefined' || !navigator.serial) {
@@ -323,7 +329,7 @@ class KorrektorDevice {
                 0x0b: 'ошибка записи / недопустимое значение ЛКГ',
                 0x0c: 'ошибка опроса датчика',
             };
-            throw new Error(`Modbus exception 0x${code.toString(16)} ${names[code] || ''}`);
+            throw new Error(`Modbus exception 0x${code.toString(16).padStart(2, '0')} ${names[code] || ''}`);
         }
     }
 
@@ -459,17 +465,58 @@ class KorrektorDevice {
      * Пароль замка производителя по протоколу Modbus ТМ-07:
      * день+месяц+час (ДДММЧЧ ASCII), к каждому байту +0x20.
      * Пример 01.02.2024 12:xx → 50 51 50 52 51 52.
-     * @param {Date} date — локальное время прибора (wall-clock из REG_DATETIME)
+     *
+     * Важно: прошивка берёт Д/М/Ч из time_t через gmtime (UTC-компоненты) —
+     * это же время на дисплее. Стенд пишет в 0x008C московскую стену «как UTC»
+     * (naive), поэтому getUTC* = часы на приборе. Режим moscow (+3) — только
+     * запасной, если в прибор случайно записали настоящий UTC.
+     *
+     * @param {Date} date — Date из unix 0x008C
+     * @param {'utc'|'moscow'} [mode='utc']
      */
-    static encodeManufacturerLockPasswordBytes(date) {
+    static encodeManufacturerLockPasswordBytes(date, mode = 'utc') {
         const d = date instanceof Date ? date : new Date(date);
         if (Number.isNaN(d.getTime())) {
             throw new Error('Некорректная дата для пароля производителя');
         }
         const pad2 = (n) => String(n).padStart(2, '0');
-        // RTC прибора обычно хранит wall-clock как unix без TZ → UTC-компоненты = Д/М/Ч прибора.
-        const ascii = pad2(d.getUTCDate()) + pad2(d.getUTCMonth() + 1) + pad2(d.getUTCHours());
+        let ascii;
+        if (mode === 'moscow') {
+            const fmt = new Intl.DateTimeFormat('en-GB', {
+                timeZone: 'Europe/Moscow',
+                day: '2-digit',
+                month: '2-digit',
+                hour: '2-digit',
+                hourCycle: 'h23',
+            });
+            const map = {};
+            fmt.formatToParts(d).forEach((p) => {
+                if (p.type !== 'literal') map[p.type] = p.value;
+            });
+            ascii =
+                pad2(parseInt(map.day, 10)) +
+                pad2(parseInt(map.month, 10)) +
+                pad2(parseInt(map.hour, 10));
+        } else {
+            // Как CorrReader / исходный стенд: UTC-компоненты unix = Д/М/Ч пароля.
+            ascii = pad2(d.getUTCDate()) + pad2(d.getUTCMonth() + 1) + pad2(d.getUTCHours());
+        }
         return [...ascii].map((ch) => (ch.charCodeAt(0) + 0x20) & 0xff);
+    }
+
+    /** Варианты пароля 0x06A7 (utc первым; moscow — запасной). */
+    static manufacturerLockPasswordVariants(date) {
+        const modes = ['utc', 'moscow'];
+        const out = [];
+        const seen = new Set();
+        for (const mode of modes) {
+            const bytes = KorrektorDevice.encodeManufacturerLockPasswordBytes(date, mode);
+            const key = bytes.join(',');
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push({ mode, bytes });
+        }
+        return out;
     }
 
     /**
@@ -501,13 +548,26 @@ class KorrektorDevice {
 
     /**
      * Открыть замок производителя (0x06A7): пароль из даты/времени прибора (как CorrReader AutoPass / CmdPasswordFabric).
-     * @returns {Promise<{ bytes: number[], unix: number, date: Date }>}
+     * Сначала UTC-компоненты unix, при 0x03 — повтор с Europe/Moscow.
+     * @returns {Promise<{ bytes: number[], unix: number, date: Date, mode: string }>}
      */
     async openManufacturerLock(timeoutMs = 4000) {
         const { unix, date } = await this.readDeviceDateTime(timeoutMs);
-        const bytes = KorrektorDevice.encodeManufacturerLockPasswordBytes(date);
-        await this.writeMultiple(KorrektorDevice.REG_OPEN_MANUFACTURER_LOCK, bytes, timeoutMs);
-        return { bytes, unix, date };
+        const variants = KorrektorDevice.manufacturerLockPasswordVariants(date);
+        let lastErr = null;
+        for (const v of variants) {
+            try {
+                await this.writeMultiple(KorrektorDevice.REG_OPEN_MANUFACTURER_LOCK, v.bytes, timeoutMs);
+                return { bytes: v.bytes, unix, date, mode: v.mode };
+            } catch (e) {
+                lastErr = e;
+                const msg = String((e && e.message) || e || '');
+                if (!/0x0?3\b|недопустимое значение в запросе/i.test(msg)) {
+                    throw e;
+                }
+            }
+        }
+        throw lastErr || new Error('AutoPass 0x06A7: не удалось открыть замок производителя');
     }
 
     /**
@@ -557,8 +617,11 @@ class KorrektorDevice {
         return this.sendFrame(this.buildFrame(0x17, p));
     }
 
-    async writeMultiple(startReg, dataBytes, timeoutMs = 2000) {
+    async writeMultiple(startReg, dataBytes, timeoutMs = 2000, retries = 1) {
         if (!dataBytes.length || dataBytes.length % 2 !== 0) throw new Error('Запись: четное число байт');
+        if (dataBytes.length > 254) {
+            throw new Error('Запись 0x10: не больше 254 байт (127 регистров) за кадр');
+        }
         const regCount = dataBytes.length / 2;
         const p = [
             (startReg >> 8) & 0xff,
@@ -568,7 +631,26 @@ class KorrektorDevice {
             dataBytes.length & 0xff,
             ...dataBytes
         ];
-        return this.sendFrame(this.buildFrame(0x10, p), timeoutMs);
+        return this.sendFrame(this.buildFrame(0x10, p), timeoutMs, retries);
+    }
+
+    /**
+     * 0x10 без лимита 254 байт (окно прошивки: 256 регистров = 512 байт, ByteCount=0).
+     */
+    async writeMultipleUnbounded(startReg, dataBytes, timeoutMs = 15000) {
+        if (!dataBytes.length || dataBytes.length % 2 !== 0) {
+            throw new Error('Запись: четное число байт');
+        }
+        const regCount = dataBytes.length / 2;
+        const p = [
+            (startReg >> 8) & 0xff,
+            startReg & 0xff,
+            (regCount >> 8) & 0xff,
+            regCount & 0xff,
+            dataBytes.length & 0xff,
+            ...dataBytes,
+        ];
+        return this.sendFrame(this.buildFrame(0x10, p), timeoutMs, 0);
     }
 
     /** Float32 little-endian по потоку байт (см. пример в protocol Korrektora). */
@@ -765,9 +847,10 @@ class KorrektorDevice {
      * @param {string} str — 10 цифр
      * @param {Date} [now]
      * @param {string|null} [expectedPrefix] — '300' | '400' | null (любой из двух)
+     * @param {{ allowAnyProductionMonth?: boolean }} [opts] — повтор из реестра: любой прошлый месяц
      * @returns {{ ok: true, prefix: string, product: string, yy: number, mm: number, seq: number, fullYear: number } | { ok: false, error: string }}
      */
-    static validateTm07SerialNumber(str, now = new Date(), expectedPrefix = null) {
+    static validateTm07SerialNumber(str, now = new Date(), expectedPrefix = null, opts = null) {
         const s = String(str ?? '').trim();
         if (!/^\d{10}$/.test(s)) {
             return { ok: false, error: 'Серийный номер: ровно 10 цифр (формат PPPYYMMNNN).' };
@@ -795,13 +878,15 @@ class KorrektorDevice {
         const curY = now.getFullYear();
         const curM = now.getMonth() + 1;
         const nowMonthIdx = curY * 12 + (curM - 1);
-        const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-        const minMonthIdx = prevMonth.getFullYear() * 12 + prevMonth.getMonth();
         if (snMonthIdx > nowMonthIdx) {
             return { ok: false, error: 'Дата (год/месяц) в номере не может быть позже текущего месяца.' };
         }
-        if (snMonthIdx < minMonthIdx) {
-            return { ok: false, error: 'Дата в номере не раньше чем предыдущий календарный месяц.' };
+        if (!(opts && opts.allowAnyProductionMonth)) {
+            const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+            const minMonthIdx = prevMonth.getFullYear() * 12 + prevMonth.getMonth();
+            if (snMonthIdx < minMonthIdx) {
+                return { ok: false, error: 'Дата в номере не раньше чем предыдущий календарный месяц.' };
+            }
         }
         const product = prefix === KorrektorDevice.TM07_COMPLEX_SERIAL_PREFIX ? 'ПК-ТМ' : 'ТМ-07';
         return { ok: true, prefix, product, yy, mm, seq, fullYear };
@@ -822,6 +907,130 @@ class KorrektorDevice {
             `корр. 300${py2}${pm2}NNN / 300${y2}${m2}NNN; ` +
             `компл. 400${py2}${pm2}NNN / 400${y2}${m2}NNN`
         );
+    }
+
+    static get REG_SW_VER() {
+        return 0x0007;
+    }
+
+    static get REG_FW_SIZE() {
+        return 0x2000;
+    }
+
+    static get REG_FW_DATA() {
+        return 0x2002;
+    }
+
+    /**
+     * Только номер вида 1.010105.
+     * Из «TM-07_230176_v1.010105_2A23F66C_438D4EAA» / «v1.010105» / регистра 0x0007.
+     */
+    static normalizeFwVersion(s) {
+        const raw = String(s || '').replace(/\0/g, '').trim();
+        const tagged = raw.match(/(?:^|[_\-.])v(\d+\.\d+)/i) || raw.match(/\bv(\d+\.\d+)/i);
+        if (tagged) {
+            return tagged[1];
+        }
+        const bare = raw.replace(/^v/i, '').match(/(\d+\.\d+)/);
+        return bare ? bare[1] : '';
+    }
+
+    /**
+     * Имя CorrReader: TM-07_{размер}_v{версия}_{ЛКГ32}_{ЛКГ32}.bin
+     * Сравнение версии — только v…; ЛКГ — hex после версии (пишется в 0x07B6 при заливке).
+     */
+    static parseFirmwareFilename(name) {
+        const base = String(name || '')
+            .replace(/\\/g, '/')
+            .split('/')
+            .pop()
+            .replace(/\.bin$/i, '');
+        const version = KorrektorDevice.normalizeFwVersion(base);
+        const sizeM = base.match(/(?:^|[_\-])(\d{4,})(?=_v)/i);
+        const afterVer = version ? base.replace(new RegExp('v' + version.replace(/\./g, '\\.'), 'i'), '') : base;
+        const words = [];
+        const re = /[0-9A-Fa-f]{8}/g;
+        let m;
+        while ((m = re.exec(afterVer))) {
+            words.push(m[0].toUpperCase());
+        }
+        const lkgBytes = [];
+        const lkgKeys = [];
+        words.forEach((h) => {
+            const key = [];
+            for (let i = 0; i < 8; i += 2) {
+                const b = parseInt(h.slice(i, i + 2), 16);
+                lkgBytes.push(b);
+                key.push(b);
+            }
+            lkgKeys.push(key);
+        });
+        return {
+            version,
+            sizeFromName: sizeM ? Number(sizeM[1]) : 0,
+            lkgWords: words,
+            lkgHex: words.join('_'),
+            lkgBytes,
+            lkgKeys,
+        };
+    }
+
+    /**
+     * CorrReader Partiton 20: размер → 0x2000, затем блоки ровно по 256 регистров (512 байт) → 0x2002.
+     * Обычный 0x10 ≤123 рег. на 0x2002 даёт exception 0x03.
+     */
+    async writeFirmwareImage(bin, opts) {
+        const data = bin instanceof Uint8Array ? bin : new Uint8Array(bin || []);
+        if (!data.length) {
+            throw new Error('Файл прошивки пуст');
+        }
+        const timeoutMs = (opts && opts.timeoutMs) || 20000;
+        const onProgress = opts && opts.onProgress;
+        const armLkg = opts && opts.armLkg;
+        const retries = Math.max(1, Number(opts && opts.retries) || 3);
+        const size = data.length >>> 0;
+        const sizeBytes = [size & 0xff, (size >> 8) & 0xff, (size >> 16) & 0xff, (size >> 24) & 0xff];
+        const isLkgErr = (e) =>
+            /0x0?b\b|exception\s*11|недопустимое значение лкг/i.test(String((e && e.message) || e || ''));
+        if (typeof armLkg === 'function') {
+            await armLkg();
+        }
+        let lastSizeErr = null;
+        for (let n = 0; n < retries; n += 1) {
+            try {
+                if (n > 0 && typeof armLkg === 'function') {
+                    await armLkg();
+                }
+                await this.writeMultiple(KorrektorDevice.REG_FW_SIZE, sizeBytes, timeoutMs);
+                lastSizeErr = null;
+                break;
+            } catch (e) {
+                lastSizeErr = e;
+                if (!isLkgErr(e) || n === retries - 1) {
+                    throw e;
+                }
+                await new Promise((r) => setTimeout(r, 80));
+            }
+        }
+        if (lastSizeErr) {
+            throw lastSizeErr;
+        }
+        await new Promise((r) => setTimeout(r, 200));
+        const BLOCK_REGS = 256;
+        const BLOCK_BYTES = BLOCK_REGS * 2;
+        let offset = 0;
+        while (offset < data.length) {
+            const block = new Uint8Array(BLOCK_BYTES);
+            const n = Math.min(BLOCK_BYTES, data.length - offset);
+            block.set(data.subarray(offset, offset + n));
+            await this.writeMultipleUnbounded(KorrektorDevice.REG_FW_DATA, [...block], timeoutMs);
+            offset += n;
+            if (typeof onProgress === 'function') {
+                onProgress(Math.min(offset, data.length), data.length);
+            }
+            await new Promise((r) => setTimeout(r, 30));
+        }
+        return { bytes: data.length };
     }
 }
 

@@ -31,4 +31,5 @@ head -c 300 /tmp/tm07-lan-status.json 2>/dev/null || true
 echo ""
 echo ""
 echo "С других ПК в LAN: https://${LAN_IP}:8443"
+echo "Проброс на публичный IP не нужен. Wi‑Fi: та же сеть, что Ethernet, либо USB Wi‑Fi + хот‑спот Windows."
 echo "Firewall Hyper-V (если нужно): powershell -File scripts/ensure-lan-access.ps1"

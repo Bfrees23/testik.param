@@ -78,4 +78,6 @@ try {
 
 Write-Host ""
 Write-Host "На других ПК в сети откройте: https://${lanIp}:8443"
+Write-Host "Проброс портов на публичный IP не нужен."
+Write-Host "Wi-Fi: та же корпоративная сеть, что Ethernet стенда, либо USB Wi-Fi + мобильный хот-спот Windows."
 Write-Host "Если браузер ругается на сертификат — один раз установите CA с /bench-ca.crt"

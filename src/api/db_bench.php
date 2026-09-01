@@ -357,6 +357,15 @@ function bench_run_migrations(PDO $pdo): void
         'ASSEMBLY_CONFIRMED_AT',
         bench_is_firebird($pdo) ? 'TIMESTAMP' : 'TEXT'
     );
+    try {
+        if (bench_is_firebird($pdo)) {
+            $pdo->exec('CREATE INDEX IDX_SI_ORDER_KIND ON TM07_SERIAL_ISSUED (ORDER_NUMBER, KIND)');
+        } else {
+            $pdo->exec('CREATE INDEX IF NOT EXISTS IDX_SI_ORDER_KIND ON TM07_SERIAL_ISSUED (ORDER_NUMBER, KIND)');
+        }
+    } catch (Throwable) {
+        // index may already exist
+    }
 
     $eventTypes = [
         ['operator_login', 'Вход оператора', 'auth'],

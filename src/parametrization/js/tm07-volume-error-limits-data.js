@@ -1,8 +1,14 @@
 /**
- * Таблицы 15–16 РЭ: пределы относительной погрешности объёма газа.
- * Табл. 15 — при рабочих условиях → п.119–120 (счётчик), п.219–220 (комплекс).
- * Табл. 16 — к стандартным условиям → п.225–226 (комплекс).
+ * Таблицы 15–16 РЭ ПК-ТМ: пределы относительной погрешности объёма газа.
+ *
+ * Табл. 15 (рабочие условия):
+ *   п.119–120 — счётчик; п.219–220 — комплекс (те же пределы, что табл.15).
+ * П.225–226 (к стандартным условиям):
+ *   всегда п.119+0.1 и п.120+0.1 (табл.16 в РЭ обычно совпадает с этим правилом).
+ *
  * Привязка: исполнение комплекса (ПК-ТМ-Р1…Т2) + модификация (О, 2О, 3О, 4О, У, 2У).
+ * Паспортные оверрайды счётчика (исп. R и т.п.) — в TM07_COMPLEX_METER_TYPES, только п.119/120;
+ * после них п.225/226 пересчитываются как +0.1.
  */
 (function () {
     'use strict';
@@ -12,7 +18,7 @@
     /** Допустимые модификации по комплексу (табл. 15 и 16). */
     const COMPLEX_MODS = {
         'ПК-ТМ-Р1': ['О', '2О', '3О', '4О', 'У', '2У'],
-        'ПК-ТМ-Р2': ['О'],
+        // 'ПК-ТМ-Р2': ['О'], // не выпускают
         'ПК-ТМ-Р3': ['О', '2О', '3О', '4О', 'У', '2У'],
         'ПК-ТМ-Р4': ['2О', '3О', 'У', '2У'],
         'ПК-ТМ-Р5': ['2О', 'У', '2У'],
@@ -23,7 +29,7 @@
 
     const DEFAULT_MOD = {
         'ПК-ТМ-Р1': 'О',
-        'ПК-ТМ-Р2': 'О',
+        // 'ПК-ТМ-Р2': 'О',
         'ПК-ТМ-Р3': 'О',
         'ПК-ТМ-Р4': '2О',
         'ПК-ТМ-Р5': '2О',
@@ -42,9 +48,7 @@
             У: { qminQt: 0.9, qtQmax: 0.6 },
             '2У': { single: 0.9 },
         },
-        'ПК-ТМ-Р2': {
-            О: { qminQt: 2.0, qtQmax: 1.0 },
-        },
+        // 'ПК-ТМ-Р2': { О: { qminQt: 2.0, qtQmax: 1.0 } },
         'ПК-ТМ-Р3': {
             О: { qminQt: 1.9, qtQmax: 1.0 },
             '2О': { qminQt: 1.7, qtQmax: 1.0 },
@@ -120,9 +124,7 @@
             У: { qminQt: 1.0, qtQmax: 0.7 },
             '2У': { single: 1.0 },
         },
-        'ПК-ТМ-Р2': {
-            О: { qminQt: 2.1, qtQmax: 1.1 },
-        },
+        // 'ПК-ТМ-Р2': { О: { qminQt: 2.1, qtQmax: 1.1 } },
         'ПК-ТМ-Р3': {
             О: { qminQt: 2.0, qtQmax: 1.1 },
             '2О': { qminQt: 1.8, qtQmax: 1.1 },
@@ -426,11 +428,11 @@
             result = resolveSimpleTable15(complexKey, extracted);
         }
 
-        if (!result || (!result.working && !result.standard)) {
+        if (!result || !result.working) {
             return null;
         }
 
-        const built = buildStepValues(result.working, result.standard);
+        const built = buildStepValues(result.working);
 
         return {
             complexKey: complexKey,
@@ -438,25 +440,41 @@
             extractedModification: extracted,
             ruleNote: result.ruleNote,
             working: result.working,
-            standard: result.standard,
+            standard: {
+                qminQt: Number(result.working.qminQt) + 0.1,
+                qtQmax: Number(result.working.qtQmax) + 0.1,
+            },
             steps: built.values,
             tableByStep: built.tableByStep,
         };
     }
 
-    function buildStepValues(working, standard) {
+    /** п.225 = п.119+0.1, п.226 = п.120+0.1. */
+    function standardStepsFromWorking(qminQt, qtQmax) {
+        const a = parseFloat(String(qminQt).replace(',', '.'));
+        const b = parseFloat(String(qtQmax).replace(',', '.'));
+        if (!Number.isFinite(a) || !Number.isFinite(b)) {
+            return null;
+        }
+        return { 225: f2(a + 0.1), 226: f2(b + 0.1) };
+    }
+
+    function buildStepValues(working) {
         const out = {};
         const meta = {};
-        if (working) {
-            [119, 120, 219, 220].forEach(function (sid) {
-                const val = sid <= 120 ? (sid === 119 ? working.qminQt : working.qtQmax) : sid === 219 ? working.qminQt : working.qtQmax;
-                out[sid] = f2(val);
-                meta[sid] = 15;
-            });
+        if (!working) {
+            return { values: out, tableByStep: meta };
         }
-        if (standard) {
-            out[225] = f2(standard.qminQt);
-            out[226] = f2(standard.qtQmax);
+        [119, 120, 219, 220].forEach(function (sid) {
+            const val =
+                sid === 119 || sid === 219 ? working.qminQt : working.qtQmax;
+            out[sid] = f2(val);
+            meta[sid] = 15;
+        });
+        const std = standardStepsFromWorking(working.qminQt, working.qtQmax);
+        if (std) {
+            out[225] = std[225];
+            out[226] = std[226];
             meta[225] = 16;
             meta[226] = 16;
         }
@@ -476,5 +494,6 @@
         extractModification: extractModification,
         resolveTable15Working: resolveTable15Working,
         resolveVolumeErrors: resolveVolumeErrors,
+        standardStepsFromWorking: standardStepsFromWorking,
     };
 })();

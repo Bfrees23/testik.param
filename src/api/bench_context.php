@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/db_bench.php';
 require_once __DIR__ . '/auth_common.php';
+require_once __DIR__ . '/lib/serial_xlsx.php';
 
 if (session_status() !== PHP_SESSION_ACTIVE) {
     auth_session_start();
@@ -26,6 +27,42 @@ function bench_operator_display_name(?string $lastName, ?string $firstName, ?str
         return $first;
     }
     return trim((string) $fallback);
+}
+
+/**
+ * Дата/время для UI: всегда Europe/Moscow, ISO с оффсетом (+03:00).
+ * SQLite datetime('now') — UTC; Firebird CURRENT_TIMESTAMP — обычно локаль сервера (МСК).
+ */
+function bench_format_ts_moscow(mixed $raw): ?string
+{
+    if ($raw === null || $raw === '') {
+        return null;
+    }
+    $s = trim((string) $raw);
+    if ($s === '') {
+        return null;
+    }
+    try {
+        $moscow = new DateTimeZone('Europe/Moscow');
+        if (preg_match('/[zZ]|[+-]\d{2}:?\d{2}$/', $s)) {
+            $dt = new DateTimeImmutable($s);
+        } else {
+            $naiveTz =
+                function_exists('bench_db_driver') && bench_db_driver() === 'sqlite'
+                    ? new DateTimeZone('UTC')
+                    : $moscow;
+            $dt = new DateTimeImmutable($s, $naiveTz);
+        }
+        return $dt->setTimezone($moscow)->format('c');
+    } catch (Throwable) {
+        return $s;
+    }
+}
+
+/** Текущее время МСК (для явных timestamp-полей при необходимости). */
+function bench_now_moscow_sql(): string
+{
+    return (new DateTimeImmutable('now', new DateTimeZone('Europe/Moscow')))->format('Y-m-d H:i:s');
 }
 
 function bench_operator_select_cols(): string
@@ -515,6 +552,23 @@ function bench_require_operator_session(): array
 }
 
 /**
+ * Стенд калибровки: admin UI или сессия оператора.
+ * @return array|null оператор из сессии (если есть), иначе null при admin-only
+ */
+function bench_require_operator_or_admin(): ?array
+{
+    if (auth_is_admin()) {
+        $sessionOp = $_SESSION[BENCH_SESSION_OPERATOR] ?? null;
+        return is_array($sessionOp) && !empty($sessionOp['LOGIN']) ? $sessionOp : null;
+    }
+    $sessionOp = $_SESSION[BENCH_SESSION_OPERATOR] ?? null;
+    if (!is_array($sessionOp) || empty($sessionOp['LOGIN'])) {
+        throw new RuntimeException('Требуется авторизация оператора или администратора');
+    }
+    return $sessionOp;
+}
+
+/**
  * Контекст для журнала/API: рабочее место из body, оператор — только из PHP-сессии
  * (не поднимать привилегии по userLogin из тела запроса).
  */
@@ -639,6 +693,20 @@ function bench_normalize_session_stage(string $stage): string
 function bench_session_stage_from_row(array $row, ?array $param = null): string
 {
     $stage = trim((string) ($row['SESSION_STAGE'] ?? ''));
+    if ($stage === 'completed') {
+        return 'completed';
+    }
+    if ($stage === 'parametrization') {
+        return 'parametrization';
+    }
+    // Сборка уже подтверждена (есть метка), но SESSION_STAGE забыли обновить — не требуем повторного клика.
+    $assemblyAt = $row['ASSEMBLY_CONFIRMED_AT'] ?? null;
+    if ($assemblyAt !== null && $assemblyAt !== '') {
+        if ($param && ($param['status'] ?? '') === 'done') {
+            return 'completed';
+        }
+        return 'parametrization';
+    }
     if ($stage !== '') {
         return bench_normalize_session_stage($stage);
     }
@@ -762,8 +830,359 @@ function bench_month_key_from_date(?string $isoDate = null): array
     ];
 }
 
+function bench_order_number_canonical(?string $raw): string
+{
+    $s = trim((string) $raw);
+    if ($s === '') {
+        return '';
+    }
+    $digits = serial_xlsx_order_digits($s);
+    if ($digits === '' || $digits === '0') {
+        return $s;
+    }
+    return 'ТМ00-' . str_pad($digits, 6, '0', STR_PAD_LEFT);
+}
+
+/** Сравнение номеров заказа с учётом «539» ↔ «ТМ00-000539». */
+function bench_orders_equal(?string $a, ?string $b): bool
+{
+    $ca = bench_order_number_canonical($a);
+    $cb = bench_order_number_canonical($b);
+    if ($ca !== '' && $cb !== '' && $ca === $cb) {
+        return true;
+    }
+    $ta = trim((string) $a);
+    $tb = trim((string) $b);
+    return $ta !== '' && $ta === $tb;
+}
+
 /**
- * @return array{serial:string,prefix:string,stepId:int,seq:int,monthKey:string,fullYear:int,mm:string,kind:string,dryRun:bool}
+ * Активная сессия этого оператора по номеру заказа.
+ * Предпочитает текущее рабочее место, иначе любую active того же оператора.
+ */
+function bench_find_active_session_by_order(
+    PDO $pdo,
+    string $orderNumber,
+    int $operatorId,
+    ?int $preferWorkstationId = null
+): ?array {
+    if ($operatorId <= 0 || trim($orderNumber) === '') {
+        return null;
+    }
+    $digits = serial_xlsx_order_digits($orderNumber);
+    $keys = array_values(array_unique(array_filter([
+        trim($orderNumber),
+        bench_order_number_canonical($orderNumber),
+        $digits,
+        $digits !== '' ? str_pad($digits, 6, '0', STR_PAD_LEFT) : '',
+        $digits !== '' ? 'ТМ00-' . str_pad($digits, 6, '0', STR_PAD_LEFT) : '',
+    ], static fn ($v) => $v !== null && $v !== '')));
+    if (!$keys) {
+        return null;
+    }
+    $placeholders = implode(',', array_fill(0, count($keys), '?'));
+
+    $fetch = static function (PDO $pdo, string $sql, array $params): ?array {
+        $st = $pdo->prepare($sql);
+        $st->execute($params);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    };
+
+    if ($preferWorkstationId !== null && $preferWorkstationId > 0) {
+        if (bench_is_firebird($pdo)) {
+            $row = $fetch(
+                $pdo,
+                'SELECT FIRST 1 ID, ORDER_NUMBER, ORDER_STATUS, OPERATOR_ID, WORKSTATION_ID, ORDER_PAYLOAD, STATE,
+                        SESSION_STAGE, SERIAL_CORRECTOR, ASSEMBLY_CONFIRMED_AT, OPENED_AT, CLOSED_AT
+                 FROM TM07_BENCH_SESSION
+                 WHERE STATE = ? AND OPERATOR_ID = ? AND WORKSTATION_ID = ?
+                   AND ORDER_NUMBER IN (' . $placeholders . ')
+                 ORDER BY OPENED_AT DESC',
+                array_merge(['active', $operatorId, $preferWorkstationId], $keys)
+            );
+        } else {
+            $row = $fetch(
+                $pdo,
+                "SELECT ID, ORDER_NUMBER, ORDER_STATUS, OPERATOR_ID, WORKSTATION_ID, ORDER_PAYLOAD, STATE,
+                        SESSION_STAGE, SERIAL_CORRECTOR, ASSEMBLY_CONFIRMED_AT, OPENED_AT, CLOSED_AT
+                 FROM TM07_BENCH_SESSION
+                 WHERE STATE = 'active' AND OPERATOR_ID = ? AND WORKSTATION_ID = ?
+                   AND ORDER_NUMBER IN ($placeholders)
+                 ORDER BY OPENED_AT DESC
+                 LIMIT 1",
+                array_merge([$operatorId, $preferWorkstationId], $keys)
+            );
+        }
+        if ($row) {
+            return $row;
+        }
+    }
+
+    if (bench_is_firebird($pdo)) {
+        return $fetch(
+            $pdo,
+            'SELECT FIRST 1 ID, ORDER_NUMBER, ORDER_STATUS, OPERATOR_ID, WORKSTATION_ID, ORDER_PAYLOAD, STATE,
+                    SESSION_STAGE, SERIAL_CORRECTOR, ASSEMBLY_CONFIRMED_AT, OPENED_AT, CLOSED_AT
+             FROM TM07_BENCH_SESSION
+             WHERE STATE = ? AND OPERATOR_ID = ?
+               AND ORDER_NUMBER IN (' . $placeholders . ')
+             ORDER BY OPENED_AT DESC',
+            array_merge(['active', $operatorId], $keys)
+        );
+    }
+
+    return $fetch(
+        $pdo,
+        "SELECT ID, ORDER_NUMBER, ORDER_STATUS, OPERATOR_ID, WORKSTATION_ID, ORDER_PAYLOAD, STATE,
+                SESSION_STAGE, SERIAL_CORRECTOR, ASSEMBLY_CONFIRMED_AT, OPENED_AT, CLOSED_AT
+         FROM TM07_BENCH_SESSION
+         WHERE STATE = 'active' AND OPERATOR_ID = ?
+           AND ORDER_NUMBER IN ($placeholders)
+         ORDER BY OPENED_AT DESC
+         LIMIT 1",
+        array_merge([$operatorId], $keys)
+    );
+}
+
+/**
+ * Последняя сессия оператора по заказу (active или closed) — для повторного входа в тот же номер.
+ * Active предпочтительнее закрытой; среди равных — по OPENED_AT DESC.
+ */
+function bench_find_latest_session_by_order(
+    PDO $pdo,
+    string $orderNumber,
+    int $operatorId,
+    ?int $preferWorkstationId = null
+): ?array {
+    if ($operatorId <= 0 || trim($orderNumber) === '') {
+        return null;
+    }
+    $digits = serial_xlsx_order_digits($orderNumber);
+    $keys = array_values(array_unique(array_filter([
+        trim($orderNumber),
+        bench_order_number_canonical($orderNumber),
+        $digits,
+        $digits !== '' ? str_pad($digits, 6, '0', STR_PAD_LEFT) : '',
+        $digits !== '' ? 'ТМ00-' . str_pad($digits, 6, '0', STR_PAD_LEFT) : '',
+    ], static fn ($v) => $v !== null && $v !== '')));
+    if (!$keys) {
+        return null;
+    }
+    $placeholders = implode(',', array_fill(0, count($keys), '?'));
+
+    $fetch = static function (PDO $pdo, string $sql, array $params): ?array {
+        $st = $pdo->prepare($sql);
+        $st->execute($params);
+        $row = $st->fetch(PDO::FETCH_ASSOC);
+        return $row ?: null;
+    };
+
+    // Сначала active (как bench_find_active_session_by_order), затем последняя closed.
+    $active = bench_find_active_session_by_order($pdo, $orderNumber, $operatorId, $preferWorkstationId);
+    if ($active) {
+        return $active;
+    }
+
+    if ($preferWorkstationId !== null && $preferWorkstationId > 0) {
+        if (bench_is_firebird($pdo)) {
+            $row = $fetch(
+                $pdo,
+                'SELECT FIRST 1 ID, ORDER_NUMBER, ORDER_STATUS, OPERATOR_ID, WORKSTATION_ID, ORDER_PAYLOAD, STATE,
+                        SESSION_STAGE, SERIAL_CORRECTOR, ASSEMBLY_CONFIRMED_AT, OPENED_AT, CLOSED_AT
+                 FROM TM07_BENCH_SESSION
+                 WHERE STATE = ? AND OPERATOR_ID = ? AND WORKSTATION_ID = ?
+                   AND ORDER_NUMBER IN (' . $placeholders . ')
+                 ORDER BY OPENED_AT DESC',
+                array_merge(['closed', $operatorId, $preferWorkstationId], $keys)
+            );
+        } else {
+            $row = $fetch(
+                $pdo,
+                "SELECT ID, ORDER_NUMBER, ORDER_STATUS, OPERATOR_ID, WORKSTATION_ID, ORDER_PAYLOAD, STATE,
+                        SESSION_STAGE, SERIAL_CORRECTOR, ASSEMBLY_CONFIRMED_AT, OPENED_AT, CLOSED_AT
+                 FROM TM07_BENCH_SESSION
+                 WHERE STATE = 'closed' AND OPERATOR_ID = ? AND WORKSTATION_ID = ?
+                   AND ORDER_NUMBER IN ($placeholders)
+                 ORDER BY OPENED_AT DESC
+                 LIMIT 1",
+                array_merge([$operatorId, $preferWorkstationId], $keys)
+            );
+        }
+        if ($row) {
+            return $row;
+        }
+    }
+
+    if (bench_is_firebird($pdo)) {
+        return $fetch(
+            $pdo,
+            'SELECT FIRST 1 ID, ORDER_NUMBER, ORDER_STATUS, OPERATOR_ID, WORKSTATION_ID, ORDER_PAYLOAD, STATE,
+                    SESSION_STAGE, SERIAL_CORRECTOR, ASSEMBLY_CONFIRMED_AT, OPENED_AT, CLOSED_AT
+             FROM TM07_BENCH_SESSION
+             WHERE STATE = ? AND OPERATOR_ID = ?
+               AND ORDER_NUMBER IN (' . $placeholders . ')
+             ORDER BY OPENED_AT DESC',
+            array_merge(['closed', $operatorId], $keys)
+        );
+    }
+
+    return $fetch(
+        $pdo,
+        "SELECT ID, ORDER_NUMBER, ORDER_STATUS, OPERATOR_ID, WORKSTATION_ID, ORDER_PAYLOAD, STATE,
+                SESSION_STAGE, SERIAL_CORRECTOR, ASSEMBLY_CONFIRMED_AT, OPENED_AT, CLOSED_AT
+         FROM TM07_BENCH_SESSION
+         WHERE STATE = 'closed' AND OPERATOR_ID = ?
+           AND ORDER_NUMBER IN ($placeholders)
+         ORDER BY OPENED_AT DESC
+         LIMIT 1",
+        array_merge([$operatorId], $keys)
+    );
+}
+
+function bench_resolve_order_number(PDO $pdo, array $contextBody): string
+{
+    $orderNumber = trim((string) ($contextBody['orderNumber'] ?? ''));
+    if ($orderNumber !== '') {
+        return bench_order_number_canonical($orderNumber);
+    }
+    try {
+        $ctx = bench_current_context($pdo, $contextBody);
+        $active = bench_get_active_order_session($pdo, $ctx['workstationId']);
+        if ($active && !empty($active['ORDER_NUMBER'])) {
+            return bench_order_number_canonical((string) $active['ORDER_NUMBER']);
+        }
+    } catch (Throwable) {
+        // нет сессии — оставляем пусто
+    }
+    return '';
+}
+
+function bench_serial_result(array $meta, array $parsed, string $kind, bool $dryRun, bool $reused, string $source, string $orderNumber): array
+{
+    $yy = (int) ($parsed['yy'] ?? substr((string) $parsed['monthKey'], 0, 2));
+    return [
+        'serial' => $parsed['serial'],
+        'kind' => $kind,
+        'prefix' => $meta['prefix'],
+        'stepId' => $meta['stepId'],
+        'seq' => (int) $parsed['seq'],
+        'monthKey' => (string) $parsed['monthKey'],
+        'fullYear' => 2000 + $yy,
+        'mm' => sprintf('%02d', (int) ($parsed['mm'] ?? substr((string) $parsed['monthKey'], 2, 2))),
+        'dryRun' => $dryRun,
+        'reused' => $reused,
+        'source' => $source,
+        'orderNumber' => $orderNumber !== '' ? $orderNumber : null,
+    ];
+}
+
+function bench_find_issued_for_order(PDO $pdo, string $kind, string $orderNumber): ?array
+{
+    $digits = serial_xlsx_order_digits($orderNumber);
+    if ($digits === '') {
+        return null;
+    }
+    $keys = array_values(array_unique(array_filter([
+        $orderNumber,
+        bench_order_number_canonical($orderNumber),
+        $digits,
+        str_pad($digits, 6, '0', STR_PAD_LEFT),
+    ])));
+    if ($keys === []) {
+        return null;
+    }
+    $placeholders = implode(',', array_fill(0, count($keys), '?'));
+    $sql = 'SELECT SERIAL, PREFIX, MONTH_KEY, SEQ, ORDER_NUMBER FROM TM07_SERIAL_ISSUED
+            WHERE KIND = ? AND ORDER_NUMBER IN (' . $placeholders . ')
+            ORDER BY ID DESC';
+    if (bench_is_firebird($pdo)) {
+        $sql = 'SELECT FIRST 1 SERIAL, PREFIX, MONTH_KEY, SEQ, ORDER_NUMBER FROM TM07_SERIAL_ISSUED
+                WHERE KIND = ? AND ORDER_NUMBER IN (' . $placeholders . ')
+                ORDER BY ID DESC';
+    } else {
+        $sql .= ' LIMIT 1';
+    }
+    $st = $pdo->prepare($sql);
+    $st->execute(array_merge([$kind], $keys));
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) {
+        return null;
+    }
+    $parsed = serial_xlsx_parse_sn(trim((string) $row['SERIAL']));
+    if (!$parsed) {
+        return null;
+    }
+    $parsed['source'] = 'issued';
+    return $parsed;
+}
+
+function bench_find_session_corrector_for_order(PDO $pdo, string $orderNumber): ?array
+{
+    $digits = serial_xlsx_order_digits($orderNumber);
+    if ($digits === '') {
+        return null;
+    }
+    $keys = array_values(array_unique(array_filter([
+        $orderNumber,
+        bench_order_number_canonical($orderNumber),
+        $digits,
+        str_pad($digits, 6, '0', STR_PAD_LEFT),
+    ])));
+    $placeholders = implode(',', array_fill(0, count($keys), '?'));
+    $sql = "SELECT SERIAL_CORRECTOR, ORDER_NUMBER FROM TM07_BENCH_SESSION
+            WHERE SERIAL_CORRECTOR IS NOT NULL AND SERIAL_CORRECTOR <> ''
+              AND ORDER_NUMBER IN ($placeholders)
+            ORDER BY ID DESC";
+    if (bench_is_firebird($pdo)) {
+        $sql = "SELECT FIRST 1 SERIAL_CORRECTOR, ORDER_NUMBER FROM TM07_BENCH_SESSION
+                WHERE SERIAL_CORRECTOR IS NOT NULL AND SERIAL_CORRECTOR <> ''
+                  AND ORDER_NUMBER IN ($placeholders)
+                ORDER BY ID DESC";
+    } else {
+        $sql .= ' LIMIT 1';
+    }
+    $st = $pdo->prepare($sql);
+    $st->execute($keys);
+    $row = $st->fetch(PDO::FETCH_ASSOC);
+    if (!$row) {
+        return null;
+    }
+    $parsed = serial_xlsx_parse_sn(trim((string) $row['SERIAL_CORRECTOR']));
+    if (!$parsed || $parsed['kind'] !== 'corrector') {
+        return null;
+    }
+    $parsed['source'] = 'session';
+    return $parsed;
+}
+
+function bench_remember_existing_serial(PDO $pdo, array $parsed, string $kind, string $orderNumber, array $contextBody): void
+{
+    $ctx = bench_current_context($pdo, $contextBody);
+    $payload = json_encode(['source' => $parsed['source'] ?? 'xlsx', 'reused' => true], JSON_UNESCAPED_UNICODE);
+    try {
+        $ins = $pdo->prepare(
+            'INSERT INTO TM07_SERIAL_ISSUED (SERIAL, KIND, PREFIX, MONTH_KEY, SEQ, OPERATOR_ID, WORKSTATION_ID, ORDER_NUMBER, PAYLOAD)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $ins->execute([
+            $parsed['serial'],
+            $kind,
+            $parsed['prefix'],
+            $parsed['monthKey'],
+            $parsed['seq'],
+            $ctx['operatorId'],
+            $ctx['workstationId'],
+            $orderNumber !== '' ? $orderNumber : null,
+            $payload,
+        ]);
+    } catch (Throwable) {
+        // SERIAL UNIQUE — уже есть в БД
+    }
+}
+
+/**
+ * @return array{serial:string,prefix:string,stepId:int,seq:int,monthKey:string,fullYear:int,mm:string,kind:string,dryRun:bool,reused:bool,source:string}
  */
 function bench_allocate_serial(PDO $pdo, string $kind, ?string $isoDate, bool $dryRun, array $contextBody = []): array
 {
@@ -771,10 +1190,70 @@ function bench_allocate_serial(PDO $pdo, string $kind, ?string $isoDate, bool $d
     $month = bench_month_key_from_date($isoDate);
     $prefix = $meta['prefix'];
     $monthKey = $month['monthKey'];
+    $orderNumber = bench_resolve_order_number($pdo, $contextBody);
+
+    if ($orderNumber !== '') {
+        // Только Excel: в Firebird уже лежат «локальные» 3002608062 и т.п., их нельзя возвращать.
+        $existing = null;
+        try {
+            $existing = serial_xlsx_lookup($orderNumber, $kind);
+        } catch (Throwable) {
+            $existing = null;
+        }
+        if ($existing) {
+            if (!$dryRun) {
+                bench_remember_existing_serial($pdo, $existing, $kind, $orderNumber, $contextBody);
+            }
+            return bench_serial_result($meta, $existing, $kind, $dryRun, true, (string) ($existing['source'] ?? 'xlsx'), $orderNumber);
+        }
+    }
+
+    $xlsxMax = 0;
+    try {
+        $xlsxMax = serial_xlsx_max_seq($prefix, $monthKey);
+    } catch (Throwable) {
+        $xlsxMax = 0;
+    }
+
+    if ($dryRun) {
+        $nextSeq = $xlsxMax + 1;
+        if ($nextSeq > 999) {
+            throw new RuntimeException('Serial sequence overflow for ' . $prefix . $monthKey);
+        }
+        $serial = sprintf('%s%s%03d', $prefix, $monthKey, $nextSeq);
+        $parsed = [
+            'serial' => $serial,
+            'yy' => (int) substr($monthKey, 0, 2),
+            'mm' => (int) substr($monthKey, 2, 2),
+            'seq' => $nextSeq,
+            'monthKey' => $monthKey,
+            'prefix' => $prefix,
+        ];
+        return bench_serial_result($meta, $parsed, $kind, true, false, 'xlsx-next', $orderNumber);
+    }
+
+    $issuedXlsx = serial_xlsx_issue_new($kind, $orderNumber, $monthKey, [
+        'execution' => (string) ($contextBody['execution'] ?? ''),
+        'productTitle' => (string) ($contextBody['productTitle'] ?? ''),
+        'characteristics' => (string) ($contextBody['characteristics'] ?? ''),
+        'customer' => (string) ($contextBody['customer'] ?? ''),
+        'fwVersion' => (string) ($contextBody['fwVersion'] ?? ''),
+        'serialCorrector' => (string) ($contextBody['serialCorrector'] ?? ''),
+        'serialComplex' => (string) ($contextBody['serialComplex'] ?? ''),
+    ]);
+    $serial = $issuedXlsx['serial'];
+    $nextSeq = (int) $issuedXlsx['seq'];
+    $parsed = [
+        'serial' => $serial,
+        'yy' => (int) $issuedXlsx['yy'],
+        'mm' => (int) $issuedXlsx['mm'],
+        'seq' => $nextSeq,
+        'monthKey' => (string) $issuedXlsx['monthKey'],
+        'prefix' => $prefix,
+    ];
 
     bench_transaction_begin($pdo);
     try {
-        // Атомарный счётчик: Firebird WITH LOCK / SQLite BEGIN IMMEDIATE.
         if (!bench_is_firebird($pdo)) {
             try {
                 if ($pdo->inTransaction()) {
@@ -785,86 +1264,55 @@ function bench_allocate_serial(PDO $pdo, string $kind, ?string $isoDate, bool $d
             $pdo->exec('BEGIN IMMEDIATE');
         }
 
-        $selSql = 'SELECT LAST_SEQ FROM TM07_SERIAL_COUNTER WHERE PREFIX = ? AND MONTH_KEY = ?';
-        if (bench_is_firebird($pdo)) {
-            $selSql .= ' WITH LOCK';
-        }
-        $sel = $pdo->prepare($selSql);
-        $sel->execute([$prefix, $monthKey]);
-        $lastSeq = $sel->fetchColumn();
-
-        if ($lastSeq === false) {
-            if ($dryRun) {
-                $lastSeq = 0;
-            } else {
-                try {
-                    $ins0 = $pdo->prepare(
-                        'INSERT INTO TM07_SERIAL_COUNTER (PREFIX, MONTH_KEY, LAST_SEQ) VALUES (?, ?, ?)'
-                    );
-                    $ins0->execute([$prefix, $monthKey, 0]);
-                } catch (Throwable) {
-                    // параллельный insert — перечитаем с lock
-                }
-                $sel->execute([$prefix, $monthKey]);
-                $lastSeq = $sel->fetchColumn();
-                if ($lastSeq === false) {
-                    throw new RuntimeException('Serial counter row missing after insert ' . $prefix . $monthKey);
-                }
+        $upd = $pdo->prepare(
+            'UPDATE TM07_SERIAL_COUNTER SET LAST_SEQ = ? WHERE PREFIX = ? AND MONTH_KEY = ?'
+        );
+        $upd->execute([$nextSeq, $prefix, $monthKey]);
+        if ($upd->rowCount() === 0) {
+            try {
+                $ins0 = $pdo->prepare(
+                    'INSERT INTO TM07_SERIAL_COUNTER (PREFIX, MONTH_KEY, LAST_SEQ) VALUES (?, ?, ?)'
+                );
+                $ins0->execute([$prefix, $monthKey, $nextSeq]);
+            } catch (Throwable) {
+                $upd->execute([$nextSeq, $prefix, $monthKey]);
             }
         }
 
-        $nextSeq = ((int) $lastSeq) + 1;
+        $ctx = bench_current_context($pdo, $contextBody);
+        $payload = isset($contextBody['payload']) ? json_encode($contextBody['payload'], JSON_UNESCAPED_UNICODE) : null;
 
-        if ($nextSeq > 999) {
-            throw new RuntimeException('Serial sequence overflow for ' . $prefix . $monthKey);
-        }
+        // Старые выдачи счётчика (8062 и т.п.) не в таблице — снимаем UNIQUE, пишем канонический S/N.
+        $delIssued = $pdo->prepare('DELETE FROM TM07_SERIAL_ISSUED WHERE SERIAL = ?');
+        $delIssued->execute([$serial]);
 
-        $serial = sprintf('%s%s%03d', $prefix, $monthKey, $nextSeq);
+        $insSerial = $pdo->prepare(
+            'INSERT INTO TM07_SERIAL_ISSUED (SERIAL, KIND, PREFIX, MONTH_KEY, SEQ, OPERATOR_ID, WORKSTATION_ID, ORDER_NUMBER, PAYLOAD)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        );
+        $insSerial->execute([
+            $serial,
+            $kind,
+            $prefix,
+            $monthKey,
+            $nextSeq,
+            $ctx['operatorId'],
+            $ctx['workstationId'],
+            $orderNumber !== '' ? $orderNumber : null,
+            $payload,
+        ]);
 
-        if (!$dryRun) {
-            $upd = $pdo->prepare(
-                'UPDATE TM07_SERIAL_COUNTER SET LAST_SEQ = ? WHERE PREFIX = ? AND MONTH_KEY = ?'
-            );
-            $upd->execute([$nextSeq, $prefix, $monthKey]);
-
-            $ctx = bench_current_context($pdo, $contextBody);
-            $payload = isset($contextBody['payload']) ? json_encode($contextBody['payload'], JSON_UNESCAPED_UNICODE) : null;
-            $orderNumber = isset($contextBody['orderNumber']) ? (string) $contextBody['orderNumber'] : null;
-            if ($orderNumber === null || $orderNumber === '') {
-                $active = bench_get_active_order_session($pdo, $ctx['workstationId']);
-                if ($active) {
-                    $orderNumber = (string) $active['ORDER_NUMBER'];
-                }
-            }
-
-            $insSerial = $pdo->prepare(
-                'INSERT INTO TM07_SERIAL_ISSUED (SERIAL, KIND, PREFIX, MONTH_KEY, SEQ, OPERATOR_ID, WORKSTATION_ID, ORDER_NUMBER, PAYLOAD)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-            );
-            $insSerial->execute([
-                $serial,
-                $kind,
-                $prefix,
-                $monthKey,
-                $nextSeq,
-                $ctx['operatorId'],
-                $ctx['workstationId'],
-                $orderNumber,
-                $payload,
-            ]);
-
-            bench_log_event($pdo, [
-                'eventType' => $meta['eventType'],
-                'eventState' => 'done',
-                'stage' => 'serial',
-                'serialCorrector' => $kind === 'corrector' ? $serial : ($contextBody['serialCorrector'] ?? null),
-                'serialComplex' => $kind === 'complex' ? $serial : ($contextBody['serialComplex'] ?? null),
-                'userLogin' => $contextBody['userLogin'] ?? null,
-                'userDisplayName' => $contextBody['userDisplayName'] ?? null,
-                'workstationCode' => $contextBody['workstationCode'] ?? null,
-                'payload' => ['serial' => $serial, 'kind' => $kind, 'orderNumber' => $orderNumber],
-            ]);
-        }
+        bench_log_event($pdo, [
+            'eventType' => $meta['eventType'],
+            'eventState' => 'done',
+            'stage' => 'serial',
+            'serialCorrector' => $kind === 'corrector' ? $serial : ($contextBody['serialCorrector'] ?? null),
+            'serialComplex' => $kind === 'complex' ? $serial : ($contextBody['serialComplex'] ?? null),
+            'userLogin' => $contextBody['userLogin'] ?? null,
+            'userDisplayName' => $contextBody['userDisplayName'] ?? null,
+            'workstationCode' => $contextBody['workstationCode'] ?? null,
+            'payload' => ['serial' => $serial, 'kind' => $kind, 'orderNumber' => $orderNumber, 'source' => 'xlsx-new'],
+        ]);
 
         $pdo->commit();
     } catch (Throwable $e) {
@@ -874,22 +1322,12 @@ function bench_allocate_serial(PDO $pdo, string $kind, ?string $isoDate, bool $d
         throw $e;
     }
 
-    return [
-        'serial' => $serial,
-        'kind' => $kind,
-        'prefix' => $prefix,
-        'stepId' => $meta['stepId'],
-        'seq' => $nextSeq,
-        'monthKey' => $monthKey,
-        'fullYear' => $month['fullYear'],
-        'mm' => $month['mm'],
-        'dryRun' => $dryRun,
-    ];
+    return bench_serial_result($meta, $parsed, $kind, $dryRun, false, 'xlsx-new', $orderNumber);
 }
 
-function bench_peek_serial(PDO $pdo, string $kind, ?string $isoDate): array
+function bench_peek_serial(PDO $pdo, string $kind, ?string $isoDate, array $contextBody = []): array
 {
-    return bench_allocate_serial($pdo, $kind, $isoDate, true);
+    return bench_allocate_serial($pdo, $kind, $isoDate, true, $contextBody);
 }
 
 function bench_session_row_to_api(array $row): array
@@ -911,9 +1349,9 @@ function bench_session_row_to_api(array $row): array
         'serialCorrector' => isset($row['SERIAL_CORRECTOR']) && $row['SERIAL_CORRECTOR'] !== ''
             ? (string) $row['SERIAL_CORRECTOR']
             : null,
-        'assemblyConfirmedAt' => $row['ASSEMBLY_CONFIRMED_AT'] ?? null,
-        'openedAt' => $row['OPENED_AT'] ?? null,
-        'closedAt' => $row['CLOSED_AT'] ?? null,
+        'assemblyConfirmedAt' => bench_format_ts_moscow($row['ASSEMBLY_CONFIRMED_AT'] ?? null),
+        'openedAt' => bench_format_ts_moscow($row['OPENED_AT'] ?? null),
+        'closedAt' => bench_format_ts_moscow($row['CLOSED_AT'] ?? null),
         'orderPayload' => $payload,
         'operatorId' => isset($row['OPERATOR_ID']) ? (int) $row['OPERATOR_ID'] : null,
         'workstationId' => (int) $row['WORKSTATION_ID'],
@@ -1245,24 +1683,39 @@ function bench_open_order_session(PDO $pdo, array $body): array
         return bench_reopen_order_session($pdo, $sessionId, $body);
     }
 
-    $orderNumber = trim((string) ($body['orderNumber'] ?? ''));
-    if ($orderNumber === '') {
+    $orderRaw = trim((string) ($body['orderNumber'] ?? ''));
+    if ($orderRaw === '') {
         throw new InvalidArgumentException('orderNumber обязателен');
+    }
+    $orderNumber = bench_order_number_canonical($orderRaw);
+    if ($orderNumber === '') {
+        $orderNumber = $orderRaw;
     }
 
     $ws = bench_register_client_workstation($pdo, $body);
     $wsId = (int) $ws['ID'];
     $opId = (int) $op['ID'];
 
+    $forceNew = !empty($body['forceNewSession']) || !empty($body['force_new_session']);
+
+    // Тот же номер заказа → всегда в существующую сессию (active или последнюю closed),
+    // а не INSERT новой. Новая строка — только forceNewSession или если сессий по заказу не было.
+    if (!$forceNew) {
+        $existing = bench_find_latest_session_by_order($pdo, $orderNumber, $opId, $wsId);
+        if ($existing) {
+            $bodyReuse = $body;
+            $bodyReuse['orderNumber'] = $orderNumber;
+            return bench_reopen_order_session($pdo, (int) $existing['ID'], $bodyReuse);
+        }
+    }
+
     $active = bench_get_active_order_session($pdo, $wsId, $opId);
-    if ($active && ($active['ORDER_NUMBER'] ?? '') === $orderNumber) {
+    if ($active && bench_orders_equal((string) ($active['ORDER_NUMBER'] ?? ''), $orderNumber)) {
         $_SESSION[BENCH_SESSION_ORDER] = (int) $active['ID'];
 
         return $active;
     }
 
-    // Новая строка только если явно не передан sessionId (реактивация — выше).
-    // По одному номеру заказа можно несколько сессий (несколько корректоров).
     bench_close_active_order_sessions($pdo, $wsId, 'switch_order');
 
     $orderStatus = trim((string) ($body['orderStatus'] ?? ''));
@@ -1327,7 +1780,7 @@ function bench_reopen_order_session(PDO $pdo, int $sessionId, array $body = []):
     }
 
     $requestedOrder = trim((string) ($body['orderNumber'] ?? ''));
-    if ($requestedOrder !== '' && ($row['ORDER_NUMBER'] ?? '') !== $requestedOrder) {
+    if ($requestedOrder !== '' && !bench_orders_equal((string) ($row['ORDER_NUMBER'] ?? ''), $requestedOrder)) {
         throw new InvalidArgumentException(
             'Сессия #' . $sessionId . ' относится к заказу ' . ($row['ORDER_NUMBER'] ?? '') .
             ', а не к ' . $requestedOrder
@@ -1344,11 +1797,12 @@ function bench_reopen_order_session(PDO $pdo, int $sessionId, array $body = []):
     $rowWsId = (int) ($row['WORKSTATION_ID'] ?? 0);
 
     if ($state === 'active') {
-        // Чужую активную сессию нельзя тихо «перехватить».
-        if (($rowOpId > 0 && $rowOpId !== $opId) || ($rowWsId > 0 && $rowWsId !== $wsId)) {
+        // Чужую (другого оператора) активную сессию нельзя тихо «перехватить».
+        // Тот же оператор на другом fingerprint/стенде — просто переносим сессию сюда.
+        if ($rowOpId > 0 && $rowOpId !== $opId) {
             if (!$forceTakeover) {
                 throw new RuntimeException(
-                    'Сессия #' . $sessionId . ' уже активна у другого оператора/стенда. ' .
+                    'Сессия #' . $sessionId . ' уже активна у другого оператора. ' .
                     'Передайте forceTakeover=true для явного перехвата.'
                 );
             }
@@ -1368,7 +1822,8 @@ function bench_reopen_order_session(PDO $pdo, int $sessionId, array $body = []):
                     'payload' => [
                         'sessionId' => $sessionId,
                         'orderNumber' => $row['ORDER_NUMBER'] ?? null,
-                        'takeover' => true,
+                        'takeover' => $rowOpId !== $opId,
+                        'movedWorkstation' => $rowWsId !== $wsId,
                         'previousOperatorId' => $rowOpId,
                         'previousWorkstationId' => $rowWsId,
                     ],
@@ -1706,8 +2161,8 @@ function bench_list_order_sessions(PDO $pdo, array $opts = []): array
             'sessionStage' => $stage,
             'sessionStageLabel' => $stageLabels[$stage] ?? $stage,
             'serialCorrector' => $serial,
-            'openedAt' => $row['OPENED_AT'] ?? null,
-            'closedAt' => $row['CLOSED_AT'] ?? null,
+            'openedAt' => bench_format_ts_moscow($row['OPENED_AT'] ?? null),
+            'closedAt' => bench_format_ts_moscow($row['CLOSED_AT'] ?? null),
             'operator' => bench_operator_api_from_row($row),
             'workstation' => bench_workstation_api_from_row($row),
             'parametrization' => $param,

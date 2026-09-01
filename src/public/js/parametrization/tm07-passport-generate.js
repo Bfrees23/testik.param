@@ -1,8 +1,13 @@
 /**
  * Автогенерация паспортов DOCX после параметризации (шаблоны ТМР.408843.300 / ТМР.407279.400).
+ *
+ * ВРЕМЕННО ВЫКЛЮЧЕНО: поставьте true, чтобы вернуть паспорта в UI и автогенерацию.
  */
 (function () {
     'use strict';
+
+    /** @type {boolean} false = нигде не показывать / не генерировать DOCX-паспорта */
+    const PASSPORTS_ENABLED = false;
 
     const STORAGE_LAST = 'order1c_param_lastOrder';
     let lastPassportFiles = [];
@@ -315,7 +320,7 @@
         if (!box) {
             return;
         }
-        if (!files || !files.length) {
+        if (!PASSPORTS_ENABLED || !files || !files.length) {
             box.innerHTML = '';
             box.classList.add('d-none');
             return;
@@ -342,6 +347,11 @@
     }
 
     async function generatePassports(options) {
+        if (!PASSPORTS_ENABLED) {
+            lastPassportFiles = [];
+            renderPassportLinks([]);
+            return [];
+        }
         const opts = options || {};
         const payload = await collectPassportPayloadAsync();
         if (!payload.correctorSerial && !payload.complexSerial) {
@@ -375,6 +385,10 @@
     }
 
     window.TM07_PASSPORT = {
+        /** false — паспорта DOCX временно отключены (вернуть: PASSPORTS_ENABLED = true выше). */
+        isEnabled: function () {
+            return PASSPORTS_ENABLED;
+        },
         collectPassportPayload: collectPassportPayload,
         collectPassportPayloadAsync: collectPassportPayloadAsync,
         generatePassports: generatePassports,

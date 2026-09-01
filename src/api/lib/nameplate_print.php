@@ -4,6 +4,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/nameplate_corrector_config.php';
 require_once __DIR__ . '/nameplate_pdf.php';
 require_once __DIR__ . '/nameplate_tspl.php';
+require_once __DIR__ . '/nameplate_gotenberg.php';
 
 function nameplate_repo_root(): string
 {
@@ -267,7 +268,14 @@ function nameplate_load_fields_document(string $templateId = 'corrector'): array
     $id = nameplate_template_id_key($templateId);
     $path = nameplate_fields_path($id);
     if (!is_readable($path)) {
-        throw new RuntimeException('Файл полей не найден: ' . basename($path));
+        require_once __DIR__ . '/nameplate_reference_drawing.php';
+        $doc = nameplate_editor_document_from_reference_drawing($id);
+        $doc['templateId'] = $id;
+        if (!isset($doc['templateName']) || trim((string) $doc['templateName']) === '') {
+            $doc['templateName'] = nameplate_template_default_display_name($id);
+        }
+
+        return $doc;
     }
     $data = json_decode((string) file_get_contents($path), true);
     if (!is_array($data)) {
@@ -718,6 +726,15 @@ function nameplate_public_config(): array
             'templateCorrector' => (string) (($config['pdf']['templateCorrector'] ?? 'corrector-nameplate-template.pdf')),
         ],
         'printAgent' => nameplate_public_print_agent($pa),
+        'gotenberg' => [
+            'enabled' => nameplate_gotenberg_enabled($config),
+        ],
+        'bartender' => [
+            'agentUrl' => (string) (($config['bartender']['agentUrl'] ?? 'http://127.0.0.1:18777')),
+            'templateCorrector' => (string) (($config['bartender']['templateCorrector'] ?? 'corrector-300.btw')),
+            'templateComplex' => (string) (($config['bartender']['templateComplex'] ?? 'pktm-complex.btw')),
+            'printer' => (string) (($config['bartender']['printer'] ?? 'TSC TE200')),
+        ],
     ];
 }
 
@@ -903,7 +920,7 @@ function nameplate_default_product_title(string $kind): string
 {
     return $kind === 'complex'
         ? 'Комплекс промышленного учёта газа ПК-ТМ'
-        : 'Корректор объема газа ТМ-07';
+        : 'Корректор объёма газа ТМ-07';
 }
 
 function nameplate_brand_label(): string
@@ -1046,6 +1063,12 @@ function nameplate_normalize_config_inner(string $inner): string
     return $inner;
 }
 
+/** Original BarTender I4 plate keeps a space after ПТТП. */
+function nameplate_format_spec_line_display(string $line): string
+{
+    return preg_replace('/ПТТП\s*\(/u', 'ПТТП (', $line) ?? $line;
+}
+
 /**
  * Max glyphs per config line for drawing column 38 mm @ ~2.15 mm bold DejaVu.
  * Prefer Imagick metrics when available; else ≈30.
@@ -1089,14 +1112,10 @@ function nameplate_config_wrap_max_chars(?array $fieldsDoc = null): int
     try {
         require_once __DIR__ . '/nameplate_pdf.php';
         $fontPath = nameplate_pdf_font_path();
-        $bold = preg_replace('/DejaVuSans\.ttf$/i', 'DejaVuSans-Bold.ttf', $fontPath);
-        if (!is_string($bold) || !is_readable($bold)) {
-            $bold = $fontPath;
-        }
         $probe = new Imagick();
         $probe->newImage(8, 8, new ImagickPixel('white'));
         $draw = new ImagickDraw();
-        $draw->setFont($bold);
+        $draw->setFont($fontPath);
         $draw->setFontSize($fontPx);
         $sample = 'И4;ДД+УК(0,5);1,5м;';
         $metrics = $probe->queryFontMetrics($draw, $sample, false);
@@ -1160,29 +1179,30 @@ function nameplate_config_text_width_px(string $text, ?array $fieldsDoc = null):
     $refH = 364.0;
     $pageH = 20.0;
     $fontMm = 1.85;
+    $specObj = ['bold' => true];
     if (is_array($fieldsDoc)) {
         $refH = max(100.0, (float) ($fieldsDoc['refH'] ?? $refH));
         $pageH = max(1.0, (float) ($fieldsDoc['pageHeightMm'] ?? $pageH));
         foreach ((array) ($fieldsDoc['editorObjects'] ?? []) as $obj) {
-            if (is_array($obj) && ($obj['id'] ?? '') === 'specLine1' && isset($obj['fontMm'])) {
-                $fontMm = (float) $obj['fontMm'];
+            if (is_array($obj) && ($obj['id'] ?? '') === 'specLine1') {
+                $specObj = $obj;
+                if (isset($obj['fontMm'])) {
+                    $fontMm = (float) $obj['fontMm'];
+                }
                 break;
             }
         }
     }
-    $fontPx = ($fontMm / $pageH) * $refH;
 
     try {
         require_once __DIR__ . '/nameplate_pdf.php';
-        $fontPath = nameplate_pdf_font_path();
-        $bold = preg_replace('/DejaVuSans\.ttf$/i', 'DejaVuSans-Bold.ttf', $fontPath);
-        if (!is_string($bold) || !is_readable($bold)) {
-            $bold = $fontPath;
-        }
+        $base = nameplate_pdf_font_path();
+        $fontPath = nameplate_pdf_font_path_for_object($specObj, $base);
+        $fontPx = nameplate_pdf_font_px_for_cap_mm($fontMm, $refH, $pageH, $fontPath);
         $probe = new Imagick();
         $probe->newImage(8, 8, new ImagickPixel('white'));
         $draw = new ImagickDraw();
-        $draw->setFont($bold);
+        $draw->setFont($fontPath);
         $draw->setFontSize($fontPx);
         $w = (float) ($probe->queryFontMetrics($draw, $text, false)['textWidth'] ?? 0);
         $probe->clear();
@@ -1214,8 +1234,7 @@ function nameplate_config_column_width_px(?array $fieldsDoc = null): float
 
 /**
  * Split corrector config into ≤3 label lines for the text column.
- * Optimal contiguous partition of sensor groups by measured ink width
- * (matches BarTender packing better than greedy fill).
+ * Greedy wrap like BarTender: fill the text column, then the next line.
  *
  * @return array{0:string,1:string,2:string}
  */
@@ -1233,60 +1252,40 @@ function nameplate_wrap_config_lines(string $inner, ?int $maxLen = null, ?array 
             $line = '(' . rtrim($line, ';') . ')';
         }
 
-        return [$line, '', ''];
+        return [nameplate_format_spec_line_display($line), '', ''];
     }
 
-    $widthOf = static function (int $from, int $to) use ($groups, $fieldsDoc): float {
-        if ($from >= $to) {
-            return 0.0;
+    if ($groups !== [] && !str_starts_with($groups[0], '(')) {
+        $groups[0] = '(' . $groups[0];
+    }
+
+    $colW = nameplate_config_column_width_px($fieldsDoc);
+    $limit = $colW * 0.98;
+
+    $lines = ['', '', ''];
+    $lineIdx = 0;
+    $current = '';
+    foreach ($groups as $idx => $group) {
+        $trial = $current . $group;
+        $overflow = $current !== '' && nameplate_config_text_width_px($trial, $fieldsDoc) > $limit;
+        $newChannel = $current !== '' && preg_match('/^ППД/u', $group) === 1;
+        $keepKszh = preg_match('/^Ксж-/u', $group) === 1;
+        if (($newChannel || ($overflow && !$keepKszh)) && $lineIdx < 2) {
+            $lines[$lineIdx] = $current;
+            $lineIdx++;
+            $current = $group;
+            continue;
         }
-        $chunk = implode('', array_slice($groups, $from, $to - $from));
-
-        return nameplate_config_text_width_px($chunk, $fieldsDoc);
-    };
-
-    $best = null;
-    $bestScore = INF;
-    // One or two lines when few groups.
-    if ($n === 2) {
-        $best = [0, 1, 2];
-        $bestScore = max($widthOf(0, 1), $widthOf(1, 2));
-    }
-
-    for ($i = 1; $i < $n; $i++) {
-        for ($j = $i; $j <= $n; $j++) {
-            // Partition [0,i) | [i,j) | [j,n); empty middle/last allowed only at end.
-            if ($j < $i) {
-                continue;
-            }
-            $w0 = $widthOf(0, $i);
-            $w1 = $j > $i ? $widthOf($i, $j) : 0.0;
-            $w2 = $j < $n ? $widthOf($j, $n) : 0.0;
-            // Prefer using up to 3 lines; penalize empty early lines.
-            if ($w1 <= 0.0 && $w2 > 0.0) {
-                continue;
-            }
-            $score = max($w0, $w1, $w2);
-            // Slight preference for more even fill.
-            $used = ($w0 > 0 ? 1 : 0) + ($w1 > 0 ? 1 : 0) + ($w2 > 0 ? 1 : 0);
-            $mean = ($w0 + $w1 + $w2) / max(1, $used);
-            $score += abs($w0 - $mean) * 0.05 + abs($w1 - $mean) * 0.05 + abs($w2 - $mean) * 0.05;
-            if ($score < $bestScore) {
-                $bestScore = $score;
-                $best = [$i, $j, $n];
-            }
+        $current = $trial;
+        if ($idx === $n - 1) {
+            $lines[$lineIdx] = $current;
         }
     }
-
-    if ($best === null) {
-        $best = [1, min(2, $n), $n];
+    if ($current !== '' && $lines[$lineIdx] === '') {
+        $lines[$lineIdx] = $current;
     }
 
-    $lines = [
-        implode('', array_slice($groups, 0, $best[0])),
-        implode('', array_slice($groups, $best[0], max(0, $best[1] - $best[0]))),
-        implode('', array_slice($groups, $best[1], max(0, $best[2] - $best[1]))),
-    ];
+    $lines = array_map('nameplate_format_spec_line_display', $lines);
 
     if ($lines[0] !== '' && !str_starts_with($lines[0], '(')) {
         $lines[0] = '(' . $lines[0];
@@ -1489,10 +1488,15 @@ function nameplate_build_context(array $data): array
             $configText = nameplate_extract_config_block($blob);
         }
     }
+    $fieldsDoc = $GLOBALS['nameplate_fields_override'] ?? null;
+    if (!is_array($fieldsDoc)) {
+        require_once __DIR__ . '/nameplate_reference_drawing.php';
+        $fieldsDoc = nameplate_editor_document_from_reference_drawing($kind);
+    }
     [$specLine1, $specLine2, $specLine3] = nameplate_wrap_config_lines(
         $configText,
         null,
-        $GLOBALS['nameplate_fields_override'] ?? null
+        $fieldsDoc
     );
     $releaseLabel = nameplate_release_label($manufactureMonth);
     if (trim((string) ($data['releaseLabel'] ?? '')) !== '') {
@@ -1718,7 +1722,7 @@ function nameplate_build_print_job(array $data, ?array $fieldsOverride = null): 
             $previewUrl = $pdf['previewUrl'] ?? $previewUrl;
         }
 
-        return nameplate_with_print_agent_token([
+        $job = nameplate_with_print_agent_token([
             'kind' => $context['kind'],
             'serial' => $context['serial'],
             'orderNumber' => $context['orderNumber'],
@@ -1743,7 +1747,12 @@ function nameplate_build_print_job(array $data, ?array $fieldsOverride = null): 
             'printFormat' => $printFormat,
             'tspl' => $tspl,
             'tsplDownloadUrl' => is_array($tspl) ? ($tspl['downloadUrl'] ?? null) : null,
+            'printPageUrl' => is_array($png) && !empty($png['filename'])
+                ? nameplate_print_page_url((string) $png['filename'], $context['serial'])
+                : null,
         ], $pa);
+
+        return nameplate_job_with_gotenberg_pdf($job, $context, is_array($png) ? $png : null, $config);
     }
 
     if ($engine === 'html') {
@@ -1775,6 +1784,9 @@ function nameplate_build_print_job(array $data, ?array $fieldsOverride = null): 
             'tsplDownloadUrl' => is_array($tspl) ? ($tspl['downloadUrl'] ?? null) : null,
             'html' => (string) ($generated['html'] ?? nameplate_render_html($data, $config)),
             'htmlFallback' => false,
+            'printPageUrl' => !empty($generated['filename']) && str_ends_with(strtolower((string) $generated['filename']), '.png')
+                ? nameplate_print_page_url((string) $generated['filename'], $context['serial'])
+                : null,
         ], $pa);
     }
 
@@ -1852,6 +1864,64 @@ function nameplate_safe_generated_file(string $name): string
     }
 
     return $base;
+}
+
+function nameplate_print_page_url(string $pngFilename, string $serial = ''): string
+{
+    $q = 'action=print-page&file=' . rawurlencode($pngFilename);
+    $serial = trim($serial);
+    if (preg_match('/^\d{10}$/', $serial)) {
+        $q .= '&serial=' . rawurlencode($serial);
+    }
+
+    return '/api/nameplate-print.php?' . $q;
+}
+
+/** Standalone print page (same idea as act_print.php): inline PNG + @page + window.print(). */
+function nameplate_browser_print_html(string $pngBytes, string $serial, float $widthMm, float $heightMm): string
+{
+    if ($pngBytes === '') {
+        throw new RuntimeException('Пустое изображение шильдика');
+    }
+    $w = $widthMm > 0 ? $widthMm : 58.0;
+    $h = $heightMm > 0 ? $heightMm : 20.0;
+    $title = htmlspecialchars($serial !== '' ? ('Шильдик ' . $serial) : 'Шильдик', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+    $src = 'data:image/png;base64,' . base64_encode($pngBytes);
+    $wCss = rtrim(rtrim(sprintf('%.4F', $w), '0'), '.');
+    $hCss = rtrim(rtrim(sprintf('%.4F', $h), '0'), '.');
+
+    return '<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>' . $title . '</title>
+<style>
+@page { size: ' . $wCss . 'mm ' . $hCss . 'mm; margin: 0; }
+html, body {
+    margin: 0;
+    padding: 0;
+    background: #fff;
+    color: #000;
+}
+.plate, .plate img {
+    display: block;
+    width: ' . $wCss . 'mm;
+    height: ' . $hCss . 'mm;
+}
+.plate img {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+}
+@media print {
+    html, body { width: ' . $wCss . 'mm; height: ' . $hCss . 'mm; }
+}
+</style>
+</head>
+<body onload="window.print()">
+<div class="plate"><img src="' . $src . '" alt=""></div>
+</body>
+</html>
+';
 }
 
 function nameplate_patch_btw_metadata_title(string $path, string $serial): void

@@ -1,0 +1,112 @@
+/*
+  tm07_bench.fdb — минимальная BPK-схема (выполнить ОДИН РАЗ)
+
+  База: C:\Firebird\tm07_bench.fdb
+
+  ЕСЛИ ОШИБКА:
+    can't format message ... C:\WINDOWS\SYSTEM32\firebird.msg not found
+    Token unknown ... CREATE
+  → в IBExpert неправильная библиотека клиента.
+    Options → Environment Options → Library →
+      C:\Program Files\Firebird\Firebird_3_0\fbclient.dll
+    (НЕ C:\Windows\System32\fbclient.dll)
+  Или без IBExpert: database\install_bpek_bench.cmd
+
+  IBExpert: Execute (F9) → Commit кнопкой (без COMMIT; в скрипте).
+
+  После этого — bpek_tm07_prepare_tm07_bench.ibexpert.sql
+  Откат: bpek_tm07_bench_drop.ibexpert.sql
+*/
+
+CREATE GENERATOR GEN_BPKTYPEDICT_ID;
+CREATE GENERATOR GEN_BPKEVENTTYPEDICT_ID;
+CREATE GENERATOR GEN_BPKEVENTSTATEDICT_ID;
+CREATE GENERATOR GEN_BPK_ID;
+CREATE GENERATOR GEN_BPKEVENTS_ID;
+CREATE GENERATOR GEN_BPKDOC_ID;
+
+CREATE TABLE BPKTYPEDICT (
+    ID            INTEGER NOT NULL PRIMARY KEY,
+    NAME          VARCHAR(68),
+    LEGALNAME     VARCHAR(400) NOT NULL,
+    BOARDS_BITS   SMALLINT,
+    PREFIX_OLD    VARCHAR(12),
+    PREFIX_NEW    VARCHAR(12),
+    WEIGHT_NETTO  DOUBLE PRECISION,
+    WEIGHT_BRUTTO DOUBLE PRECISION
+);
+
+CREATE TABLE BPKEVENTTYPEDICT (
+    ID   INTEGER NOT NULL PRIMARY KEY,
+    NAME VARCHAR(268)
+);
+
+CREATE TABLE BPKEVENTSTATEDICT (
+    ID   INTEGER NOT NULL PRIMARY KEY,
+    NAME VARCHAR(268)
+);
+
+CREATE TABLE REGISTERTABLE (
+    ID   INTEGER NOT NULL PRIMARY KEY,
+    NAME VARCHAR(268)
+);
+
+CREATE TABLE DOCTYPEDICT (
+    ID   SMALLINT PRIMARY KEY,
+    NAME VARCHAR(80)
+);
+
+CREATE TABLE STAND (
+    STANDID             INTEGER,
+    STANDNUM            VARCHAR(120),
+    STANDNAMEID         INTEGER,
+    COMMENT             VARCHAR(400),
+    COMPUTERNAMEID      SMALLINT,
+    SYSTEMNAMEPERMITTED VARCHAR(120)
+);
+
+CREATE TABLE SECUSER (
+    ID             INTEGER NOT NULL PRIMARY KEY,
+    SAMACCOUNTNAME VARCHAR(200),
+    FNAME          VARCHAR(200),
+    LNAME          VARCHAR(200),
+    MNAME          VARCHAR(200),
+    FULLNAME       VARCHAR(1020),
+    ROLE           INTEGER,
+    STANDID        INTEGER,
+    HESHPASS       VARCHAR(1020),
+    ENABLED        SMALLINT
+);
+
+CREATE TABLE BPK (
+    ID                INTEGER NOT NULL PRIMARY KEY,
+    SERIAL            VARCHAR(48) NOT NULL,
+    TYPE              INTEGER NOT NULL,
+    CURRENT_HW_VER    VARCHAR(80),
+    CURRENT_SW_VER_ID SMALLINT,
+    STATE_CURR_ID     SMALLINT,
+    LAST_EVENT_ID     SMALLINT,
+    DECCODE           VARCHAR(16)
+);
+
+CREATE TABLE BPKEVENTS (
+    ID          INTEGER NOT NULL PRIMARY KEY,
+    EVENTTYPEID INTEGER,
+    EVENTDATE   TIMESTAMP,
+    EVENTSTATE  INTEGER,
+    BPKID       INTEGER,
+    USERID      INTEGER,
+    STANDID     SMALLINT,
+    TABLEID     INTEGER,
+    OBJECTID    INTEGER,
+    COMMENT     VARCHAR(1020),
+    COMMENTID   INTEGER
+);
+
+CREATE TABLE BPKDOC (
+    ID        INTEGER PRIMARY KEY,
+    DOCTYPEID SMALLINT,
+    BPKID     INTEGER,
+    DOCDATE   TIMESTAMP,
+    USERID    INTEGER
+);

@@ -8,6 +8,8 @@
     let lastPreparedOrder = '';
     /** sessionId из URL (?sessionId=) — открыть существующую закрытую сессию, не создавать новую. */
     let pendingResumeSessionId = null;
+    /** После «Новая сессия» — следующий вход в заказ создаёт новую строку (другой корректор). */
+    let pendingForceNewSession = false;
     /** После открытия существующей сессии — запустить полный опрос для сверки. */
     let pendingVerifyAfterOpen = false;
     let orderLoadTimer = null;
@@ -79,6 +81,12 @@
         if (display) {
             display.value = serial || '';
             display.placeholder = serial ? '' : '—';
+        }
+        const Ops = window.TM07_WORKBENCH_OPS;
+        if (Ops && typeof Ops.syncCorrectorVerifFieldsFromSteps === 'function') {
+            Ops.syncCorrectorVerifFieldsFromSteps();
+        } else if (Ops && typeof Ops.paintCorrectorVerifBadge === 'function') {
+            Ops.paintCorrectorVerifBadge();
         }
     }
 
@@ -181,7 +189,12 @@
             printBtn.disabled = !active || !/^300\d{7}$/.test(serial);
         }
         if (confirmBtn) {
+            const done = stage === 'parametrization' || stage === 'completed';
             confirmBtn.disabled = !active || !assemblyPhase || !/^300\d{7}$/.test(serial);
+            confirmBtn.className = 'btn btn-success';
+            confirmBtn.innerHTML = done
+                ? '<i class="bi bi-check2-circle me-1"></i>Сборка подтверждена'
+                : '<i class="bi bi-check2-circle me-1"></i>Подтвердить сборку';
         }
         if (statusEl) {
             if (!active) {
@@ -344,6 +357,10 @@
         plog('S/N корректора: ' + result.serial);
         syncCorrectorSerialDisplay();
         paintAssemblyCard();
+        void maybeAutoConfirmAssembly().then(function () {
+            applyActiveSessionToUI();
+            paintAssemblyCard();
+        });
         return result.serial;
     }
 
@@ -537,7 +554,7 @@
                     ' (без новой записи в списке).';
                 st.className = 'small mb-0 text-body-secondary';
             } else if (events && events.hasOperator && events.hasOperator()) {
-                st.textContent = 'Введите номер заказа и нажмите «Войти в заказ» или дождитесь автозагрузки из 1С.';
+                st.textContent = 'Введите номер заказа и нажмите «Войти в заказ».';
                 st.className = 'small mb-0 text-body-secondary';
             } else {
                 st.textContent = 'Сначала войдите как оператор, затем откройте заказ.';
@@ -604,6 +621,15 @@
 
     function shouldVerifyStep(stepId, ctx) {
         const sid = String(stepId || '');
+        const n = Number(sid);
+        // п.59/66 — команда «запомнить» (в поле 1), справа S/N ЧЭ; не сверять с полем.
+        if (n === 59 || n === 66) {
+            return false;
+        }
+        // Маски основной таблицы — staging; финальные И1…И4 сверяются в финале.
+        if (n === 71 || n === 72 || n === 74 || n === 75 || n === 77) {
+            return false;
+        }
         const c = ctx || getVerifyEquipmentContext();
         if (VERIFY_PPD_STEPS[sid] && !c.hasPpd) {
             return false;
@@ -663,10 +689,30 @@
             const n = Number(s);
             return Number.isFinite(n) ? n : null;
         }
-        const m = /\(unix\s+(\d+)\)/i.exec(s);
-        if (m) {
-            const n = Number(m[1]);
+        const mUnix = /\(unix\s+(\d+)\)/i.exec(s);
+        if (mUnix) {
+            const n = Number(mUnix[1]);
             return Number.isFinite(n) ? n : null;
+        }
+        const mRu = /^(\d{2})\.(\d{2})\.(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(s);
+        if (mRu) {
+            const iso =
+                mRu[3] +
+                '-' +
+                mRu[2] +
+                '-' +
+                mRu[1] +
+                'T' +
+                String(mRu[4] != null ? mRu[4] : '0').padStart(2, '0') +
+                ':' +
+                String(mRu[5] != null ? mRu[5] : '0').padStart(2, '0') +
+                ':' +
+                String(mRu[6] != null ? mRu[6] : '0').padStart(2, '0') +
+                '+03:00';
+            const t = Date.parse(iso);
+            if (Number.isFinite(t)) {
+                return Math.floor(t / 1000);
+            }
         }
         const t = Date.parse(s);
         if (Number.isFinite(t)) {
@@ -748,6 +794,30 @@
                 checked: criticalChecked,
             },
         };
+    }
+
+    function paintVerifyMismatches(cmp) {
+        document.querySelectorAll('tr.param-read-mismatch, tr.param-read-match').forEach(function (row) {
+            row.classList.remove('param-read-mismatch', 'param-read-match');
+        });
+        document.querySelectorAll('.param-read-mismatch-val').forEach(function (out) {
+            out.classList.remove('param-read-mismatch-val');
+            out.removeAttribute('title');
+        });
+        (cmp && cmp.mismatches ? cmp.mismatches : []).forEach(function (m) {
+            const out = $('out_' + m.stepId);
+            if (!out) {
+                return;
+            }
+            out.classList.remove('text-success', 'text-body-secondary', 'text-warning');
+            out.classList.add('text-danger', 'param-read-mismatch-val');
+            out.title = 'Заказ: ' + m.expected + ' · в корректоре: ' + m.actual;
+            const row = out.closest('tr');
+            if (row) {
+                row.classList.remove('param-write-ok', 'param-read-match');
+                row.classList.add('param-read-mismatch');
+            }
+        });
     }
 
     function getSessionParametrizationFromContext() {
@@ -964,6 +1034,7 @@
             }
 
             const cmp = compareReadbackWithExpected(expected);
+            paintVerifyMismatches(cmp);
             if (cmp.mismatches.length) {
                 cmp.mismatches.slice(0, 8).forEach(function (m) {
                     plog('Расхождение п.' + m.stepId + ': заказ «' + m.expected + '», в корректоре «' + m.actual + '»');
@@ -1163,6 +1234,7 @@
     async function startNewSessionPage() {
         const events = window.TM07_BENCH_EVENTS;
         pendingResumeSessionId = null;
+        pendingForceNewSession = true;
         if (events && typeof events.clearOrder === 'function') {
             try {
                 await events.clearOrder('new_session');
@@ -1174,8 +1246,69 @@
             disconnectKao: true,
         });
         cleanWorkbenchUrlQuery();
-        plog('Новая сессия — введите номер заказа и нажмите «Войти в заказ».');
+        plog('Новая сессия — введите номер заказа и нажмите «Войти в заказ» (будет создана новая запись).');
         paintSessionBadge();
+    }
+
+    function resolveResumeSessionId(explicit) {
+        if (explicit != null && explicit !== '') {
+            const n = parseInt(String(explicit), 10);
+            if (n > 0) {
+                return n;
+            }
+        }
+        if (pendingResumeSessionId) {
+            return pendingResumeSessionId;
+        }
+        try {
+            const sp = new URLSearchParams(window.location.search);
+            const raw = sp.get('sessionId') || sp.get('session');
+            if (raw && /^\d+$/.test(String(raw).trim())) {
+                return parseInt(String(raw).trim(), 10);
+            }
+        } catch (_e) {}
+        return null;
+    }
+
+    function isOrderClosedStatus() {
+        const parts = [];
+        const badge = $('paramOrder1cOrderStatus');
+        if (badge) {
+            parts.push(String(badge.textContent || ''));
+        }
+        const events = window.TM07_BENCH_EVENTS;
+        const session = events && events.getActiveSession ? events.getActiveSession() : null;
+        if (session && session.orderStatus) {
+            parts.push(String(session.orderStatus));
+        }
+        const blob = parts.join(' ').toLowerCase().replace(/ё/g, 'е');
+        return /закрыт|завершен|выполнен|снят\s*с\s*производ/.test(blob);
+    }
+
+    /** Заказ закрыт / сборка уже была — не просим подтверждать повторно. */
+    async function maybeAutoConfirmAssembly() {
+        const stage = getSessionStage();
+        if (stage === 'parametrization' || stage === 'completed') {
+            return;
+        }
+        const serial = correctorSerialValue();
+        if (!/^300\d{7}$/.test(String(serial || '').trim())) {
+            return;
+        }
+        const events = window.TM07_BENCH_EVENTS;
+        const session = events && events.getActiveSession ? events.getActiveSession() : null;
+        const alreadyMarked = !!(session && session.assemblyConfirmedAt);
+        const closed = isOrderClosedStatus();
+        // Авто: закрытый заказ 1С, либо возврат в сессию с уже отмеченной сборкой / verify.
+        if (!closed && !alreadyMarked && !(isResumingExistingSession() && isVerifyModeFromUrl())) {
+            return;
+        }
+        try {
+            await confirmAssemblyStep();
+            plog('Сборка подтверждена автоматически (заказ закрыт / возврат в сессию).');
+        } catch (e) {
+            plog('Автоподтверждение сборки: ' + (e.message || String(e)));
+        }
     }
 
     async function openOrderSession(number, result, opts) {
@@ -1228,22 +1361,58 @@
                       }
                     : { number: number, orderTextBlob: orderTextBlob },
             };
-            if (o.sessionId) {
-                selectOpts.sessionId = o.sessionId;
-            } else if (pendingResumeSessionId) {
-                selectOpts.sessionId = pendingResumeSessionId;
+            const wantSid = resolveResumeSessionId(o.sessionId);
+            if (wantSid) {
+                selectOpts.sessionId = wantSid;
+                pendingForceNewSession = false;
+            } else if (pendingForceNewSession) {
+                selectOpts.forceNewSession = true;
+            } else {
+                // Уже активная сессия по этому заказу в кэше — не просим сервер создавать новую.
+                const active =
+                    events.getActiveSession && typeof events.getActiveSession === 'function'
+                        ? events.getActiveSession()
+                        : null;
+                if (
+                    active &&
+                    active.id &&
+                    active.orderNumber &&
+                    normalizeOrder(active.orderNumber) === normalizeOrder(number)
+                ) {
+                    selectOpts.sessionId = active.id;
+                }
             }
             const data = await events.selectOrder(number, selectOpts);
-            const sid = data && data.session && data.session.id ? data.session.id : selectOpts.sessionId;
-            if (pendingResumeSessionId && sid && String(sid) === String(pendingResumeSessionId)) {
+            const sid = data && data.session && data.session.id ? data.session.id : null;
+            const usedExisting = !!(selectOpts.sessionId || (wantSid && sid)) && !selectOpts.forceNewSession;
+            if (selectOpts.forceNewSession) {
+                pendingForceNewSession = false;
+            }
+            if (wantSid && sid && String(sid) !== String(wantSid)) {
+                throw new Error(
+                    'Открыта сессия #' +
+                        sid +
+                        ', ожидалась #' +
+                        wantSid +
+                        ' — откройте снова с главной.'
+                );
+            }
+            if (wantSid && sid && String(sid) === String(wantSid)) {
                 pendingResumeSessionId = null;
             }
             plog(
                 'Сессия заказа: ' +
                     number +
                     (sid ? ' (#' + sid + ')' : '') +
-                    (selectOpts.sessionId ? ' — открыта существующая' : '')
+                    (usedExisting
+                        ? ' — продолжена существующая'
+                        : selectOpts.forceNewSession
+                          ? ' — новая (явно)'
+                          : ' — новая')
             );
+            applyActiveSessionToUI();
+            paintSessionBadge();
+            await maybeAutoConfirmAssembly();
             applyActiveSessionToUI();
             paintSessionBadge();
             return data;
@@ -1388,6 +1557,7 @@
             throw new Error('Нет функции опроса для сверки.');
         }
         const cmp = compareReadbackWithExpected(expected);
+        paintVerifyMismatches(cmp);
         if (cmp.mismatches.length) {
             cmp.mismatches.slice(0, 8).forEach(function (m) {
                 plog('Расхождение п.' + m.stepId + ': заказ «' + m.expected + '», в корректоре «' + m.actual + '»');
@@ -1441,7 +1611,7 @@
         const resuming = isResumingExistingSession();
 
         if (!force && lastPreparedOrder === number) {
-            await openOrderSession(number, null);
+            await openOrderSession(number, null, { sessionId: prepOpts.sessionId });
             applyActiveSessionToUI();
             if (!resuming) {
                 await maybeIssueSerialAndPrintForOrder(number, true);
@@ -1522,16 +1692,20 @@
             Ops.paintMeterBadge();
             Ops.paintWorkflowSteps();
             Ops.syncMeterSerialFromStep();
-            Ops.focusQrInput();
         }
         try {
             window.dispatchEvent(new CustomEvent('tm07-order-applied', { detail: { number: number } }));
         } catch (_e) {}
-        await openOrderSession(number, result);
+        await openOrderSession(number, result, { sessionId: prepOpts.sessionId });
         applyActiveSessionToUI();
         if (!resuming) {
             await maybeIssueSerialAndPrintForOrder(number, !!result && result.cached);
         } else {
+            try {
+                await fillSerialsForOrder(number);
+            } catch (snErr) {
+                plog('S/N: ' + (snErr.message || String(snErr)));
+            }
             setWbStatus(statusMsg + ' — открыта существующая сессия.', false);
             const activeSid =
                 (window.TM07_BENCH_EVENTS &&
@@ -1577,58 +1751,97 @@
     async function maybeIssueSerialAndPrintForOrder(orderNumber, cached) {
         if (isResumingExistingSession()) {
             applyActiveSessionToUI();
+            try {
+                await fillSerialsForOrder(orderNumber);
+            } catch (snErr) {
+                plog('S/N: ' + (snErr.message || String(snErr)));
+                setWbStatus('Заказ открыт, но S/N не подставился: ' + (snErr.message || String(snErr)), true);
+            }
             return { skipped: true, reason: 'resume' };
         }
         const Nameplate = window.TM07_NAMEPLATE;
-        if (!Nameplate || typeof Nameplate.issueSerialAndPrintForOrder !== 'function') {
-            return null;
-        }
-        if (cached && /^300\d{7}$/.test(correctorSerialValue())) {
-            return { serial: correctorSerialValue(), skipped: true };
-        }
-        try {
-            const issued = await Nameplate.issueSerialAndPrintForOrder(orderNumber);
-            if (!issued || !issued.serial) {
+        const ui = window.TM07_SERIAL_REGISTRY_UI;
+        if (!ui || typeof ui.ensureOrderSerials !== 'function') {
+            if (!Nameplate || typeof Nameplate.issueSerialAndPrintForOrder !== 'function') {
                 return null;
             }
-            syncCorrectorSerialDisplay();
-            paintAssemblyCard();
-            const printed = !!issued.printed;
-            const previewOnly = !!(issued.printResult && issued.printResult.previewFallback);
+        }
+        try {
+            const filled = ui && typeof ui.ensureOrderSerials === 'function'
+                ? await ui.ensureOrderSerials({ orderNumber: orderNumber || null })
+                : null;
+            const corr = filled && filled.correctorResult;
+            if (filled && filled.corrector) {
+                syncCorrectorSerialDisplay();
+                paintAssemblyCard();
+            }
+            if (filled && filled.complex) {
+                const Ops = window.TM07_WORKBENCH_OPS;
+                if (Ops && typeof Ops.applyComplexSerial === 'function') {
+                    Ops.applyComplexSerial(filled.complex);
+                }
+            }
+
+            let printed = false;
+            let printResult = null;
+            let skippedPrint = true;
+            // Печать шильда временно отключена
+            if (false && corr && !corr.reused && Nameplate && typeof Nameplate.printCorrector === 'function') {
+                skippedPrint = false;
+                const config = await Nameplate.loadConfig(false);
+                if (config.autoPrintOnOrderOpen !== false) {
+                    try {
+                        printResult = await Nameplate.printCorrector(corr.serial, {
+                            orderNumber: orderNumber,
+                        });
+                        printed = !!(printResult && printResult.printed);
+                    } catch (printErr) {
+                        printResult = {
+                            printed: false,
+                            printError: printErr.message || String(printErr),
+                        };
+                    }
+                }
+            } else if (!filled && Nameplate && typeof Nameplate.issueSerialAndPrintForOrder === 'function') {
+                return Nameplate.issueSerialAndPrintForOrder(orderNumber);
+            }
+
             const printErr =
-                issued.printResult && issued.printResult.printError
-                    ? String(issued.printResult.printError)
-                    : '';
-            let status =
-                'Заказ ' +
-                (orderNumber || '') +
-                ': S/N ' +
-                issued.serial;
-            if (printed) {
+                printResult && printResult.printError ? String(printResult.printError) : '';
+            const previewOnly = !!(printResult && printResult.previewFallback);
+            let status = 'Заказ ' + (orderNumber || '') + ':';
+            if (filled && filled.corrector) {
+                status += ' корр. ' + filled.corrector;
+            }
+            if (filled && filled.complex) {
+                status += ', компл. ' + filled.complex;
+            }
+            const reusedBoth =
+                (corr && corr.reused) || (filled && filled.complexResult && filled.complexResult.reused);
+            if (corr && corr.reused && filled && filled.complexResult && filled.complexResult.reused) {
+                status += ' — номера из таблицы, новые не выдавались.';
+            } else if (reusedBoth) {
+                status += ' — подставлены из реестра.';
+            } else if (printed) {
                 status += ' — шильдик отправлен на печать.';
             } else if (previewOnly) {
                 status += ' — превью шильдика (агент печати не запущен).';
             } else if (printErr) {
-                status += ' — печать не удалась, S/N выдан. ' + printErr;
+                status += ' — печать не удалась. ' + printErr;
+            } else if (skippedPrint) {
+                status += ' — серийники подставлены.';
             } else {
                 status += ' — нажмите «Печать шильдика».';
             }
             plog(status);
-            // Ошибка печати/агента — предупреждение, не красный блокер открытия заказа.
             setWbStatus(status, !!(printErr && !previewOnly && !printed));
-            if (printErr && !previewOnly && !printed) {
-                await logOpsEvent(
-                    (window.TM07_BENCH_EVENTS && window.TM07_BENCH_EVENTS.EVENT.NAMEPLATE_PRINT) ||
-                        'nameplate_print',
-                    'fail',
-                    {
-                        stage: 'assembly',
-                        serialCorrector: issued.serial || null,
-                        payload: { orderNumber: orderNumber, error: printErr },
-                    }
-                );
-            }
-            return issued;
+            return {
+                serial: filled && filled.corrector,
+                complex: filled && filled.complex,
+                reused: !!(corr && corr.reused),
+                printed: printed,
+                printResult: printResult,
+            };
         } catch (e) {
             const msg = e.message || String(e);
             plog('Шильдик: ' + msg);
@@ -1647,6 +1860,25 @@
         }
     }
 
+    async function fillSerialsForOrder(orderNumber) {
+        const ui = window.TM07_SERIAL_REGISTRY_UI;
+        if (!ui || typeof ui.ensureOrderSerials !== 'function') {
+            return null;
+        }
+        const filled = await ui.ensureOrderSerials({ orderNumber: orderNumber || null });
+        if (filled && filled.corrector) {
+            syncCorrectorSerialDisplay();
+            paintAssemblyCard();
+        }
+        if (filled && filled.complex) {
+            const Ops = window.TM07_WORKBENCH_OPS;
+            if (Ops && typeof Ops.applyComplexSerial === 'function') {
+                Ops.applyComplexSerial(filled.complex);
+            }
+        }
+        return filled;
+    }
+
     function currentOrderNumberForSerials() {
         const events = window.TM07_BENCH_EVENTS;
         if (events && events.getActiveOrderNumber && events.getActiveOrderNumber()) {
@@ -1656,21 +1888,7 @@
     }
 
     async function ensureComplexSerial() {
-        const Ops = window.TM07_WORKBENCH_OPS;
-        if (Ops && typeof Ops.isComplexOrder === 'function' && !Ops.isComplexOrder()) {
-            plog('Только корректор — S/N комплекса не выдаём.');
-            return null;
-        }
-        const ui = window.TM07_SERIAL_REGISTRY_UI;
-        if (!ui || typeof ui.ensureSerialNumbersAuto !== 'function') {
-            return null;
-        }
-        const orderNumber = currentOrderNumberForSerials();
-        const sn = await ui.ensureSerialNumbersAuto({ orderNumber: orderNumber || null });
-        if (sn && sn.complex) {
-            plog('S/N комплекса: ' + sn.complex);
-        }
-        return sn;
+        return fillSerialsForOrder(currentOrderNumberForSerials());
     }
 
     function ensureDatetimeNow() {
@@ -1775,20 +1993,7 @@
                 throw new Error('Модуль записи параметров недоступен.');
             }
 
-            plog('DEFAULT_SETTINGS (п.2): команда 2 без LKG…');
-            setWbStatus('DEFAULT_SETTINGS…', false);
-            if (typeof K.writeDefaultSettings === 'function') {
-                if (window.__tm07DefaultSettingsApplied) {
-                    plog('DEFAULT_SETTINGS уже выполнена в этой сессии — пропуск.');
-                } else {
-                    const ds = await K.writeDefaultSettings({ skipPassport: !!window.__paramDevicePassport });
-                    if (ds && ds.skipped) {
-                        plog('DEFAULT_SETTINGS: уже применена на приборе (0x0B).');
-                    }
-                }
-            }
-
-            plog('Запись всех параметров (основные + счётчик + комплекс)…');
+            plog('Запись всех параметров по порядку (п.2 DEFAULT_SETTINGS → п.3…): основные + счётчик + комплекс…');
             setWbStatus('Запись в корректор…', false);
             if (!isConnected()) {
                 throw new Error('КАО отключился — подключите снова и повторите.');
@@ -1871,9 +2076,15 @@
 
             plog('Параметризация записана.');
 
+            // Паспорта DOCX временно отключены (TM07_PASSPORT.isEnabled / PASSPORTS_ENABLED).
             const Passport = window.TM07_PASSPORT;
             let passportFiles = [];
-            if (Passport && typeof Passport.generatePassports === 'function') {
+            const passportsOn =
+                Passport &&
+                typeof Passport.isEnabled === 'function' &&
+                Passport.isEnabled() &&
+                typeof Passport.generatePassports === 'function';
+            if (passportsOn) {
                 try {
                     plog('Формирование паспортов…');
                     passportFiles = (await Passport.generatePassports({ download: true })) || [];
@@ -1912,6 +2123,9 @@
                         }
                     );
                 }
+            } else {
+                // Паспорта выключены — не блокируем «готово» и шаг workflow.
+                window.__wbPostWrite.passportOk = true;
             }
 
             if (Guide && typeof Guide.showDone === 'function') {
@@ -1952,23 +2166,6 @@
             if (btn) btn.disabled = false;
             paintAssemblyCard();
         }
-    }
-
-    function scheduleAutoLoadOrder() {
-        if (orderLoadTimer) {
-            clearTimeout(orderLoadTimer);
-        }
-        const numEl = $('paramOrder1cNumber');
-        const raw = (numEl && numEl.value) || '';
-        if (!isOrderInputReady(raw)) {
-            return;
-        }
-        orderLoadTimer = setTimeout(function () {
-            orderLoadTimer = null;
-            prepareOrderFromInput(false).catch(function (e) {
-                plog('Автозагрузка: ' + (e.message || String(e)));
-            });
-        }, 700);
     }
 
     async function resetSession() {
@@ -2054,8 +2251,14 @@
                 Ops.paintWorkflowSteps();
             }
 
+            // Паспорта DOCX временно отключены (см. PASSPORTS_ENABLED в tm07-passport-generate.js).
             const Passport = window.TM07_PASSPORT;
-            if (Passport && typeof Passport.generatePassports === 'function') {
+            if (
+                Passport &&
+                typeof Passport.isEnabled === 'function' &&
+                Passport.isEnabled() &&
+                typeof Passport.generatePassports === 'function'
+            ) {
                 try {
                     const files = await Passport.generatePassports({ download: true });
                     if (files && files.length) {
@@ -2193,17 +2396,11 @@
         } catch (_e) {}
 
         const orderInput = $('paramOrder1cNumber');
-        orderInput?.addEventListener('input', scheduleAutoLoadOrder);
+        // Загрузка только по «Войти в заказ» / Enter / «Повторить» — без автоприёма при наборе номера.
         orderInput?.addEventListener('keydown', function (e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                if (orderLoadTimer) {
-                    clearTimeout(orderLoadTimer);
-                    orderLoadTimer = null;
-                }
-                prepareOrderFromInput(true).catch(function (err) {
-                    plog(err.message || String(err));
-                });
+                void manualOpenOrderSession();
             }
         });
 
@@ -2245,7 +2442,7 @@
                     disconnectKao: true,
                 }).then(function () {
                     cleanWorkbenchUrlQuery();
-                    plog('Сессия заказа завершена. Для продолжения той же сессии — «Открыть» на главной; для нового корректора — введите заказ заново.');
+                    plog('Сессия заказа завершена. Повторный ввод того же номера вернёт в эту сессию; для нового корректора — «Новая сессия».');
                     setWbStatus('Сессия закрыта. Введите номер заказа или откройте сессию с главной.', false);
                 });
             });
@@ -2258,17 +2455,18 @@
             });
         });
 
-        $('wbCorrectorNameplatePrint')?.addEventListener('click', function () {
-            void printCorrectorNameplate()
-                .then(function () {
-                    void refreshPrintAgentStatus();
-                })
-                .catch(function (e) {
-                    plog('Шильдик: ' + (e.message || String(e)));
-                    setWbStatus(e.message || String(e), true);
-                    void refreshPrintAgentStatus();
-                });
-        });
+        // Печать шильда временно отключена
+        // $('wbCorrectorNameplatePrint')?.addEventListener('click', function () {
+        //     void printCorrectorNameplate()
+        //         .then(function () {
+        //             void refreshPrintAgentStatus();
+        //         })
+        //         .catch(function (e) {
+        //             plog('Шильдик: ' + (e.message || String(e)));
+        //             setWbStatus(e.message || String(e), true);
+        //             void refreshPrintAgentStatus();
+        //         });
+        // });
 
         window.addEventListener('tm07-write-abort', function () {
             paintWriteResumeButton();
@@ -2318,7 +2516,7 @@
             });
         });
 
-        $('paramCorrectorDatesToday')?.addEventListener('click', function () {
+    $('paramCorrectorDatesToday')?.addEventListener('click', function () {
             const Ops = window.TM07_WORKBENCH_OPS;
             if (!Ops) {
                 return;
@@ -2327,8 +2525,9 @@
                 Ops.applyCorrectorVerificationDates(true);
                 const st = $('paramCorrectorStatus');
                 if (st) {
-                    st.textContent = '✓ п.80/81 ← сегодня / +4 года';
-                    st.classList.remove('text-danger');
+                    st.textContent = '✓ п.80/81 подставлены';
+                    st.classList.remove('text-danger', 'text-body-secondary');
+                    st.classList.add('text-success');
                 }
             }
         });
@@ -2349,8 +2548,9 @@
                 Ops.applyComplexVerificationDates(true);
                 const st = $('paramComplexStatus');
                 if (st) {
-                    st.textContent = '✓ п.202/203 ← сегодня / +МПИ';
-                    st.classList.remove('text-danger');
+                    st.textContent = '✓ п.202/203 подставлены';
+                    st.classList.remove('text-danger', 'text-body-secondary');
+                    st.classList.add('text-success');
                 }
             }
         });
@@ -2436,19 +2636,26 @@
                 // Только sessionId без order — реактивируем и подставим номер из сессии.
                 window.setTimeout(function () {
                     void (async function () {
+                        const resumeSid = pendingResumeSessionId;
                         try {
                             const events = window.TM07_BENCH_EVENTS;
                             await events.ensureOperator();
-                            const data = await events.reopenOrderSession(pendingResumeSessionId);
-                            pendingResumeSessionId = null;
+                            const data = await events.reopenOrderSession(resumeSid);
                             const num =
                                 data && data.session && data.session.orderNumber
                                     ? data.session.orderNumber
                                     : '';
                             if (num && orderInput) {
                                 orderInput.value = num;
-                                await prepareOrderFromInput(true);
+                                // sessionId держим до openOrderSession внутри prepare —
+                                // иначе создастся новая сессия поверх открытой.
+                                pendingResumeSessionId = resumeSid;
+                                await prepareOrderFromInput(true, { sessionId: resumeSid });
                             } else {
+                                pendingResumeSessionId = null;
+                                applyActiveSessionToUI();
+                                paintSessionBadge();
+                                await maybeAutoConfirmAssembly();
                                 applyActiveSessionToUI();
                                 paintSessionBadge();
                             }
@@ -2554,6 +2761,8 @@
         scheduleSessionResumeSurvey: scheduleSessionResumeSurvey,
         verifyCorrectorAgainstOrder: verifyCorrectorAgainstOrder,
         cancelSessionResumeSurvey: cancelSessionResumeSurvey,
+        valuesMatchForVerify: valuesMatchForVerify,
+        paintVerifyMismatches: paintVerifyMismatches,
     };
 
     if (document.readyState === 'loading') {

@@ -31,14 +31,17 @@ function auth_session_start(): void
         return;
     }
     ini_set('session.use_strict_mode', '1');
+    $https = auth_request_is_https();
     session_set_cookie_params([
         'lifetime' => 0,
         'path' => '/',
-        'secure' => auth_request_is_https(),
+        'secure' => $https,
         'httponly' => true,
         'samesite' => 'Lax',
     ]);
-    session_name('bench_sid');
+    // Отдельное имя для HTTP: иначе старый Secure-cookie bench_sid с :8443
+    // блокирует Set-Cookie по http://IP/ (браузер отвергает non-Secure с тем же именем).
+    session_name($https ? 'bench_sid' : 'bench_sid_http');
     session_start();
 }
 

@@ -23,6 +23,13 @@ function nameplate_btw_logo_extract_from_preview(bool $force = false): bool
     if (!$force && is_readable($logoPath) && filesize($logoPath) > 1000) {
         return true;
     }
+    $fallbackLogo = dirname($logoPath) . '/_logo_from_fresh_wide.png';
+    if ((!class_exists('Imagick') || !is_readable(nameplate_btw_corrector_template_path()))
+        && is_readable($fallbackLogo)
+        && (!$force || !is_readable($logoPath))
+    ) {
+        return @copy($fallbackLogo, $logoPath) && is_readable($logoPath);
+    }
     if (!class_exists('Imagick') || !is_readable(nameplate_btw_corrector_template_path())) {
         return is_readable($logoPath);
     }
@@ -249,7 +256,9 @@ function nameplate_editor_objects_from_dynamic(array $document): array
             'dataField' => $def['dataField'],
             'bartenderField' => $def['bartender'],
             'fontPt' => (float) ($field['fontPt'] ?? $field['font'] ?? 4.2),
-            'fontFamily' => !empty($def['mono']) ? 'DejaVu Sans Mono' : 'DejaVu Sans',
+            'fontFamily' => !empty($def['mono'])
+                ? 'Liberation Mono'
+                : (str_starts_with($id, 'specLine') ? 'Liberation Sans Narrow' : 'Liberation Sans'),
             'bold' => isset($field['style']) && str_contains((string) $field['style'], 'B'),
             'italic' => false,
             'align' => $def['align'] ?? 'left',

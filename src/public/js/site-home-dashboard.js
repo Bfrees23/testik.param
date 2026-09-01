@@ -25,11 +25,20 @@
             return '—';
         }
         try {
-            const d = new Date(iso);
+            const raw = String(iso).trim();
+            // SQL без зоны: показываем как московское время без сдвига браузера.
+            const m = raw.match(
+                /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?(?:\.\d+)?$/
+            );
+            if (m && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)) {
+                return m[3] + '.' + m[2] + '.' + m[1] + ', ' + m[4] + ':' + m[5];
+            }
+            const d = new Date(raw);
             if (Number.isNaN(d.getTime())) {
-                return String(iso);
+                return raw;
             }
             return d.toLocaleString('ru-RU', {
+                timeZone: 'Europe/Moscow',
                 day: '2-digit',
                 month: '2-digit',
                 year: 'numeric',
@@ -209,11 +218,23 @@
         }
     }
 
+    /** false — блок «Сбои печати / паспорта / сверки» временно скрыт (вернуть: true + убрать hidden у #homeOpsAlerts). */
+    const OPS_ALERTS_ENABLED = false;
+
     function renderOpsAlerts(events) {
         const card = $('homeOpsAlerts');
         const list = $('homeOpsAlertsList');
         const countEl = $('homeOpsAlertsCount');
         if (!card || !list) {
+            return;
+        }
+        if (!OPS_ALERTS_ENABLED) {
+            card.classList.add('d-none');
+            card.hidden = true;
+            list.innerHTML = '';
+            if (countEl) {
+                countEl.textContent = '0';
+            }
             return;
         }
         const failTypes = {
@@ -235,6 +256,7 @@
             }
             return;
         }
+        card.hidden = false;
         card.classList.remove('d-none');
         if (countEl) {
             countEl.textContent = String(fails.length);

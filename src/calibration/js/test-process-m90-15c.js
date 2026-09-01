@@ -87,13 +87,84 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function cloneDefaultBenchChannels() {
         return [
-            { id: 'm90_6045', type: 'm90', name: 'M90 #1 (+20)', pid: 0x6045, setpoint: 20 },
+            { id: 'm90_6044', type: 'm90', name: 'M90 #1 (−40)', pid: 0x6044, setpoint: -40 },
+            { id: 'm90_6045', type: 'm90', name: 'M90 #2 (+10)', pid: 0x6045, setpoint: 10 },
+            { id: 'm90_6049', type: 'm90', name: 'M90 #3 (+60)', pid: 0x6049, setpoint: 60 },
             { id: 'mit_6015', type: 'mit', name: 'МИТ 8', pid: 0x6015 }
         ];
     }
 
     let channels = cloneDefaultBenchChannels();
     let m90ChannelOrder = channels.filter((c) => c.type === 'm90').map((c) => c.id);
+
+    function formatSetpointC(sp) {
+        const n = Number(sp);
+        if (!Number.isFinite(n)) return '?';
+        if (n > 0) return '+' + String(n);
+        return String(n).replace('-', '−');
+    }
+
+    function getM90Channels() {
+        return channels.filter((c) => c.type === 'm90');
+    }
+
+    /** Каналы M90 по возрастанию уставки (MIN → MAX). */
+    function getM90ChannelsBySetpointAsc() {
+        return getM90Channels()
+            .slice()
+            .sort((a, b) => Number(a.setpoint) - Number(b.setpoint));
+    }
+
+    function getCalMinChannel() {
+        const list = getM90ChannelsBySetpointAsc();
+        return list[0] || null;
+    }
+
+    function getCalMaxChannel() {
+        const list = getM90ChannelsBySetpointAsc();
+        return list.length ? list[list.length - 1] : null;
+    }
+
+    function refreshPhaseAccordionLabels() {
+        const minCh = getCalMinChannel();
+        const maxCh = getCalMaxChannel();
+        const minBtn = document.querySelector('[data-phase="cal_min"] .accordion-button');
+        const maxBtn = document.querySelector('[data-phase="cal_max"] .accordion-button');
+        const verBtn = document.querySelector('[data-phase="temp_verify"] .accordion-button');
+        if (minBtn && minCh) {
+            minBtn.innerHTML = `<span class="badge text-bg-secondary me-2 rounded-pill">2</span>Калибровка MIN (${formatSetpointC(minCh.setpoint)} °C)`;
+        }
+        if (maxBtn && maxCh) {
+            maxBtn.innerHTML = `<span class="badge text-bg-secondary me-2 rounded-pill">3</span>Калибровка MAX (${formatSetpointC(maxCh.setpoint)} °C)`;
+        }
+        if (verBtn) {
+            const pts = getM90ChannelsBySetpointAsc()
+                .map((c) => formatSetpointC(c.setpoint))
+                .join(', ');
+            verBtn.innerHTML = `<span class="badge text-bg-secondary me-2 rounded-pill">4</span>Поверка T${pts ? ` (${pts} °C)` : ''}`;
+        }
+    }
+
+    async function logCalibEvent(state, opts) {
+        const api = window.TM07_BENCH_EVENTS;
+        if (!api || typeof api.logStage !== 'function') return null;
+        const o = opts || {};
+        try {
+            return await api.logStage(
+                'calibration',
+                state,
+                Object.assign(
+                    {
+                        serialCorrector: getActiveCorrSerial(),
+                    },
+                    o
+                )
+            );
+        } catch (e) {
+            log(`Журнал калибровки: не записано (${e.message})`);
+            return null;
+        }
+    }
 
     function parseHexUsbId(s) {
         const n = parseInt(String(s || '').replace(/^0x/i, ''), 16);
@@ -1272,46 +1343,55 @@ document.addEventListener('DOMContentLoaded', () => {
         setWorkflowStatus('Фаза 1 завершена.');
     }
 
-    async function phaseCalMin() {
-        setPhaseState('cal_min', 'running');
-        setScenarioPhaseTitle('Фаза 2: MIN +20');
+    async function phaseCalPoint(phaseId, channel, phaseTitle) {
+        if (!channel) {
+            throw new Error(`${phaseTitle}: в профиле нет канала M90`);
+        }
+        setPhaseState(phaseId, 'running');
+        const spLabel = formatSetpointC(channel.setpoint);
+        setScenarioPhaseTitle(`${phaseTitle}: ${channel.name} (${spLabel} °C)`);
         await waitForProceed(
-            'Термодатчик корректора в среде +20 °C (M90 #1)',
+            `Термодатчик корректора в среде ${spLabel} °C (${channel.name})`,
             'После установки нажмите «Продолжить» — начнётся отсчёт плато МИТ.'
         );
         const ref = await waitMitPlateau();
         await writeCorrTemperatureCalibration(ref);
-        setPhaseState('cal_min', 'done');
-        setWorkflowStatus('Фаза 2: записан MIN.');
+        setPhaseState(phaseId, 'done');
+        setWorkflowStatus(`${phaseTitle}: записан эталон ${ref.toFixed(3)} °C @ ${spLabel}.`);
+        return { channelId: channel.id, setpoint: channel.setpoint, refC: ref };
+    }
+
+    async function phaseCalMin() {
+        return phaseCalPoint('cal_min', getCalMinChannel(), 'Фаза 2: калибровка MIN');
     }
 
     async function phaseCalMax() {
-        setPhaseState('cal_max', 'running');
-        setScenarioPhaseTitle('Фаза 3: MAX +20');
-        await waitForProceed(
-            'Термодатчик корректора в среде +20 °C (M90 #1)',
-            'Нажмите «Продолжить» для старта контроля плато МИТ.'
-        );
-        const ref = await waitMitPlateau();
-        await writeCorrTemperatureCalibration(ref);
-        setPhaseState('cal_max', 'done');
-        setWorkflowStatus('Фаза 3: записан MAX.');
+        return phaseCalPoint('cal_max', getCalMaxChannel(), 'Фаза 3: калибровка MAX');
     }
 
     async function phaseTempVerify() {
         setPhaseState('temp_verify', 'running');
         setScenarioPhaseTitle('Фаза 4: поверка T');
-        const points = [20];
+        const points = getM90ChannelsBySetpointAsc();
+        if (!points.length) {
+            throw new Error('Поверка T: в профиле нет каналов M90');
+        }
         const tol = readTempTolerance();
         let okAll = true;
+        const results = [];
 
-        for (const p of points) {
+        for (const ch of points) {
             ensureRunning();
-            await waitForProceed(`Поверка T: среда ${p} °C`, 'Установите датчик в соответствующую камеру, затем Продолжить.');
+            const p = Number(ch.setpoint);
+            const spLabel = formatSetpointC(p);
+            await waitForProceed(
+                `Поверка T: среда ${spLabel} °C (${ch.name})`,
+                'Установите датчик в соответствующую камеру M90, затем Продолжить.'
+            );
             await pollMitOnce();
             let ref = getMitRef();
             if (ref == null) {
-                const manual = window.prompt(`МИТ недоступен. Введите эталон T для точки ${p} °C:`, String(p));
+                const manual = window.prompt(`МИТ недоступен. Введите эталон T для точки ${spLabel} °C:`, String(p));
                 if (manual === null) throw new Error('Отмена');
                 ref = parseFloat(manual.replace(',', '.'));
                 if (Number.isNaN(ref)) throw new Error('Неверное число');
@@ -1320,13 +1400,25 @@ document.addEventListener('DOMContentLoaded', () => {
             const corrT = await readCorrTemperature();
             const d = Math.abs(corrT - ref);
             const ok = d <= tol;
-            log(`T @ ${p} °C: эталон ${ref.toFixed(3)}, корректор ${corrT.toFixed(3)}, Δ=${d.toFixed(3)} → ${ok ? 'OK' : 'FAIL'}`);
+            log(
+                `T @ ${spLabel} °C (${ch.name}): эталон ${ref.toFixed(3)}, корректор ${corrT.toFixed(3)}, Δ=${d.toFixed(3)} (допуск ±${tol}) → ${ok ? 'OK' : 'FAIL'}`
+            );
+            results.push({
+                channelId: ch.id,
+                setpoint: p,
+                refC: ref,
+                corrC: corrT,
+                deltaC: d,
+                tolC: tol,
+                ok,
+            });
             okAll = okAll && ok;
         }
 
         setPhaseState('temp_verify', okAll ? 'done' : 'failed');
         if (!okAll) throw new Error('Поверка температуры: есть FAIL — перекалибровка.');
-        setWorkflowStatus('Фаза 4: поверка T пройдена.');
+        setWorkflowStatus(`Фаза 4: поверка T пройдена (${points.length} точ.).`);
+        return { ok: okAll, points: results };
     }
 
     async function phaseImpulse() {
@@ -1467,19 +1559,20 @@ document.addEventListener('DOMContentLoaded', () => {
         activePhaseId = name;
         phaseStopRequests.delete(name);
         if (PHASE_TO_MACRO[name] != null) setMacroWorkflowStep(PHASE_TO_MACRO[name]);
+        let phasePayload = { phase: name, label: PHASE_LABELS[name] || name };
         try {
             switch (name) {
                 case 'm90_mit':
                     await phaseM90Mit();
                     break;
                 case 'cal_min':
-                    await phaseCalMin();
+                    phasePayload = Object.assign(phasePayload, (await phaseCalMin()) || {});
                     break;
                 case 'cal_max':
-                    await phaseCalMax();
+                    phasePayload = Object.assign(phasePayload, (await phaseCalMax()) || {});
                     break;
                 case 'temp_verify':
-                    await phaseTempVerify();
+                    phasePayload = Object.assign(phasePayload, (await phaseTempVerify()) || {});
                     break;
                 case 'impulse':
                     await phaseImpulse();
@@ -1494,8 +1587,16 @@ document.addEventListener('DOMContentLoaded', () => {
                     break;
             }
             await saveProgressToDb('phase_done', name);
+            await logCalibEvent('phase', {
+                eventState: 'done',
+                payload: phasePayload,
+            });
         } catch (e) {
             await saveProgressToDb('phase_error', name);
+            await logCalibEvent('phase', {
+                eventState: 'failed',
+                payload: Object.assign({}, phasePayload, { error: String(e && e.message ? e.message : e) }),
+            });
             throw e;
         } finally {
             if (activePhaseId === name) activePhaseId = null;
@@ -1567,6 +1668,18 @@ document.addEventListener('DOMContentLoaded', () => {
         runFullBtn.disabled = true;
         if (resumeScenarioBtn) resumeScenarioBtn.disabled = true;
         stopScenarioBtn.disabled = false;
+        await logCalibEvent('start', {
+            eventState: 'start',
+            payload: {
+                resume: !!isResume,
+                startIndex,
+                m90: getM90ChannelsBySetpointAsc().map((c) => ({
+                    id: c.id,
+                    setpoint: c.setpoint,
+                    name: c.name,
+                })),
+            },
+        });
         try {
             for (let i = startIndex; i < PHASE_ORDER.length; i += 1) {
                 currentFullPhaseIndex = i;
@@ -1583,6 +1696,10 @@ document.addEventListener('DOMContentLoaded', () => {
             setMacroWorkflowStep(7);
             renderCycleReport('Цикл завершен успешно.', buildCycleReport('Успешно'));
             await saveProgressToDb('cycle_done', PHASE_ORDER[PHASE_ORDER.length - 1]);
+            await logCalibEvent('done', {
+                eventState: 'done',
+                payload: { phaseStates: collectPhaseStates() },
+            });
         } catch (e) {
             if (e.message === 'Сценарий остановлен') {
                 saveScenarioState(currentFullPhaseIndex);
@@ -1591,6 +1708,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 setWorkflowStatus('Остановлено.');
                 renderCycleReport('Цикл приостановлен.', buildCycleReport('Приостановлен оператором'));
                 await saveProgressToDb('cycle_paused', PHASE_ORDER[currentFullPhaseIndex] || null);
+                await logCalibEvent('done', {
+                    eventState: 'stopped',
+                    payload: {
+                        phase: PHASE_ORDER[currentFullPhaseIndex] || null,
+                        phaseStates: collectPhaseStates(),
+                    },
+                });
             } else {
                 log(`Ошибка: ${e.message}`);
                 saveScenarioState(currentFullPhaseIndex);
@@ -1599,6 +1723,14 @@ document.addEventListener('DOMContentLoaded', () => {
                 setWorkflowStatus(`Ошибка: ${e.message}`);
                 renderCycleReport('Цикл завершен с ошибкой.', buildCycleReport('Ошибка', e.message));
                 await saveProgressToDb('cycle_error', PHASE_ORDER[currentFullPhaseIndex] || null);
+                await logCalibEvent('done', {
+                    eventState: 'failed',
+                    payload: {
+                        error: String(e.message || e),
+                        phase: PHASE_ORDER[currentFullPhaseIndex] || null,
+                        phaseStates: collectPhaseStates(),
+                    },
+                });
             }
         } finally {
             scenarioRunning = false;
@@ -1779,21 +1911,32 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (vid) usbVendorId = vid;
                 const sch = s.m90?.channels;
                 if (Array.isArray(sch) && sch.length > 0) {
-                    const src = sch[0] || {};
-                    const m90id = String(src.id || '').trim() || 'm90_6045';
-                    const m90pid = parseHexUsbId(src.productIdHex) || 0x6045;
-                    const m90nameBase = src.label || src.id || 'M90 #1';
-                    const m90part = [{
-                        id: m90id,
-                        type: 'm90',
-                        name: `${m90nameBase} (+20)`,
-                        pid: m90pid,
-                        setpoint: 20
-                    }];
-                    const mit = s.mit || {};
-                    const mitPid = parseHexUsbId(mit.productIdHex || '0x6015') || 0x6015;
-                    channels = [...m90part, { id: 'mit_6015', type: 'mit', name: mit.label || 'МИТ 8', pid: mitPid }];
-                    m90ChannelOrder = m90part.map((c) => c.id);
+                    const m90part = sch
+                        .map((src, idx) => {
+                            const m90id = String(src.id || '').trim() || `m90_${idx + 1}`;
+                            const m90pid = parseHexUsbId(src.productIdHex) || 0x6045;
+                            const spRaw = src.setpointC != null ? src.setpointC : src.setpoint;
+                            const sp = Number(spRaw);
+                            const setpoint = Number.isFinite(sp) ? sp : 20;
+                            const m90nameBase = src.label || src.id || `M90 #${idx + 1}`;
+                            return {
+                                id: m90id,
+                                type: 'm90',
+                                name: `${m90nameBase}`,
+                                pid: m90pid,
+                                setpoint,
+                            };
+                        })
+                        .filter((c) => c.id);
+                    if (m90part.length) {
+                        const mit = s.mit || {};
+                        const mitPid = parseHexUsbId(mit.productIdHex || '0x6015') || 0x6015;
+                        channels = [
+                            ...m90part,
+                            { id: 'mit_6015', type: 'mit', name: mit.label || 'МИТ 8', pid: mitPid },
+                        ];
+                        m90ChannelOrder = m90part.map((c) => c.id);
+                    }
                 }
                 const br = s.benchRegisters;
                 if (br) {
@@ -1849,9 +1992,15 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         renderChannels();
+        refreshPhaseAccordionLabels();
         renderAutoConnectToggle();
         PHASE_ORDER.forEach((id) => setPhaseState(id, 'pending'));
         renderCycleReport('Отчет появится после завершения полного цикла.', 'Отчет пока не сформирован.');
+        if (window.TM07_BENCH_EVENTS && typeof window.TM07_BENCH_EVENTS.initBackend === 'function') {
+            try {
+                await window.TM07_BENCH_EVENTS.initBackend();
+            } catch (_e) {}
+        }
         const localSerial = normalizeCorrSerial(localStorage.getItem(CORR_SERIAL_KEY) || '');
         if (localSerial && benchCorrSerialInput) {
             benchCorrSerialInput.value = localSerial;

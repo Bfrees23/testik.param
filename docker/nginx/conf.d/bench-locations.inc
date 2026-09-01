@@ -92,6 +92,14 @@
         fastcgi_buffering off;
     }
 
+    location = /api/tm07-firmware.php {
+        include fastcgi_params;
+        fastcgi_pass $tm07_php_upstream;
+        fastcgi_param SCRIPT_FILENAME /app/api/tm07-firmware.php;
+        fastcgi_read_timeout 300;
+        fastcgi_buffering off;
+    }
+
     location = /api/passport-generate.php {
         include fastcgi_params;
         fastcgi_pass $tm07_php_upstream;
@@ -129,6 +137,15 @@
         fastcgi_pass $tm07_php_upstream;
         fastcgi_param SCRIPT_FILENAME /app/api/site-action-log.php;
         fastcgi_read_timeout 120;
+        fastcgi_buffering off;
+    }
+
+    # Остальные /api/*.php → /app/api (если точный location не подхватился без reload).
+    location ~ ^/api/([^/]+\.php)$ {
+        include fastcgi_params;
+        fastcgi_pass $tm07_php_upstream;
+        fastcgi_param SCRIPT_FILENAME /app/api/$1;
+        fastcgi_read_timeout 300;
         fastcgi_buffering off;
     }
 

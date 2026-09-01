@@ -111,29 +111,31 @@
             passport: 'emis-rgs245',
             description: 'ротационного счетчика ЭМИС-РГС-245 с корректором объема газа ТМ-07',
         },
+        /*
         'ПК-ТМ-Р2': {
             meterName: 'ПРОМЕТР-Р',
             kind: 'rotational',
             passport: 'prometr-r',
             description: 'ротационного счетчика ПРОМЕТР-Р с корректором объема газа ТМ-07',
         },
+        */
         'ПК-ТМ-Р3': {
-            meterName: 'RVG (исп. Б,К)',
+            meterName: 'RABO',
             kind: 'rotational',
             passport: 'rvg-bc',
-            description: 'ротационного счетчика RVG (исп. Б,К) с корректором объема газа ТМ-07',
+            description: 'ротационного счетчика RABO (Раско) с корректором объема газа ТМ-07',
         },
         'ПК-ТМ-Р4': {
             meterName: 'РВГ (исп.А)',
             kind: 'rotational',
             passport: 'rvg-a',
-            description: 'ротационного счетчика РВГ (исп.А) с корректором объема газа ТМ-07',
+            description: 'ротационного счетчика РВГ (исп.А, УРГП) с корректором объема газа ТМ-07',
         },
         'ПК-ТМ-Р5': {
             meterName: 'РВГ (исп.Б)',
             kind: 'rotational',
             passport: 'rvg-b',
-            description: 'ротационного счетчика РВГ (исп.Б) с корректором объема газа ТМ-07',
+            description: 'ротационного счетчика РВГ (исп.Б, УРГП) с корректором объема газа ТМ-07',
         },
         'ПК-ТМ-Р6': {
             meterName: 'СГР',
@@ -489,8 +491,8 @@
 
     /** БТ1/2/3 из обозначения комплекса → наименование блока телеметрии (п.227). */
     const BT_BLOCK_NAMES = {
-        БТ1: 'БПЭК-02/ЦК Б',
-        БТ2: 'БПЭК-04/ЦК Б',
+        БТ1: 'БПЭК-02/ЦК',
+        БТ2: 'БПЭК-04/ЦК',
         БТ3: 'БПЭК-05/ЦК',
     };
     const TELEMETRY_NAME_DEFAULT = 'TM-02/ТМ';
@@ -523,7 +525,7 @@
         return TELEMETRY_NAME_DEFAULT;
     }
 
-    /** Табл. 15–16: погрешности объёма → п.119–120, 219–220, 225–226. */
+    /** Табл. 15 → п.119/120/219/220; п.225/226 = 119+0.1 / 120+0.1. */
     function applyVolumeErrorLimitsToInputs(row, primaryFullName, complexDesignation, lines) {
         const L = window.TM07_VOLUME_ERROR_LIMITS;
         if (!L) {
@@ -550,8 +552,8 @@
                 qmax = q;
             }
         }
+        const passport = resolveMeterPassport(profile, row, primaryFullName);
         if (!typeCode && window.TM07_COMPLEX_METER_TYPES) {
-            const passport = resolveMeterPassport(profile, row, primaryFullName);
             if (passport) {
                 const meterType = window.TM07_COMPLEX_METER_TYPES.resolveType(passport, {
                     du: hints.du,
@@ -601,6 +603,50 @@
                 n += 1;
             }
         });
+        // Паспорт счётчика: п.119/120; затем п.225/226 = 119/120 + 0.1.
+        const C = window.TM07_COMPLEX_METER_TYPES;
+        const volOv =
+            passport && C && typeof C.volumeErrorOverrideForPassport === 'function'
+                ? C.volumeErrorOverrideForPassport(passport)
+                : null;
+        if (volOv && volOv.meter) {
+            if (
+                setMeterStepInput(
+                    119,
+                    String(volOv.meter.qminQt),
+                    lines,
+                    'паспорт счётчика (п.119)'
+                )
+            ) {
+                n += 1;
+            }
+            if (
+                setMeterStepInput(
+                    120,
+                    String(volOv.meter.qtQmax),
+                    lines,
+                    'паспорт счётчика (п.120)'
+                )
+            ) {
+                n += 1;
+            }
+        }
+        const v119 = document.getElementById('val_119');
+        const v120 = document.getElementById('val_120');
+        const std =
+            L.standardStepsFromWorking &&
+            L.standardStepsFromWorking(
+                v119 && v119.value,
+                v120 && v120.value
+            );
+        if (std) {
+            if (setMeterStepInput(225, std[225], lines, 'п.225 = п.119+0.1')) {
+                n += 1;
+            }
+            if (setMeterStepInput(226, std[226], lines, 'п.226 = п.120+0.1')) {
+                n += 1;
+            }
+        }
         return n;
     }
 
@@ -664,6 +710,9 @@
             return 0;
         }
         const alwaysSet = {
+            // Tmin/Tmax корректора — всегда −40…+60 (не из ПТГ заказа / счётчика).
+            8: 1,
+            9: 1,
             // Плотность газа — всегда 0.70 (перекрывает значение из заказа 1С).
             22: 1,
             17: 1,
@@ -943,7 +992,9 @@
     /** П.4/5 — фиксированные значения (не перезаписываются данными 1С). */
     const FIXED_STEP_VALUES = {
         4: '10',
-        5: '124'
+        5: '124',
+        8: '-40',
+        9: '60',
     };
 
     function applyFixedStepValues(lines) {
@@ -1161,9 +1212,9 @@
         if (/(давл|pabs|абс\.?\s*p|^p(?!.*ад))/i.test(l)) return [6, 7];
         // ПТТП — температура технолог. параметров → T2min/T2max (п.12–13)
         if (/(пттп)/i.test(l)) return [12, 13];
-        // ПТГ — температура газа → Tmin/Tmax (п.8–9)
-        if (/(птг)/i.test(l)) return [8, 9];
-        if (/(темп|^t\b|tгаз|газ.*темп)/i.test(l)) return [8, 9];
+        // ПТГ в заказе не пишем в Tmin/Tmax корректора — всегда −40…+60.
+        if (/(птг)/i.test(l)) return null;
+        if (/(темп|^t\b|tгаз|газ.*темп)/i.test(l)) return null;
         if (/(плотн|rho|ρ)/i.test(l)) return [22];
         if (/(co2|co₂|углек)/i.test(l)) return [23];
         if (/(n2|n₂|азот)/i.test(l)) return [24];
@@ -1562,6 +1613,34 @@
         return n;
     }
 
+    function renderOrderContents(row, nom, ch, designation) {
+        const box = document.getElementById('paramOrder1cContents');
+        const nomEl = document.getElementById('paramOrder1cNom');
+        const chEl = document.getElementById('paramOrder1cChar');
+        if (!box) {
+            return;
+        }
+        const n = String(nom || '').trim();
+        const c = String(ch || '').trim();
+        const d = String(designation || '').trim();
+        const num = row && row.Number ? String(row.Number).trim() : '';
+        const title = n || d || '';
+        if (!title && !c && !num) {
+            box.classList.add('d-none');
+            if (nomEl) nomEl.textContent = '';
+            if (chEl) chEl.textContent = '';
+            return;
+        }
+        box.classList.remove('d-none');
+        if (nomEl) {
+            nomEl.textContent = (num ? num + ' · ' : '') + (title || '—');
+        }
+        if (chEl) {
+            chEl.textContent = c || '';
+            chEl.classList.toggle('d-none', !c);
+        }
+    }
+
     function applyOrder1cRowToInputs(row) {
         const rules = window.TM07_ORDER1C_KEY_RULES;
         if (!row || typeof row !== 'object') {
@@ -1571,6 +1650,9 @@
         const lines = [];
         for (let ri = 0; ri < rules.length; ri += 1) {
             const rule = rules[ri];
+            if (rule.id === 80 || rule.id === 81 || rule.id === 103 || rule.id === 104 || rule.id === 202 || rule.id === 203) {
+                continue;
+            }
             for (const k of Object.keys(row)) {
                 if (usedKeys.has(k)) {
                     continue;
@@ -1616,16 +1698,26 @@
         }
         propagateDerivedThresholds(lines);
         applyFixedStepValues(lines);
-        // п.227 — наименование блока телеметрии из БТ1/2/3 (или .БТ) в обозначении заказа.
+        renderOrderContents(row, nom, ch, complexDesignation);
+        // п.227 — только при .БТ / БТ1…3 в заказе (иначе не пишем).
         const btName = resolveTelemetryBlockNameForOrder(row, primary);
-        if (btName) {
+        const hasBt = !!btName && btName !== TELEMETRY_NAME_DEFAULT;
+        let skip227 = !hasBt;
+        try {
+            const OpsTel = window.TM07_WORKBENCH_OPS;
+            if (OpsTel && typeof OpsTel.shouldSkipTelemetryName === 'function') {
+                skip227 = OpsTel.shouldSkipTelemetryName();
+            }
+        } catch (_eSkip) {}
+        if (skip227) {
+            setMeterStepInput(227, '', lines, 'без .БТ — п.227 не пишется');
+        } else if (btName) {
             setMeterStepInput(227, btName, lines, 'блок телеметрии / БТ');
         }
         // Панель сканирования штрихкода БПЭК — только для заказов с телеметрией (.БТ).
         try {
-            const isBt = !!btName && btName !== TELEMETRY_NAME_DEFAULT;
             if (window.TM07_MIDA_QR && typeof window.TM07_MIDA_QR.setTelemetryPanelVisible === 'function') {
-                window.TM07_MIDA_QR.setTelemetryPanelVisible(isBt);
+                window.TM07_MIDA_QR.setTelemetryPanelVisible(hasBt && !skip227);
             }
         } catch (_eBt) {}
         try {

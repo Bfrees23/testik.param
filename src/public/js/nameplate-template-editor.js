@@ -76,8 +76,12 @@ function mmToPxY(mm) { return (mm/docPageH())*docRefH(); }
 function fontPx(fontPt) { return Math.max(8, fontPt*0.352778*(docRefH()/docPageH())); }
 const FONT_MM_ASCENDER_RATIO = 0.80;
 function fontFamilyForObj(obj) {
-  if (obj && (obj.mono || obj.id === 'serial')) return "'DejaVu Sans Mono', Consolas, monospace";
-  return "'DejaVu Sans', Arial, Helvetica, sans-serif";
+  const fam = String(obj && obj.fontFamily ? obj.fontFamily : '');
+  if (/narrow|condensed/i.test(fam)) {
+    return "'Liberation Sans Narrow', 'Arial Narrow', Arial, sans-serif";
+  }
+  if (obj && obj.mono) return "'Liberation Mono', Consolas, monospace";
+  return "'Liberation Sans', Arial, Helvetica, sans-serif";
 }
 function fontPxForObj(obj) {
   const mm = num(obj?.fontMm, 0);
@@ -1137,7 +1141,7 @@ function addTextObject() {
     const id=newId('text');
     state.document.editorObjects.push({
       id, type:'text', name:id, label:T.newText, dataField:'specLine1', bartenderField:'SpecLine1',
-      x:mmToPxX(5), y:mmToPxY(5), w:mmToPxX(40), fontPt:4.2, fontFamily:'DejaVu Sans', bold:false, align:'left',
+      x:mmToPxX(5), y:mmToPxY(5), w:mmToPxX(40), fontPt:4.2, fontFamily:'Liberation Sans', bold:false, align:'left',
       rotation:0, locked:false, visible:true, deletable:true, zIndex:nextZ(),
     });
     setSelection([id], id);
@@ -1284,7 +1288,7 @@ function pasteExternalText(rawText) {
     const estMm = Math.max(15, Math.min(docPageW() - 4, preview.length * 1.4 + 4));
     state.document.editorObjects.push({
       id, type: 'text', name: id, label: preview, dataField: '', fixedText: text, bartenderField: 'Text',
-      x: mmToPxX(5), y: mmToPxY(5), w: mmToPxX(estMm), fontPt: 4.2, fontFamily: 'DejaVu Sans', bold: false, align: 'left',
+      x: mmToPxX(5), y: mmToPxY(5), w: mmToPxX(estMm), fontPt: 4.2, fontFamily: 'Liberation Sans', bold: false, align: 'left',
       rotation: 0, locked: false, visible: true, deletable: true, zIndex: nextZ(),
     });
     setSelection([id], id);

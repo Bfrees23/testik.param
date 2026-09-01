@@ -291,7 +291,7 @@
             orderStatus: o.orderStatus || null,
             orderPayload: o.orderPayload || null,
         });
-        // Явный resume только; иначе сервер создаёт новую сессию / переключает заказ.
+        // Явный resume только через sessionId; иначе сервер ищет последнюю сессию по заказу.
         if (o.sessionId != null && o.sessionId !== '') {
             const sid = parseInt(String(o.sessionId), 10);
             if (sid > 0) {
@@ -299,6 +299,9 @@
             }
         } else {
             delete payload.sessionId;
+        }
+        if (o.forceNewSession) {
+            payload.forceNewSession = true;
         }
         const data = await fetchJson('/api/bench-db-status.php', {
             method: 'POST',

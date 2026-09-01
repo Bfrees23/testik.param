@@ -20,6 +20,7 @@ data/nameplates/
 data/nameplate-generated/
 data/nameplate-templates/_*
 data/.rate-*.json
+data/serial/
 src/logs/.rate-*.json
 
 # Selenium bot: local browser binaries & virtualenv

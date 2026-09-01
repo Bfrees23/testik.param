@@ -11,9 +11,14 @@
         TT: 'темп. ТП (TT)',
     };
 
-    const METER_VERIFY_NEXT_YEARS_DEFAULT = 6;
+    const METER_VERIFY_NEXT_YEARS_DEFAULT = 5;
     const COMPLEX_VERIFY_NEXT_YEARS_DEFAULT = 5;
-    /** МПИ комплекса по РЭ: Р2/Р6/Т2 = 4 года, остальные (Р1/Р3/Р4/Р5/Т1) = 5. */
+    /** МПИ корректора ТМ-07 — 5 лет (ГРСИ 93381-24, п.80/81). */
+    const CORRECTOR_VERIFY_YEARS = 5;
+    /**
+     * МПИ комплекса ПК-ТМ (ГРСИ 95476-25): Т1/Р1 — 5 лет, Т2/Р2 — 4 года.
+     * Р3/Р4/Р5 — 5 лет (как RVG/РВГ), Р6 — 4 года (СГР).
+     */
     const COMPLEX_VERIFY_YEARS_BY_FAMILY = {
         R2: 4,
         R6: 4,
@@ -25,10 +30,10 @@
         T1: 5,
     };
     const TELEMETRY_NAME_DEFAULT = 'TM-02/ТМ';
-    /** БТ из обозначения комплекса / заказа → наименование блока телеметрии (п.227). */
+    /** БТ из обозначения комплекса / заказа → наименование блока телеметрии (п.227). Без суффикса «Б». */
     const BT_BLOCK_NAMES = {
-        БТ1: 'БПЭК-02/ЦК Б',
-        БТ2: 'БПЭК-04/ЦК Б',
+        БТ1: 'БПЭК-02/ЦК',
+        БТ2: 'БПЭК-04/ЦК',
         БТ3: 'БПЭК-05/ЦК',
     };
 
@@ -71,6 +76,27 @@
             return BT_BLOCK_NAMES.БТ1;
         }
         return TELEMETRY_NAME_DEFAULT;
+    }
+
+    /** В заказе есть блок телеметрии (.БТ / БТ1…3). */
+    function orderHasTelemetryBlock() {
+        const blobs = [];
+        try {
+            blobs.push(collectOrderTextFromCache() || '');
+        } catch (_e) {}
+        try {
+            blobs.push(readStepVal(200) || '');
+        } catch (_e2) {}
+        const text = blobs.join(' ').toUpperCase().replace(/Ё/g, 'Е');
+        if (/(?:^|[^0-9A-ZА-Я])БТ\s*[123](?![0-9])/.test(text)) {
+            return true;
+        }
+        return /\.БТ(?:\s|$|[(),;])|(?:^|[^0-9A-ZА-Я])БТ(?:\s|$|[(),;])/.test(text);
+    }
+
+    /** Без .БТ наименование блока телеметрии (п.227) не пишем. */
+    function shouldSkipTelemetryName() {
+        return !orderHasTelemetryBlock();
     }
 
     window.__wbScannedSensors = window.__wbScannedSensors || {
@@ -121,39 +147,23 @@
         return COMPLEX_VERIFY_NEXT_YEARS_DEFAULT;
     }
 
-    /** Паспорт счётчика по п.100 / п.200 — для МПИ п.104. */
+    /**
+     * МПИ комплекса = минимум из МПИ семейства, счётчика и корректора (5 лет).
+     * Если интервалы разные — берём меньший, чтобы комплекс не «пережил» составные СИ.
+     */
+    function complexVerifyYearsEffective() {
+        const familyYears = complexVerifyYearsForDesignation(readStepVal(200));
+        const meterYears = meterVerifyYearsForCurrent();
+        const years = Math.min(familyYears, meterYears, CORRECTOR_VERIFY_YEARS);
+        return Number.isFinite(years) && years > 0 ? years : COMPLEX_VERIFY_NEXT_YEARS_DEFAULT;
+    }
+
+    /** Паспорт счётчика: сначала семейство из п.200 (Р3/Р4/Р5 не путать по короткому п.100). */
     function meterPassportFromSteps() {
-        const name = String(readStepVal(100) || '')
-            .toUpperCase()
-            .replace(/Ё/g, 'Е');
-        if (/ЭМИС|EMIS|РГС\s*245|RGS\s*245/.test(name)) {
-            return 'emis-rgs245';
-        }
-        if (/ПРОМЕТР/.test(name)) {
-            return 'prometr-r';
-        }
-        if (/RVG/.test(name) && /Б|К|B|K/.test(name)) {
-            return 'rvg-bc';
-        }
-        if (/РВГ/.test(name) && /ИСП\.?\s*А|ИСП\s*А|\bА\b/.test(name)) {
-            return 'rvg-a';
-        }
-        if (/РВГ/.test(name)) {
-            return 'rvg-b';
-        }
-        if (/СГР|\bSGR\b/.test(name)) {
-            return 'sgr';
-        }
-        if (/ТАУ|TAU|ТСГ/.test(name)) {
-            return /ИСП\.?\s*Б|ИСП\s*Б/.test(name) ? 'tau-tsg-b' : 'tau-tsg-a';
-        }
-        if (/\bСГ\b|\bSG\b|T1-/.test(name)) {
-            return 'sg';
-        }
         const fam = complexFamilyCodeFromDesignation(readStepVal(200));
         const byFam = {
             R1: 'emis-rgs245',
-            R2: 'prometr-r',
+            // R2: 'prometr-r', // ПК-ТМ-Р2 / ПРОМЕТР-Р не выпускают
             R3: 'rvg-bc',
             R4: 'rvg-a',
             R5: 'rvg-b',
@@ -161,6 +171,54 @@
             T1: 'sg',
             T2: 'tau-tsg-a',
         };
+        if (fam && byFam[fam]) {
+            if (fam === 'T2') {
+                const blob = String(readStepVal(100) || '')
+                    .toUpperCase()
+                    .replace(/Ё/g, 'Е');
+                if (/ИСП\.?\s*Б/.test(blob)) {
+                    return 'tau-tsg-b';
+                }
+            }
+            return byFam[fam];
+        }
+        const name = String(readStepVal(100) || '')
+            .toUpperCase()
+            .replace(/Ё/g, 'Е');
+        if (/ЭМИС|EMIS|РГС\s*245|RGS\s*245/.test(name)) {
+            return 'emis-rgs245';
+        }
+        // if (/ПРОМЕТР/.test(name)) {
+        //     return 'prometr-r';
+        // }
+        if (/\bRABO\b/.test(name)) {
+            return /ИСП\.?\s*R\b|\bR\b.*ДО\s*2022|ДО\s*2022/.test(name) ? 'rvg-r' : 'rvg-bc';
+        }
+        // Раско RVG — латиница; Таугаз РВГ — кириллица.
+        if (/\bRVG\b/.test(name)) {
+            if (/ИСП\.?\s*R\b/.test(name)) {
+                return 'rvg-cyr-r';
+            }
+            return 'rvg-cyr-bc';
+        }
+        if (/РВГ/.test(name)) {
+            if (/ИСП\.?\s*Б/.test(name) && !/ИСП\.?\s*А/.test(name)) {
+                return 'rvg-b';
+            }
+            return 'rvg-a';
+        }
+        if (/РАСКО|RASKO/i.test(name)) {
+            return /ИСП\.?\s*R\b/.test(name) ? 'rvg-r' : 'rvg-bc';
+        }
+        if (/СГР|\bSGR\b/.test(name)) {
+            return 'sgr';
+        }
+        if (/ТАУ|TAU|ТСГ/.test(name)) {
+            return /ИСП\.?\s*Б/.test(name) ? 'tau-tsg-b' : 'tau-tsg-a';
+        }
+        if (/\bСГ\b|\bSG\b|T1-/.test(name)) {
+            return 'sg';
+        }
         return fam ? byFam[fam] || null : null;
     }
 
@@ -183,9 +241,16 @@
     }
 
     function parseTDate(s) {
-        const m = String(s || '')
-            .trim()
-            .match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})$/);
+        const t = String(s || '').trim();
+        const iso = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (iso) {
+            return {
+                day: parseInt(iso[3], 10),
+                month: parseInt(iso[2], 10),
+                year: parseInt(iso[1], 10),
+            };
+        }
+        const m = t.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})$/);
         if (!m) {
             return null;
         }
@@ -194,6 +259,161 @@
             month: parseInt(m[2], 10),
             year: parseInt(m[3], 10),
         };
+    }
+
+    function isPlaceholderDate(s) {
+        const t = String(s || '').trim();
+        return !t || t === '01.01.2000' || t === '00.00.0000' || t === '2000-01-01';
+    }
+
+    function tDateToIso(s) {
+        const p = parseTDate(s);
+        if (!p) {
+            return '';
+        }
+        return p.year + '-' + pad2(p.month) + '-' + pad2(p.day);
+    }
+
+    function currentCalendarYear() {
+        return new Date().getFullYear();
+    }
+
+    function isRealCalendarDate(p) {
+        if (!p) {
+            return false;
+        }
+        const dt = new Date(p.year, p.month - 1, p.day);
+        return (
+            dt.getFullYear() === p.year &&
+            dt.getMonth() === p.month - 1 &&
+            dt.getDate() === p.day
+        );
+    }
+
+    function daysInMonth(month, year) {
+        const m = Number(month);
+        const y = Number(year) || currentCalendarYear();
+        if (!Number.isFinite(m) || m < 1 || m > 12) {
+            return 31;
+        }
+        return new Date(y, m, 0).getDate();
+    }
+
+    function clampDayInput(raw, month, year) {
+        let s = String(raw || '').replace(/\D/g, '').slice(0, 2);
+        if (!s) {
+            return '';
+        }
+        if (s.charAt(0) > '3') {
+            s = '0' + s.charAt(0);
+        }
+        if (s.length === 1) {
+            return s;
+        }
+        if (s.charAt(0) === '3' && s.charAt(1) > '1') {
+            s = '31';
+        }
+        if (s === '00') {
+            return '0';
+        }
+        let n = parseInt(s, 10);
+        if (!Number.isFinite(n) || n < 1) {
+            return s.charAt(0) === '0' ? '0' : '';
+        }
+        const max = daysInMonth(month, year);
+        if (n > max) {
+            n = max;
+        }
+        return pad2(n);
+    }
+
+    function clampMonthInput(raw) {
+        let s = String(raw || '').replace(/\D/g, '').slice(0, 2);
+        if (!s) {
+            return '';
+        }
+        if (s.charAt(0) >= '2') {
+            s = '0' + s.charAt(0);
+        }
+        if (s.length === 1) {
+            return s;
+        }
+        if (s.charAt(0) === '1' && s.charAt(1) > '2') {
+            return '12';
+        }
+        if (s === '00') {
+            return '0';
+        }
+        const n = parseInt(s, 10);
+        if (!Number.isFinite(n) || n < 1) {
+            return s.charAt(0) === '0' ? '0' : '';
+        }
+        if (n > 12) {
+            return '12';
+        }
+        return pad2(n);
+    }
+
+    function clampYearInput(raw, mode) {
+        const cy = String(currentCalendarYear());
+        let s = String(raw || '').replace(/\D/g, '').slice(0, 4);
+        if (mode === 'current') {
+            if (s.length === 4) {
+                return cy;
+            }
+            let out = '';
+            for (let i = 0; i < s.length; i += 1) {
+                if (s.charAt(i) !== cy.charAt(i)) {
+                    break;
+                }
+                out += s.charAt(i);
+            }
+            return out;
+        }
+        if (s.length === 4) {
+            const n = parseInt(s, 10);
+            const min = currentCalendarYear();
+            const max = currentCalendarYear() + 20;
+            if (!Number.isFinite(n) || n < min) {
+                return String(min);
+            }
+            if (n > max) {
+                return String(max);
+            }
+        }
+        return s;
+    }
+
+    function cardDateToTDate(id) {
+        const el = $(id);
+        if (!el) {
+            return '';
+        }
+        const v = String(el.value || '').trim();
+        if (!/^\d{2}\.\d{2}\.\d{4}$/.test(v) && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+            return '';
+        }
+        const p = parseTDate(v);
+        if (!p || !isRealCalendarDate(p)) {
+            return '';
+        }
+        return formatTDate(p);
+    }
+
+    function setCardDate(id, tdate) {
+        const el = $(id);
+        if (!el) {
+            return;
+        }
+        if (isPlaceholderDate(tdate)) {
+            el.value = '';
+            return;
+        }
+        if (el.type === 'date') {
+            el.value = tDateToIso(tdate);
+            return;
+        }
+        el.value = String(tdate || '').trim();
     }
 
     function formatTDate(parts) {
@@ -205,7 +425,157 @@
         if (!p) {
             return null;
         }
-        return formatTDate({ day: p.day, month: p.month, year: p.year + years });
+        const d = new Date(p.year, p.month - 1, p.day);
+        if (Number.isNaN(d.getTime())) {
+            return null;
+        }
+        d.setFullYear(d.getFullYear() + years);
+        return formatTDate({ day: d.getDate(), month: d.getMonth() + 1, year: d.getFullYear() });
+    }
+
+    /** Следующая поверка: +N лет и минус 1 день (21.08.2026 + 5 лет → 20.08.2031). */
+    function addYearsMinusOneDayTDate(dateStr, years) {
+        const p = parseTDate(dateStr);
+        if (!p) {
+            return null;
+        }
+        const d = new Date(p.year, p.month - 1, p.day);
+        if (Number.isNaN(d.getTime())) {
+            return null;
+        }
+        d.setFullYear(d.getFullYear() + years);
+        d.setDate(d.getDate() - 1);
+        return formatTDate({ day: d.getDate(), month: d.getMonth() + 1, year: d.getFullYear() });
+    }
+
+    function nextVerifyDateFromToday(years) {
+        return addYearsMinusOneDayTDate(todayTDate(), years);
+    }
+
+    function maskDateField(el, yearMode) {
+        if (!el || el.type === 'date') {
+            return;
+        }
+        const old = String(el.value || '');
+        const caret = el.selectionStart;
+        const mode = yearMode === 'next' ? 'next' : 'current';
+        let d = '';
+        let m = '';
+        let y = '';
+        let slotCount = 1;
+        if (old.indexOf('.') < 0) {
+            const digits = old.replace(/\D/g, '').slice(0, 8);
+            d = digits.slice(0, 2);
+            m = digits.slice(2, 4);
+            y = digits.slice(4, 8);
+            slotCount = digits.length > 4 ? 3 : digits.length > 2 ? 2 : 1;
+        } else {
+            const parts = old.split('.');
+            d = String(parts[0] || '').replace(/\D/g, '');
+            m = String(parts[1] || '').replace(/\D/g, '');
+            y = String(parts.slice(2).join('')).replace(/\D/g, '');
+            slotCount = parts.length >= 3 ? 3 : 2;
+            if (d.length > 2) {
+                m = d.slice(2) + m;
+                d = d.slice(0, 2);
+            }
+            if (m.length > 2) {
+                y = m.slice(2) + y;
+                m = m.slice(0, 2);
+            }
+        }
+        m = clampMonthInput(m);
+        const yHint = y.length === 4 ? parseInt(y, 10) : currentCalendarYear();
+        const mHint = m.length === 2 ? parseInt(m, 10) : 0;
+        d = clampDayInput(d, mHint, yHint);
+        y = clampYearInput(y, mode);
+        if (mode === 'current' && d.length === 2 && m.length === 2) {
+            y = String(currentCalendarYear());
+            slotCount = 3;
+        }
+        let out = d;
+        if (slotCount >= 2 || m) {
+            out = d + '.' + m;
+        }
+        if (slotCount >= 3 || y) {
+            out = d + '.' + m + '.' + y;
+        }
+        if (el.value === out) {
+            return;
+        }
+        el.value = out;
+        try {
+            const pos = Math.max(0, Math.min(out.length, caret == null ? out.length : caret));
+            el.setSelectionRange(pos, pos);
+        } catch (_e) {}
+    }
+
+    /** Карточка: дата поверки → след. поверка (дата + МПИ − 1 день). Не затирает набор. */
+    function wireVerifyDatePair(opts) {
+        const lastEl = $(opts.lastId);
+        const nextEl = $(opts.nextId);
+        if (!lastEl && !nextEl) {
+            return;
+        }
+        function years() {
+            return typeof opts.years === 'function' ? opts.years() : Number(opts.years) || 5;
+        }
+        function commitLast() {
+            maskDateField(lastEl, 'current');
+            const last = cardDateToTDate(opts.lastId);
+            const p = parseTDate(last);
+            if (!last || !p || p.year !== currentCalendarYear()) {
+                return;
+            }
+            const nxt = addYearsMinusOneDayTDate(last, years());
+            if (nxt && nextEl) {
+                setCardDate(opts.nextId, nxt);
+            }
+            markVerifyDatesManual(opts.kind);
+            if (typeof opts.applyToSteps === 'function') {
+                opts.applyToSteps();
+            }
+            if (typeof opts.onStatus === 'function') {
+                opts.onStatus();
+            }
+        }
+        function commitNext() {
+            maskDateField(nextEl, 'next');
+            if (!cardDateToTDate(opts.nextId)) {
+                return;
+            }
+            markVerifyDatesManual(opts.kind);
+            if (typeof opts.applyToSteps === 'function') {
+                opts.applyToSteps();
+            }
+            if (typeof opts.onStatus === 'function') {
+                opts.onStatus();
+            }
+        }
+        lastEl?.addEventListener('input', commitLast);
+        lastEl?.addEventListener('change', commitLast);
+        lastEl?.addEventListener('blur', commitLast);
+        nextEl?.addEventListener('input', commitNext);
+        nextEl?.addEventListener('change', commitNext);
+        nextEl?.addEventListener('blur', commitNext);
+    }
+
+    function markVerifyDatesManual(kind) {
+        window.__wbVerifyDatesManual = window.__wbVerifyDatesManual || {};
+        if (kind) {
+            window.__wbVerifyDatesManual[kind] = true;
+        }
+    }
+
+    function clearVerifyDatesManual(kind) {
+        window.__wbVerifyDatesManual = window.__wbVerifyDatesManual || {};
+        if (kind) {
+            window.__wbVerifyDatesManual[kind] = false;
+        }
+    }
+
+    function verifyDatesAreManual(kind) {
+        return !!(window.__wbVerifyDatesManual && window.__wbVerifyDatesManual[kind]);
     }
 
     function setStepIfEmpty(stepId, value, lines, note) {
@@ -272,24 +642,238 @@
         return nom;
     }
 
+    function collectOrderTextFromCache() {
+        const ToParam = window.TM07Order1cToParam;
+        let row = {};
+        try {
+            const raw =
+                sessionStorage.getItem(
+                    ToParam && ToParam.STORAGE_KEY ? ToParam.STORAGE_KEY : 'order1c_param_lastOrder'
+                ) ||
+                localStorage.getItem(
+                    ToParam && ToParam.STORAGE_KEY ? ToParam.STORAGE_KEY : 'order1c_param_lastOrder'
+                );
+            if (raw) {
+                const o = JSON.parse(raw);
+                if (o && o.row) {
+                    row = o.row;
+                }
+            }
+        } catch (_e) {}
+        if (ToParam && typeof ToParam.collectOrderTextBlob === 'function') {
+            return ToParam.collectOrderTextBlob(row, '');
+        }
+        const nom = (($('paramOrder1cNom') || {}).textContent || '');
+        const ch = (($('paramOrder1cChar') || {}).textContent || '');
+        return nom + ' ' + ch;
+    }
+
     function getEquipmentFromOrder() {
         const C = window.TM07_CORRECTOR_EXECUTION;
-        const text = collectOrderTextBlob();
+        const text = collectOrderTextFromCache() || collectOrderTextBlob();
         return C && C.detectEquipment ? C.detectEquipment(text) : { hasPpd: false, hasPttp: false };
     }
 
-    /** Заказ на комплекс ПК-ТМ (иначе — только корректор ТМ-07). */
+    /** Заказ на комплекс ПК-ТМ (иначе — только корректор ТМ-07). Не смотрим п.200: шаблон может его заполнить. */
     function isComplexOrder() {
         const C = window.TM07_CORRECTOR_EXECUTION;
-        const des = readStepVal(200);
-        if (C && typeof C.isComplexCorrectorUsage === 'function' && C.isComplexCorrectorUsage(des)) {
-            return true;
-        }
-        const text = collectOrderTextBlob();
+        const text = collectOrderTextFromCache();
         if (C && typeof C.isComplexCorrectorUsage === 'function' && C.isComplexCorrectorUsage(text)) {
             return true;
         }
-        return /ПК-ТМ-/i.test(des || '') || /ПК-ТМ-/i.test(text || '');
+        return /ПК-ТМ-/i.test(text || '');
+    }
+
+    /** Режим записи для заказа только на корректор: meter | with-complex */
+    const CORRECTOR_PARAM_MODE_KEY = 'tm07_corrector_param_mode';
+
+    function getCorrectorParamMode() {
+        if (isComplexOrder()) {
+            return 'complex-order';
+        }
+        try {
+            const v = sessionStorage.getItem(CORRECTOR_PARAM_MODE_KEY);
+            if (v === 'with-complex' || v === 'meter') {
+                return v;
+            }
+        } catch (_e) {
+            /* ignore */
+        }
+        return window.__wbCorrectorParamMode === 'with-complex' ? 'with-complex' : 'meter';
+    }
+
+    function setCorrectorParamMode(mode) {
+        const next = mode === 'with-complex' ? 'with-complex' : 'meter';
+        window.__wbCorrectorParamMode = next;
+        try {
+            sessionStorage.setItem(CORRECTOR_PARAM_MODE_KEY, next);
+        } catch (_e) {
+            /* ignore */
+        }
+        updateOrderScopeUi();
+        const sel = $('paramCorrectorMeterTemplate');
+        if (sel && sel.value) {
+            applyCorrectorMeterTemplate(sel.value);
+        }
+    }
+
+    /** Писать секцию комплекса: заказ ПК-ТМ или режим «+ регистры комплекса». */
+    function shouldWriteComplexParams() {
+        if (isComplexOrder()) {
+            return true;
+        }
+        return getCorrectorParamMode() === 'with-complex';
+    }
+
+    /** Для одиночного корректора в режиме комплекса название (п.200) не пишем. */
+    function shouldSkipComplexName() {
+        return !isComplexOrder() && getCorrectorParamMode() === 'with-complex';
+    }
+
+    function paintCorrectorParamModeBar() {
+        const bar = $('wbCorrectorParamModeBar');
+        const hint = $('wbParamModeHint');
+        const btnMeter = $('wbParamModeMeter');
+        const btnComplex = $('wbParamModeComplex');
+        const show = !isComplexOrder() && hasLoadedOrderFrom1c();
+        if (bar) {
+            bar.classList.toggle('d-none', !show);
+        }
+        if (!show) {
+            return;
+        }
+        const mode = getCorrectorParamMode();
+        if (btnMeter) {
+            btnMeter.classList.toggle('active', mode === 'meter');
+        }
+        if (btnComplex) {
+            btnComplex.classList.toggle('active', mode === 'with-complex');
+        }
+        if (hint) {
+            hint.textContent =
+                mode === 'with-complex'
+                    ? 'Пишем корректор, счётчик и регистры комплекса. Наименование комплекса (п.200) не заполняем и не записываем.'
+                    : 'Пишем параметры корректора и счётчика (шаблон типоразмера). Комплекс не трогаем.';
+        }
+    }
+
+    function applyComplexNameSkipUi() {
+        const skip = shouldSkipComplexName();
+        const inp = $('val_200');
+        const tr =
+            (inp && inp.closest && inp.closest('tr[data-step-id]')) ||
+            document.querySelector('#paramComplexTbody tr[data-step-id="200"]');
+        if (tr) {
+            tr.classList.toggle('wb-skip-complex-name', skip);
+        }
+        if (inp) {
+            if (skip) {
+                inp.value = '';
+                inp.disabled = true;
+                inp.title = 'Для заказа только на корректор наименование комплекса не пишется';
+            } else if (inp.dataset && inp.dataset.wbForcedDisable === '1') {
+                /* keep */
+            } else {
+                inp.disabled = false;
+                inp.removeAttribute('title');
+            }
+        }
+    }
+
+    /** п.227: без .БТ в заказе поле очищаем и не пишем. */
+    function applyTelemetryNameSkipUi() {
+        const skip = shouldSkipTelemetryName();
+        const inp = $('val_227');
+        const tr =
+            (inp && inp.closest && inp.closest('tr[data-step-id]')) ||
+            document.querySelector('#paramComplexTbody tr[data-step-id="227"]');
+        if (tr) {
+            tr.classList.toggle('wb-skip-telemetry-name', skip);
+        }
+        if (skip) {
+            setStepValue('227', '');
+            if (inp) {
+                inp.value = '';
+                inp.disabled = true;
+                inp.title = 'Без .БТ в заказе наименование блока телеметрии (п.227) не пишется';
+            }
+            return;
+        }
+        if (inp) {
+            inp.disabled = false;
+            inp.removeAttribute('title');
+        }
+        setStepValue('227', resolveTelemetryBlockName());
+    }
+
+    /** Зеркала счётчик → комплекс (без п.200 / S/N / дат поверки). */
+    function fillComplexMirrorsFromMeter() {
+        const map = [
+            [105, 204],
+            [108, 205],
+            [109, 206],
+            [110, 207],
+            [111, 208],
+            [112, 209],
+            [113, 210],
+            [6, 211],
+            [7, 212],
+            [8, 213],
+            [9, 214],
+            [10, 215],
+            [11, 216],
+            [12, 217],
+            [13, 218],
+            [119, 219],
+            [120, 220],
+            [14, 221],
+            [15, 222],
+            [18, 223],
+            [19, 224],
+            [122, 229],
+        ];
+        map.forEach(function (pair) {
+            const src = readStepVal(pair[0]);
+            if (src === '' || src == null) {
+                return;
+            }
+            setStepValue(pair[1], String(src));
+        });
+        // Заказ только на корректор: S/N и даты комплекса как у счётчика-шаблона (0 / 01.01.2000).
+        applyCorrectorOnlyComplexIdentity();
+    }
+
+    /** п.201=0, п.202/203=01.01.2000 для заказа без комплекса (как п.102–104). */
+    function applyCorrectorOnlyComplexIdentity() {
+        if (isComplexOrder()) {
+            return;
+        }
+        setStepValue('201', '0');
+        setStepValue('202', '01.01.2000');
+        setStepValue('203', '01.01.2000');
+        const ui = $('paramComplexSerial');
+        if (ui) {
+            ui.value = '0';
+        }
+        setCardDate('paramComplexVerifyDate', '01.01.2000');
+        setCardDate('paramComplexVerifyNext', '01.01.2000');
+        paintComplexBadge();
+    }
+
+    function hasLoadedOrderFrom1c() {
+        const num = String(($('paramOrder1cNumber') || {}).value || '').trim();
+        if (num) {
+            return true;
+        }
+        try {
+            const ToParam = window.TM07Order1cToParam;
+            const key =
+                ToParam && ToParam.STORAGE_KEY ? ToParam.STORAGE_KEY : 'order1c_param_lastOrder';
+            const raw = sessionStorage.getItem(key) || localStorage.getItem(key);
+            return !!(raw && JSON.parse(raw).row);
+        } catch (_e) {
+            return false;
+        }
     }
 
     function getRequiredSensorKeys() {
@@ -620,25 +1204,355 @@
         window.__wbScannedSensors = scanned;
     }
 
+    function getStandaloneTemplates() {
+        const data = window.TM07_COMPLEX_METER_TYPES;
+        return data && data.listStandaloneTemplates ? data.listStandaloneTemplates() : [];
+    }
+
+    function fillCorrectorFamilySelect() {
+        const famSel = $('paramCorrectorMeterFamily');
+        if (!famSel) return;
+        const prev = famSel.value;
+        const templates = getStandaloneTemplates();
+        famSel.innerHTML = '';
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = '— Выберите семейство —';
+        famSel.appendChild(empty);
+        templates.forEach(function (fam) {
+            if (!(fam.options || []).length) return;
+            const opt = document.createElement('option');
+            opt.value = fam.passport;
+            opt.textContent = fam.group || fam.designation || fam.passport;
+            famSel.appendChild(opt);
+        });
+        if (prev) {
+            famSel.value = prev;
+        }
+        fillCorrectorTypeSelect(famSel.value);
+    }
+
+    function fillCorrectorTypeSelect(passport) {
+        const sel = $('paramCorrectorMeterTemplate');
+        if (!sel) return;
+        const prev = sel.value;
+        sel.innerHTML = '';
+        const empty = document.createElement('option');
+        empty.value = '';
+        if (!passport) {
+            empty.textContent = '— Сначала семейство —';
+            sel.appendChild(empty);
+            sel.disabled = true;
+            return;
+        }
+        empty.textContent = '— Выберите типоразмер —';
+        sel.appendChild(empty);
+        const fam = getStandaloneTemplates().find(function (f) {
+            return f.passport === passport;
+        });
+        (fam && fam.options ? fam.options : []).forEach(function (t) {
+            const opt = document.createElement('option');
+            opt.value = t.value || passport + '|' + t.typeId;
+            opt.textContent = t.text || t.label || t.typeId;
+            sel.appendChild(opt);
+        });
+        sel.disabled = false;
+        let keepPrev = false;
+        if (prev) {
+            for (let i = 0; i < sel.options.length; i += 1) {
+                if (sel.options[i].value === prev) {
+                    keepPrev = true;
+                    break;
+                }
+            }
+        }
+        sel.value = keepPrev ? prev : '';
+    }
+
+    function fillCorrectorTemplateSelect() {
+        fillCorrectorFamilySelect();
+    }
+
+    function applyCorrectorMeterTemplate(compositeId) {
+        const data = window.TM07_COMPLEX_METER_TYPES;
+        const limits = window.TM07_VOLUME_ERROR_LIMITS;
+        const hint = $('paramCorrectorTemplateHint');
+        if (!compositeId) {
+            if (hint) hint.textContent = '';
+            return;
+        }
+        const parts = String(compositeId).split('|');
+        const passport = (parts[0] || '').trim();
+        const typeId = (parts[1] || '').trim();
+        const rec = data && data.findTypeById ? data.findTypeById(passport, typeId) : null;
+        if (!rec) {
+            if (hint) hint.textContent = 'Типоразмер не найден.';
+            return;
+        }
+        const steps =
+            data && typeof data.meterStepValues === 'function'
+                ? data.meterStepValues(passport, rec)
+                : rec.meterStepValues || {};
+        Object.keys(steps).forEach(function (k) {
+            setStepValue(k, String(steps[k] == null ? '' : steps[k]));
+        });
+        setStepValue('102', '0');
+        setStepValue('103', '01.01.2000');
+        setStepValue('104', '01.01.2000');
+        setStepValue('122', '0');
+        // Заказ на корректор: S/N комплекса тоже 0 (не выдаём 400… из реестра).
+        applyCorrectorOnlyComplexIdentity();
+        const qmin = rec.qmin != null ? rec.qmin : rec.qmin_m3h;
+        const qmax = rec.qmax != null ? rec.qmax : rec.qmax_m3h;
+        if (qmin != null && qmin !== '') {
+            setStepValue('28', String(qmin));
+            setStepValue('30', String(qmin));
+            setStepValue('32', String(qmin));
+        }
+        if (qmax != null && qmax !== '') {
+            setStepValue('29', String(qmax));
+            setStepValue('31', String(qmax));
+            setStepValue('33', String(qmax));
+        }
+        let designation = '';
+        const fams = data && data.listStandaloneTemplates ? data.listStandaloneTemplates() : [];
+        for (let i = 0; i < fams.length; i += 1) {
+            if (fams[i].passport === passport && fams[i].designation) {
+                designation = fams[i].designation;
+                break;
+            }
+        }
+        if (limits && designation && typeof limits.resolveVolumeErrors === 'function') {
+            const orderText = collectOrderTextFromCache() || '';
+            const modification =
+                typeof limits.extractModification === 'function'
+                    ? limits.extractModification(orderText + ' ' + designation + ' ' + (rec.code || ''))
+                    : null;
+            const resolved = limits.resolveVolumeErrors({
+                complexDesignation: designation,
+                modification: modification,
+                typeCode: rec.code || rec.id || typeId,
+                qmax: qmax,
+                fullText: orderText + ' ' + designation + ' ' + (rec.code || rec.id || ''),
+            });
+            if (resolved && resolved.steps) {
+                // табл.15 → п.119/120/219/220; п.225/226 = 119/120 + 0.1.
+                [119, 120].forEach(function (sid) {
+                    if (resolved.steps[sid] != null) {
+                        setStepValue(String(sid), String(resolved.steps[sid]));
+                    }
+                });
+                if (shouldWriteComplexParams()) {
+                    [219, 220, 225, 226].forEach(function (sid) {
+                        if (resolved.steps[sid] != null) {
+                            setStepValue(String(sid), String(resolved.steps[sid]));
+                        }
+                    });
+                }
+            }
+        }
+        // Паспорт счётчика может переопределить только п.119/120 (исп. R: 2/1).
+        // После этого п.225/226 = 119+0.1 / 120+0.1.
+        const volOv =
+            data && typeof data.volumeErrorOverrideForPassport === 'function'
+                ? data.volumeErrorOverrideForPassport(passport)
+                : null;
+        if (volOv && volOv.meter) {
+            setStepValue('119', String(volOv.meter.qminQt));
+            setStepValue('120', String(volOv.meter.qtQmax));
+            if (
+                shouldWriteComplexParams() &&
+                limits &&
+                typeof limits.standardStepsFromWorking === 'function'
+            ) {
+                const std = limits.standardStepsFromWorking(
+                    volOv.meter.qminQt,
+                    volOv.meter.qtQmax
+                );
+                if (std) {
+                    setStepValue('225', std[225]);
+                    setStepValue('226', std[226]);
+                }
+            }
+        }
+        // п.27 Q0 = порог чувствительности (п.108 Qstart).
+        const v108 = readStepVal(108);
+        if (v108) {
+            setStepValue('27', String(v108));
+        }
+        // п.227 — только при .БТ в заказе; иначе не пишем.
+        applyTelemetryNameSkipUi();
+        // п.54 = номинал G (п.110), не оставлять «0» после автозаполнения без типоразмера.
+        const v110 = readStepVal(110);
+        if (v110) {
+            setStepValue('54', String(v110));
+        } else if (data && typeof data.nominalQFromG === 'function') {
+            const nq = data.nominalQFromG(rec);
+            if (nq != null) {
+                setStepValue('54', String(nq));
+            }
+        }
+        // п.73/76 T5/P5: (м³/имп) / Qstart → сек.
+        const C = window.TM07_CORRECTOR_EXECUTION;
+        if (C && typeof C.resolveCorrectorExecution === 'function') {
+            const impPerM3 = parseFloat(String(readStepVal(106) || '').replace(',', '.'));
+            const sens = parseFloat(String(readStepVal(108) || '').replace(',', '.'));
+            const m3PerImp = Number.isFinite(impPerM3) && impPerM3 > 0 ? 1 / impPerM3 : null;
+            const exec = C.resolveCorrectorExecution({
+                complexDesignation: isComplexOrder() ? designation : '',
+                fullText: collectOrderTextFromCache() || '',
+                m3PerImpulse: m3PerImp,
+                sensitivityM3h: Number.isFinite(sens) ? sens : null,
+                equipment: getEquipmentFromOrder(),
+            });
+            if (exec && exec.steps) {
+                if (exec.steps[73] != null) {
+                    setStepValue('73', String(exec.steps[73]));
+                }
+                if (exec.steps[76] != null) {
+                    setStepValue('76', String(exec.steps[76]));
+                }
+            }
+        }
+        if (hint) {
+            if (shouldWriteComplexParams() && !isComplexOrder()) {
+                fillComplexMirrorsFromMeter();
+                setStepValue('200', '');
+                // После зеркал 119→219: вернуть 219/220 из табл.15; 225/226 = итоговые 119/120 + 0.1.
+                if (limits && designation && typeof limits.resolveVolumeErrors === 'function') {
+                    const orderText2 = collectOrderTextFromCache() || '';
+                    const resolved2 = limits.resolveVolumeErrors({
+                        complexDesignation: designation,
+                        typeCode: rec.code || rec.id || typeId,
+                        qmax: qmax,
+                        fullText: orderText2 + ' ' + designation + ' ' + (rec.code || ''),
+                    });
+                    if (resolved2 && resolved2.steps) {
+                        [219, 220].forEach(function (sid) {
+                            if (resolved2.steps[sid] != null) {
+                                setStepValue(String(sid), String(resolved2.steps[sid]));
+                            }
+                        });
+                    }
+                }
+                if (limits && typeof limits.standardStepsFromWorking === 'function') {
+                    const std2 = limits.standardStepsFromWorking(readStepVal(119), readStepVal(120));
+                    if (std2) {
+                        setStepValue('225', std2[225]);
+                        setStepValue('226', std2[226]);
+                    }
+                }
+                hint.textContent = volOv && volOv.meter
+                    ? 'Счётчик п.119/120 = ' +
+                      volOv.meter.qminQt +
+                      '/' +
+                      volOv.meter.qtQmax +
+                      ' (паспорт); п.225/226 = 119/120+0.1; п.219/220 табл.15. п.227 — только при .БТ.'
+                    : 'Заполнены счётчик и зеркала комплекса (без п.200). Погрешности: табл.15 → 119/120/219/220, п.225/226 = 119/120+0.1. п.227 — только при .БТ.';
+            } else {
+                hint.textContent =
+                    'Заполнены параметры счётчика п.100–122, серийник=0, п.27=Qstart, расход п.28–33 и погрешности п.119/120. Параметры комплекса не трогаем.';
+            }
+        }
+        applyComplexNameSkipUi();
+        applyTelemetryNameSkipUi();
+        if (typeof updateParamPercent === 'function') updateParamPercent();
+    }
+
+    function initCorrectorTemplatePanel() {
+        const famSel = $('paramCorrectorMeterFamily');
+        const sel = $('paramCorrectorMeterTemplate');
+        if (!sel || sel.dataset.wired === '1') return;
+        sel.dataset.wired = '1';
+        if (famSel) {
+            famSel.addEventListener('change', function () {
+                fillCorrectorTypeSelect(famSel.value);
+                applyCorrectorMeterTemplate('');
+                const hint = $('paramCorrectorTemplateHint');
+                if (hint && famSel.value) {
+                    hint.textContent = 'Выберите типоразмер.';
+                }
+            });
+        }
+        sel.addEventListener('change', function () {
+            applyCorrectorMeterTemplate(sel.value);
+        });
+        const btnMeter = $('wbParamModeMeter');
+        const btnComplex = $('wbParamModeComplex');
+        if (btnMeter && btnMeter.dataset.wired !== '1') {
+            btnMeter.dataset.wired = '1';
+            btnMeter.addEventListener('click', function () {
+                setCorrectorParamMode('meter');
+            });
+        }
+        if (btnComplex && btnComplex.dataset.wired !== '1') {
+            btnComplex.dataset.wired = '1';
+            btnComplex.addEventListener('click', function () {
+                setCorrectorParamMode('with-complex');
+            });
+        }
+    }
+
     /** Скрыть/показать блоки счётчика и комплекса + строки перепада/TT в таблице. */
     function updateOrderScopeUi() {
-        const complex = isComplexOrder();
+        const complexOrder = isComplexOrder();
+        const writeComplex = shouldWriteComplexParams();
         const equip = getEquipmentFromOrder();
-        const meterPanel = $('paramMeterPanel') && $('paramMeterPanel').closest('.accordion-item');
+        const meterPanel =
+            $('wbMeterParamsItem') ||
+            ($('paramMeterPanel') && $('paramMeterPanel').closest('.accordion-item'));
         const complexPanel = $('paramComplexPanel') && $('paramComplexPanel').closest('.accordion-item');
         const meterSerialCard = $('wbMeterCard') || ($('paramMeterSerial') && $('paramMeterSerial').closest('.card'));
         const complexCard = $('wbComplexCard');
-        [meterSerialCard, meterPanel, complexPanel].forEach(function (el) {
-            if (el) {
-                el.classList.toggle('d-none', !complex);
+        // Параметры счётчика (п.100–122) нужны и для заказа только на корректор (шаблон типоразмера).
+        if (meterPanel) {
+            meterPanel.classList.remove('d-none');
+        }
+        const meterCollapse = $('paramMeterPanel');
+        if (meterCollapse && !complexOrder) {
+            meterCollapse.classList.add('show');
+            const btn = meterPanel && meterPanel.querySelector('[data-bs-target="#paramMeterPanel"]');
+            if (btn) {
+                btn.classList.remove('collapsed');
+                btn.setAttribute('aria-expanded', 'true');
             }
-        });
+        }
+        // S/N счётчика/комплекса — только для заказа на комплекс.
+        if (meterSerialCard) {
+            meterSerialCard.classList.toggle('d-none', !complexOrder);
+        }
+        if (complexPanel) {
+            complexPanel.classList.toggle('d-none', !writeComplex);
+            if (writeComplex && !complexOrder) {
+                const complexCollapse = $('paramComplexPanel');
+                if (complexCollapse) {
+                    complexCollapse.classList.add('show');
+                    const cbtn = complexPanel.querySelector('[data-bs-target="#paramComplexPanel"]');
+                    if (cbtn) {
+                        cbtn.classList.remove('collapsed');
+                        cbtn.setAttribute('aria-expanded', 'true');
+                    }
+                }
+            }
+        }
         if (complexCard) {
-            complexCard.classList.toggle('d-none', !complex);
-            if (complex && typeof syncComplexVerifFieldsFromSteps === 'function') {
+            // Карточка S/N комплекса — только реальный заказ на комплекс.
+            complexCard.classList.toggle('d-none', !complexOrder);
+            if (complexOrder && typeof syncComplexVerifFieldsFromSteps === 'function') {
                 syncComplexVerifFieldsFromSteps();
             }
         }
+        const tplCard = $('wbCorrectorTemplateCard');
+        if (tplCard) {
+            const showTpl = !complexOrder && hasLoadedOrderFrom1c();
+            tplCard.classList.toggle('d-none', !showTpl);
+            if (showTpl) {
+                fillCorrectorTemplateSelect();
+            }
+        }
+        paintCorrectorParamModeBar();
+        applyComplexNameSkipUi();
+        applyTelemetryNameSkipUi();
         if (typeof syncCorrectorVerifFieldsFromSteps === 'function') {
             syncCorrectorVerifFieldsFromSteps();
         }
@@ -689,7 +1603,6 @@
             tip += ' Чужой тип или другой диапазон/погрешность из QR будет отклонён.';
             qrHelp.textContent = tip;
         }
-        void complex;
     }
 
     function sensorStepIds(key) {
@@ -746,6 +1659,50 @@
         badge.textContent = ok ? '✓ ' + getMeterSerial() : 'не введён';
         badge.className =
             'badge rounded-pill ms-auto ' + (ok ? 'text-bg-success' : 'text-bg-warning text-dark');
+        const hint = $('paramMeterVerifyHint');
+        if (hint) {
+            const years = meterVerifyYearsForCurrent();
+            const pass = meterPassportFromSteps();
+            hint.textContent =
+                'МПИ счётчика: ' +
+                years +
+                ' лет' +
+                (pass ? ' (' + pass + ')' : '') +
+                '. След. поверка = дата + МПИ − 1 день.';
+        }
+    }
+
+    function getComplexSerial() {
+        const ui = $('paramComplexSerial');
+        const fromUi = ui ? String(ui.value || '').trim() : '';
+        if (fromUi) {
+            return fromUi;
+        }
+        return readStepVal(201);
+    }
+
+    function paintComplexBadge() {
+        const badge = $('wbComplexBadge');
+        if (!badge) {
+            return;
+        }
+        const sn = getComplexSerial();
+        const ok = !!sn;
+        badge.textContent = ok ? '✓ ' + sn : 'не введён';
+        badge.className =
+            'badge rounded-pill ms-auto ' + (ok ? 'text-bg-success' : 'text-bg-warning text-dark');
+    }
+
+    function paintCorrectorVerifBadge() {
+        const badge = $('wbCorrectorVerifBadge');
+        if (!badge) {
+            return;
+        }
+        const sn = correctorSerialFromSteps();
+        const ok = !!sn && /^300\d{7}$/.test(sn);
+        badge.textContent = ok ? '✓ ' + sn : sn ? sn : 'не введён';
+        badge.className =
+            'badge rounded-pill ms-auto ' + (ok ? 'text-bg-success' : 'text-bg-warning text-dark');
     }
 
     function setMeterSerialStatus(text, isError) {
@@ -761,7 +1718,7 @@
      * @param {string} raw
      * @returns {{ok:boolean, error?:string, serial?:string}}
      */
-    function applyMeterSerial(raw) {
+    function applyMeterSerial(raw, opts) {
         const sn = normalizeMeterSerial(raw);
         if (!sn) {
             return { ok: false, error: 'Введите серийный номер счётчика.' };
@@ -786,11 +1743,13 @@
         // Даты поверки счётчика — только вручную / «Даты сегодня», не авто при S/N.
         syncMeterDateFieldsFromSteps();
         setMeterSerialStatus('✓ п.102 ← ' + sn, false);
-        const le = $('paramLog');
-        if (le) {
-            const t = new Date().toLocaleTimeString();
-            le.innerHTML += '[' + t + '] [METER] S/N счётчика ' + sn + ' → п.102<br>';
-            le.scrollTop = le.scrollHeight;
+        if (!opts || opts.log !== false) {
+            const le = $('paramLog');
+            if (le) {
+                const t = new Date().toLocaleTimeString();
+                le.innerHTML += '[' + t + '] [METER] S/N счётчика ' + sn + ' → п.102<br>';
+                le.scrollTop = le.scrollHeight;
+            }
         }
         try {
             window.dispatchEvent(new CustomEvent('tm07-meter-serial-applied', { detail: { serial: sn } }));
@@ -807,10 +1766,10 @@
         const d103 = $('paramMeterVerifyDate');
         const d104 = $('paramMeterVerifyNext');
         if (d103) {
-            d103.value = '';
+            setCardDate('paramMeterVerifyDate', '');
         }
         if (d104) {
-            d104.value = '';
+            setCardDate('paramMeterVerifyNext', '');
         }
         setMeterSerialStatus('', false);
         paintMeterBadge();
@@ -819,7 +1778,11 @@
     function focusMeterInput() {
         const inp = $('paramMeterSerial');
         if (inp) {
-            inp.focus();
+            try {
+                inp.focus({ preventScroll: true });
+            } catch (_e) {
+                inp.focus();
+            }
         }
     }
 
@@ -841,34 +1804,49 @@
         if (!inp) {
             return;
         }
-        function runApply() {
-            const r = applyMeterSerial(inp.value);
+        function runApply(selectAfter, quiet) {
+            const r = applyMeterSerial(inp.value, quiet ? { log: false } : {});
             if (!r.ok) {
                 setMeterSerialStatus(r.error || 'Ошибка', true);
                 return;
             }
-            inp.select();
+            if (selectAfter) {
+                inp.select();
+            }
         }
         inp.addEventListener('keydown', function (e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                runApply();
+                runApply(true, false);
+            }
+        });
+        inp.addEventListener('input', function () {
+            if (normalizeMeterSerial(inp.value).length >= METER_SERIAL_MIN) {
+                runApply(false, true);
             }
         });
         inp.addEventListener('change', function () {
             if (normalizeMeterSerial(inp.value).length >= METER_SERIAL_MIN) {
-                runApply();
+                runApply(false, false);
             }
         });
 
-        const d103 = $('paramMeterVerifyDate');
-        const d104 = $('paramMeterVerifyNext');
-        function pushDates() {
-            applyMeterDateFieldsToSteps();
-            syncMeterDateFieldsFromSteps();
-        }
-        d103?.addEventListener('change', pushDates);
-        d104?.addEventListener('change', pushDates);
+        wireVerifyDatePair({
+            lastId: 'paramMeterVerifyDate',
+            nextId: 'paramMeterVerifyNext',
+            kind: 'meter',
+            years: function () {
+                return meterVerifyYearsForCurrent();
+            },
+            applyToSteps: applyMeterDateFieldsToSteps,
+            onStatus: function () {
+                const a = cardDateToTDate('paramMeterVerifyDate');
+                const b = cardDateToTDate('paramMeterVerifyNext');
+                if (a && b) {
+                    setMeterSerialStatus('✓ п.103/104 ← ' + a + ' / ' + b, false);
+                }
+            },
+        });
 
         $('paramMeterDatesToday')?.addEventListener('click', function () {
             if (!isMeterSerialFilled()) {
@@ -879,7 +1857,114 @@
                 }
             }
             applyMeterVerificationDates(true);
-            setMeterSerialStatus('✓ п.103/104 ← сегодня / +МПИ', false);
+            const years = meterVerifyYearsForCurrent();
+            const pass = meterPassportFromSteps();
+            setMeterSerialStatus(
+                '✓ п.103/104 подставлены, МПИ ' + years + ' лет' + (pass ? ' (' + pass + ')' : ''),
+                false
+            );
+        });
+    }
+
+    function setComplexSerialStatus(text, isError) {
+        const st = $('paramComplexStatus');
+        if (!st) {
+            return;
+        }
+        st.textContent = text || '';
+        st.className = 'small mt-2 mb-0' + (isError ? ' text-danger' : text ? ' text-success' : ' text-body-secondary');
+    }
+
+    function initComplexSerialPanel() {
+        const inp = $('paramComplexSerial');
+        if (!inp) {
+            return;
+        }
+        function runApply() {
+            const r = applyComplexSerial(inp.value);
+            if (!r.ok) {
+                setComplexSerialStatus(r.error || 'Ошибка', true);
+                return;
+            }
+            paintComplexBadge();
+        }
+        inp.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                runApply();
+            }
+        });
+        inp.addEventListener('change', runApply);
+        inp.addEventListener('input', function () {
+            if (String(inp.value || '').trim().length >= 4) {
+                runApply();
+            }
+        });
+
+        wireVerifyDatePair({
+            lastId: 'paramComplexVerifyDate',
+            nextId: 'paramComplexVerifyNext',
+            kind: 'complex',
+            years: function () {
+                return complexVerifyYearsEffective();
+            },
+            applyToSteps: applyComplexVerifFieldsToSteps,
+            onStatus: function () {
+                const a = cardDateToTDate('paramComplexVerifyDate');
+                const b = cardDateToTDate('paramComplexVerifyNext');
+                if (a && b) {
+                    setComplexSerialStatus('✓ п.202/203 ← ' + a + ' / ' + b, false);
+                }
+            },
+        });
+
+        wireVerifyDatePair({
+            lastId: 'paramCorrectorVerifyDate',
+            nextId: 'paramCorrectorVerifyNext',
+            kind: 'corrector',
+            years: function () {
+                return CORRECTOR_VERIFY_YEARS;
+            },
+            applyToSteps: applyCorrectorVerifFieldsToSteps,
+            onStatus: function () {
+                const st = $('paramCorrectorStatus');
+                const a = cardDateToTDate('paramCorrectorVerifyDate');
+                const b = cardDateToTDate('paramCorrectorVerifyNext');
+                if (st && a && b) {
+                    st.textContent = '✓ п.80/81 ← ' + a + ' / ' + b;
+                    st.className = 'small mt-2 mb-0 text-success';
+                }
+            },
+        });
+
+        $('paramComplexSerialGenerate')?.addEventListener('click', async function () {
+            if (!isComplexOrder()) {
+                applyCorrectorOnlyComplexIdentity();
+                setComplexSerialStatus('Заказ на корректор: п.201 = 0 (номер комплекса не выдаётся)', false);
+                return;
+            }
+            const ui = window.TM07_SERIAL_REGISTRY_UI;
+            if (!ui || typeof ui.ensureSerialNumbersAuto !== 'function') {
+                setComplexSerialStatus('Реестр серийных номеров недоступен', true);
+                return;
+            }
+            try {
+                const sn = await ui.ensureSerialNumbersAuto({ force: true, includeComplex: true });
+                if (sn && sn.complex) {
+                    applyComplexSerial(sn.complex);
+                    setComplexSerialStatus('✓ п.201 ← ' + sn.complex, false);
+                } else {
+                    const cur = getComplexSerial();
+                    if (cur) {
+                        applyComplexSerial(cur);
+                        setComplexSerialStatus('✓ п.201 ← ' + cur, false);
+                    } else {
+                        setComplexSerialStatus('Не удалось выдать S/N комплекса из БД', true);
+                    }
+                }
+            } catch (e) {
+                setComplexSerialStatus(e.message || String(e), true);
+            }
         });
     }
 
@@ -1076,15 +2161,36 @@
         if (stage === 'completed' || (post.writeOk && post.verifyOk)) {
             current = 7;
         }
-        if (stage === 'completed' || (post.writeOk && post.verifyOk && post.passportOk)) {
+        const Passport = window.TM07_PASSPORT;
+        const passportsOn =
+            Passport && typeof Passport.isEnabled === 'function' && Passport.isEnabled();
+        if (
+            passportsOn &&
+            (stage === 'completed' || (post.writeOk && post.verifyOk && post.passportOk))
+        ) {
             current = 8;
         }
 
         steps.forEach(function (el, i) {
+            if (el.classList.contains('d-none')) {
+                return;
+            }
+            const num = el.querySelector('.bench-op-step-num');
             if (i < current) {
                 el.classList.add('is-done');
+                if (num) {
+                    num.classList.remove('is-muted');
+                    num.textContent = '✓';
+                }
             } else if (i === current) {
                 el.classList.add('is-current');
+                if (num) {
+                    num.classList.remove('is-muted');
+                    num.textContent = String(i + 1);
+                }
+            } else if (num) {
+                num.classList.add('is-muted');
+                num.textContent = String(i + 1);
             }
         });
     }
@@ -1094,9 +2200,16 @@
         if (!isMeterSerialFilled() && !force) {
             return 0;
         }
+        if (!force && verifyDatesAreManual('meter')) {
+            syncMeterDateFieldsFromSteps();
+            return 0;
+        }
+        if (force) {
+            clearVerifyDatesManual('meter');
+        }
         const today = todayTDate();
         const meterYears = meterVerifyYearsForCurrent();
-        const nextMeter = addYearsTDate(today, meterYears);
+        const nextMeter = nextVerifyDateFromToday(meterYears);
         const meterPass = meterPassportFromSteps();
         const setFn = force ? setStepValue : setStepIfEmpty;
         setFn(103, today, out, 'дата поверки (сегодня)');
@@ -1115,17 +2228,17 @@
         const d104 = readStepVal(104);
         const inp103 = $('paramMeterVerifyDate');
         const inp104 = $('paramMeterVerifyNext');
-        if (inp103 && d103) {
-            inp103.value = d103;
+        if (inp103) {
+            setCardDate('paramMeterVerifyDate', d103);
         }
-        if (inp104 && d104) {
-            inp104.value = d104;
+        if (inp104) {
+            setCardDate('paramMeterVerifyNext', d104);
         }
     }
 
     function applyMeterDateFieldsToSteps() {
-        const d103 = String(($('paramMeterVerifyDate') || {}).value || '').trim();
-        const d104 = String(($('paramMeterVerifyNext') || {}).value || '').trim();
+        const d103 = cardDateToTDate('paramMeterVerifyDate');
+        const d104 = cardDateToTDate('paramMeterVerifyNext');
         if (d103 && /^\d{2}\.\d{2}\.\d{4}$/.test(d103)) {
             setStepValue(103, d103, null, 'из карточки счётчика');
         }
@@ -1171,21 +2284,16 @@
         if (d) {
             d.value = serial;
         }
-        const d80 = $('paramCorrectorVerifyDate');
-        const d81 = $('paramCorrectorVerifyNext');
         const v80 = readStepVal(80);
         const v81 = readStepVal(81);
-        if (d80 && v80) {
-            d80.value = v80;
-        }
-        if (d81 && v81) {
-            d81.value = v81;
-        }
+        setCardDate('paramCorrectorVerifyDate', v80);
+        setCardDate('paramCorrectorVerifyNext', v81);
+        paintCorrectorVerifBadge();
     }
 
     function applyCorrectorVerifFieldsToSteps() {
-        const d80 = String(($('paramCorrectorVerifyDate') || {}).value || '').trim();
-        const d81 = String(($('paramCorrectorVerifyNext') || {}).value || '').trim();
+        const d80 = cardDateToTDate('paramCorrectorVerifyDate');
+        const d81 = cardDateToTDate('paramCorrectorVerifyNext');
         if (d80 && /^\d{2}\.\d{2}\.\d{4}$/.test(d80)) {
             setStepValue(80, d80, null, 'дата поверки корректора');
         }
@@ -1217,11 +2325,18 @@
         if (!correctorSerialFromSteps() && !force) {
             return 0;
         }
+        if (!force && verifyDatesAreManual('corrector')) {
+            syncCorrectorVerifFieldsFromSteps();
+            return 0;
+        }
+        if (force) {
+            clearVerifyDatesManual('corrector');
+        }
         const today = todayTDate();
-        const next = addYearsTDate(today, 4);
+        const next = nextVerifyDateFromToday(CORRECTOR_VERIFY_YEARS);
         const setFn = force ? setStepValue : setStepIfEmpty;
         setFn(80, today, out, 'дата поверки корректора (сегодня)');
-        setFn(81, next, out, '+4 года (МПИ корректора)');
+        setFn(81, next, out, '+' + CORRECTOR_VERIFY_YEARS + ' лет − 1 день (МПИ корректора)');
         syncCorrectorVerifFieldsFromSteps();
         return out.length;
     }
@@ -1237,12 +2352,13 @@
         }
         setStepValue(201, sn, null, 'S/N комплекса');
         paintMeterBadge();
+        paintComplexBadge();
         paintWorkflowSteps();
         syncComplexVerifFieldsFromSteps();
         const st = $('paramComplexStatus');
         if (st) {
             st.textContent = '✓ п.201 ← ' + sn;
-            st.classList.remove('text-danger');
+            st.className = 'small mt-2 mb-0 text-success';
         }
         return { ok: true };
     }
@@ -1253,21 +2369,15 @@
         if (ui && !String(ui.value || '').trim()) {
             ui.value = v || '';
         }
-        const d202 = $('paramComplexVerifyDate');
-        const d203 = $('paramComplexVerifyNext');
         const v202 = readStepVal(202);
         const v203 = readStepVal(203);
-        if (d202 && v202) {
-            d202.value = v202;
-        }
-        if (d203 && v203) {
-            d203.value = v203;
-        }
+        setCardDate('paramComplexVerifyDate', v202);
+        setCardDate('paramComplexVerifyNext', v203);
     }
 
     function applyComplexVerifFieldsToSteps() {
-        const d202 = String(($('paramComplexVerifyDate') || {}).value || '').trim();
-        const d203 = String(($('paramComplexVerifyNext') || {}).value || '').trim();
+        const d202 = cardDateToTDate('paramComplexVerifyDate');
+        const d203 = cardDateToTDate('paramComplexVerifyNext');
         if (d202 && /^\d{2}\.\d{2}\.\d{4}$/.test(d202)) {
             setStepValue(202, d202, null, 'дата поверки комплекса');
         }
@@ -1300,12 +2410,19 @@
         if ((!ui || !String(ui.value || '').trim()) && !force) {
             return 0;
         }
+        if (!force && verifyDatesAreManual('complex')) {
+            syncComplexVerifFieldsFromSteps();
+            return 0;
+        }
+        if (force) {
+            clearVerifyDatesManual('complex');
+        }
         const today = todayTDate();
-        const years = complexVerifyYearsForDesignation(readStepVal(200));
-        const next = addYearsTDate(today, years);
+        const years = complexVerifyYearsEffective();
+        const next = nextVerifyDateFromToday(years);
         const setFn = force ? setStepValue : setStepIfEmpty;
         setFn(202, today, out, 'дата поверки комплекса (сегодня)');
-        setFn(203, next, out, '+' + years + ' лет (МПИ комплекса)');
+        setFn(203, next, out, '+' + years + ' лет − 1 день (МПИ комплекса = min)');
         syncComplexVerifFieldsFromSteps();
         return out.length;
     }
@@ -1326,8 +2443,13 @@
         if (C && typeof C.counterMechMaxForType === 'function' && code101) {
             mechMax = C.counterMechMaxForType(code101);
         }
-        if (!mechMax && window.TM07_EMIS_RGS245 && typeof window.TM07_EMIS_RGS245.counterMechMaxForType === 'function' && code101) {
-            mechMax = window.TM07_EMIS_RGS245.counterMechMaxForType(code101);
+        if (
+            !mechMax &&
+            window.TM07_COMPLEX_METER_TYPES &&
+            typeof window.TM07_COMPLEX_METER_TYPES.counterMechMaxForType === 'function' &&
+            code101
+        ) {
+            mechMax = window.TM07_COMPLEX_METER_TYPES.counterMechMaxForType(code101);
         }
         setStepIfEmpty(
             121,
@@ -1339,9 +2461,8 @@
         );
         setStepIfEmpty(107, '0', out, 'накопленный объём → 0');
         // п.122/229 — только из заказа (parseFlowDirection) или вручную; без тихого «0».
-        // п.228 не заполняем (по паспорту «-»). п.227 — из БТ1/2/3 заказа.
-        const btName = resolveTelemetryBlockName();
-        setStepValue(227, btName, out, 'блок телеметрии / БТ');
+        // п.228 не заполняем (по паспорту «-»). п.227 — только при .БТ в заказе.
+        applyTelemetryNameSkipUi();
 
         return out.length;
     }
@@ -1476,7 +2597,7 @@
         }
 
         if (!readStepVal(200) && !readStepVal(6)) {
-            warnings.push('Заказ не загружен или параметры пусты — дождитесь автозагрузки.');
+            warnings.push('Заказ не загружен или параметры пусты — нажмите «Войти в заказ».');
         }
 
         const pmin = parseFloat(String(readStepVal(6) || '').replace(',', '.'));
@@ -1503,9 +2624,9 @@
             }
         });
 
-        if (isComplexOrder()) {
+        if (isComplexOrder() || shouldWriteComplexParams()) {
             // Счётчик часто монтируют позже — не блокируем параметризацию корректора.
-            if (!isMeterSerialFilled()) {
+            if (isComplexOrder() && !isMeterSerialFilled()) {
                 warnings.push(
                     'S/N счётчика пока нет — параметризация корректора продолжится. Введите п.102–104 позже и нажмите «Записать счётчик».'
                 );
@@ -1513,14 +2634,16 @@
 
             const dir122 = readStepVal(122);
             const dir229 = readStepVal(229);
-            if (dir122 === '' || dir229 === '') {
-                errors.push(
-                    'Укажите направление потока (п.122 и п.229): из характеристики заказа («справа налево»…) или вручную (0–3).'
-                );
-            } else if (!/^[0-3]$/.test(dir122) || !/^[0-3]$/.test(dir229)) {
-                errors.push('Направление п.122/229 должно быть 0…3 (слева направо / справа налево / сверху вниз / снизу вверх).');
-            } else if (dir122 !== dir229) {
-                warnings.push('п.122 (' + dir122 + ') ≠ п.229 (' + dir229 + ') — проверьте направление счётчика и комплекса.');
+            if (shouldWriteComplexParams()) {
+                if (dir122 === '' || dir229 === '') {
+                    errors.push(
+                        'Укажите направление потока (п.122 и п.229): из характеристики заказа («справа налево»…) или вручную (0–3).'
+                    );
+                } else if (!/^[0-3]$/.test(dir122) || !/^[0-3]$/.test(dir229)) {
+                    errors.push('Направление п.122/229 должно быть 0…3 (слева направо / справа налево / сверху вниз / снизу вверх).');
+                } else if (dir122 !== dir229) {
+                    warnings.push('п.122 (' + dir122 + ') ≠ п.229 (' + dir229 + ') — проверьте направление счётчика и комплекса.');
+                }
             }
         }
 
@@ -1544,10 +2667,60 @@
         };
     }
 
+    /**
+     * Собрать список всех незаполненных строк параметризации (основные + счётчик + комплекс,
+     * без финалов). Учитывает скрытые заказом строки/секции (d-none), а также шаги,
+     * которые пишутся командами/масками/только чтением — они НЕ считаются «пустыми».
+     * Возвращает массив { id, title }.
+     */
+    function collectEmptyRequiredSteps() {
+        const missing = [];
+        const doc = window.TM07_PARAMETRIZATION_DOC;
+        const extra = window.TM07_PARAMETRIZATION_EXTRA;
+        const packs = [];
+        if (doc && Array.isArray(doc.steps)) {
+            packs.push({ title: 'основные', steps: doc.steps });
+        }
+        if (extra && Array.isArray(extra.sections)) {
+            extra.sections.forEach(function (sec) {
+                if (sec && Array.isArray(sec.steps)) {
+                    packs.push({ title: sec.title || sec.key || '', steps: sec.steps });
+                }
+            });
+        }
+        packs.forEach(function (pack) {
+            pack.steps.forEach(function (step) {
+                if (!step || step.reg == null) return; // п.1 — только ПК
+                if (step.type === 'x' || step.writeOnly || step.readOnly) return;
+                if (step.sensorMemoryCmd || step.paramMask || step.finalMask || step.hidden) return;
+                // п.228 — серийный номер БПЭК: по паспорту «-», пуст для заказов без телеметрии.
+                if (Number(step.id) === 228) return;
+                // п.200 — для одиночного корректора в режиме «+ комплекс» не пишется.
+                if (Number(step.id) === 200 && shouldSkipComplexName()) return;
+                // п.227 — без .БТ не пишется.
+                if (Number(step.id) === 227 && shouldSkipTelemetryName()) return;
+                const inp = document.getElementById('val_' + step.id);
+                if (!inp || inp.disabled) return;
+                // Скрытая заказом строка/секция (перепад/TT вне заказа, счётчик/комплекс вне комплекса) — не пустая.
+                if (inp.closest && inp.closest('.d-none')) return;
+                const raw = String(inp.value || '').trim();
+                // «00.00.0000» — заводской шаблон пустой даты.
+                const isZeroDate = /^0+[./\-]?0+[./\-]?0+$/.test(raw.replace(/\s/g, ''));
+                if (raw !== '' && !isZeroDate) return;
+                missing.push({ id: step.id, title: step.title || 'п.' + step.id });
+            });
+        });
+        return missing;
+    }
+
     function focusQrInput() {
         const inp = $('paramQrSensor');
         if (inp) {
-            inp.focus();
+            try {
+                inp.focus({ preventScroll: true });
+            } catch (_e) {
+                inp.focus();
+            }
         }
     }
 
@@ -1560,8 +2733,12 @@
         paintMeterBadge();
         paintWorkflowSteps();
         paintLkgStatusBadge();
+        initCorrectorTemplatePanel();
         initMeterSerialPanel();
+        initComplexSerialPanel();
         syncMeterSerialFromStep();
+        paintComplexBadge();
+        syncCorrectorVerifFieldsFromSteps();
         updateOrderScopeUi();
         void refreshLkgStatusFromServer();
 
@@ -1599,7 +2776,7 @@
             paintSensorBadges();
             paintMeterBadge();
             paintWorkflowSteps();
-            focusQrInput();
+            // Не фокусируем QR автоматически — браузер прокручивает страницу вниз.
         });
 
         window.addEventListener('tm07-qr-scanned', function () {
@@ -1630,10 +2807,18 @@
         applyVerificationAndDefaults: applyVerificationAndDefaults,
         resolveTelemetryBlockName: resolveTelemetryBlockName,
         validateBeforeParametrize: validateBeforeParametrize,
+        collectEmptyRequiredSteps: collectEmptyRequiredSteps,
         focusQrInput: focusQrInput,
         focusMeterInput: focusMeterInput,
         isMeterSerialFilled: isMeterSerialFilled,
         isComplexOrder: isComplexOrder,
+        getCorrectorParamMode: getCorrectorParamMode,
+        setCorrectorParamMode: setCorrectorParamMode,
+        shouldWriteComplexParams: shouldWriteComplexParams,
+        shouldSkipComplexName: shouldSkipComplexName,
+        orderHasTelemetryBlock: orderHasTelemetryBlock,
+        shouldSkipTelemetryName: shouldSkipTelemetryName,
+        applyTelemetryNameSkipUi: applyTelemetryNameSkipUi,
         getEquipmentFromOrder: getEquipmentFromOrder,
         collectOrderTextBlob: collectOrderTextBlob,
         updateOrderScopeUi: updateOrderScopeUi,
@@ -1661,6 +2846,10 @@
         applyCorrectorVerificationDates: applyCorrectorVerificationDates,
         validateCorrectorForWrite: validateCorrectorForWrite,
         applyComplexSerial: applyComplexSerial,
+        applyCorrectorOnlyComplexIdentity: applyCorrectorOnlyComplexIdentity,
+        paintComplexBadge: paintComplexBadge,
+        paintCorrectorVerifBadge: paintCorrectorVerifBadge,
+        getComplexSerial: getComplexSerial,
         syncComplexVerifFieldsFromSteps: syncComplexVerifFieldsFromSteps,
         applyComplexVerifFieldsToSteps: applyComplexVerifFieldsToSteps,
         applyComplexVerificationDates: applyComplexVerificationDates,
@@ -1668,8 +2857,13 @@
         paintLkgStatusBadge: paintLkgStatusBadge,
         refreshLkgStatusFromServer: refreshLkgStatusFromServer,
         shouldWriteSensorMemory: function (stepId) {
-            // п.59/66 — не в автопакете (как CorrReader): только вручную при необходимости.
-            void stepId;
+            const id = Number(stepId);
+            if (id === 59) {
+                return isSensorFilled('DA');
+            }
+            if (id === 66) {
+                return isSensorFilled('DD');
+            }
             return false;
         },
         normalizeSensorKey: function (type) {

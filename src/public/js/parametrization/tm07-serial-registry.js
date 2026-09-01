@@ -30,7 +30,7 @@
         complex: 201,
     };
 
-    let backendName = 'local';
+    let backendName = 'firebird';
     /** @type {{ allocate?: Function, peek?: Function }|null} */
     let customBackend = null;
 
@@ -206,14 +206,19 @@
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             credentials: 'same-origin',
-            body: JSON.stringify(Object.assign({
+            body: JSON.stringify(Object.assign({}, ctx, {
                 action: action,
                 kind: kind,
                 date: o.date || null,
-                orderNumber: o.orderNumber || null,
-                serialCorrector: o.serialCorrector || null,
-                serialComplex: o.serialComplex || null,
-            }, ctx)),
+                orderNumber: o.orderNumber || ctx.orderNumber || null,
+                serialCorrector: o.serialCorrector || ctx.serialCorrector || null,
+                serialComplex: o.serialComplex || ctx.serialComplex || null,
+                execution: o.execution || null,
+                productTitle: o.productTitle || null,
+                characteristics: o.characteristics || null,
+                customer: o.customer || null,
+                fwVersion: o.fwVersion || null,
+            })),
         });
         const text = await res.text();
         let data;
@@ -238,13 +243,7 @@
         if (o.dryRun) {
             return peek(kind, o);
         }
-        if (backendName === 'firebird') {
-            return firebirdRequest('allocate', kind, o);
-        }
-        if (customBackend && typeof customBackend.allocate === 'function') {
-            return Promise.resolve(customBackend.allocate(kind, o));
-        }
-        return localAllocate(kind, o);
+        return firebirdRequest('allocate', kind, o);
     }
 
     /**
@@ -253,13 +252,7 @@
      * @returns {Promise<object>}
      */
     async function peek(kind, opts) {
-        if (backendName === 'firebird') {
-            return firebirdRequest('peek', kind, opts || {});
-        }
-        if (customBackend && typeof customBackend.peek === 'function') {
-            return Promise.resolve(customBackend.peek(kind, opts || {}));
-        }
-        return localPeek(kind, opts || {});
+        return firebirdRequest('peek', kind, opts || {});
     }
 
     /**
@@ -287,11 +280,12 @@
      * @param {string} str
      * @param {Date} [now]
      * @param {string|null} [expectedPrefix]
+     * @param {{ allowAnyProductionMonth?: boolean }} [opts]
      */
-    function validateSerial(str, now, expectedPrefix) {
+    function validateSerial(str, now, expectedPrefix, opts) {
         const K = window.KorrektorDevice;
         if (K && typeof K.validateTm07SerialNumber === 'function') {
-            return K.validateTm07SerialNumber(str, now, expectedPrefix);
+            return K.validateTm07SerialNumber(str, now, expectedPrefix, opts);
         }
         const parsed = parseSerial(str);
         if (!parsed) {

@@ -58,6 +58,11 @@ if command -v mkcert >/dev/null 2>&1; then
     fi
   )
   chmod 600 "${KEY}" 2>/dev/null || true
+  if [[ -f "${CRT}" && -f "${CA_CRT}" ]]; then
+    cat "${CRT}" "${CA_CRT}" > "${SSL_DIR}/fullchain.crt"
+  elif [[ -f "${CRT}" ]]; then
+    cp "${CRT}" "${SSL_DIR}/fullchain.crt"
+  fi
   echo "Сертификат: ${CRT}"
   echo "SAN: ${NAMES[*]} ${IPS[*]}"
   echo ""
@@ -105,6 +110,9 @@ openssl x509 -req -in "${CSR}" -CA "${CA_CRT}" -CAkey "${CA_KEY}" \
 
 chmod 600 "${KEY}" "${CA_KEY}"
 rm -f "${CSR}" "${EXT}"
+
+# nginx слушает fullchain.crt + prod.key — без обновления fullchain будет key mismatch.
+cat "${CRT}" "${CA_CRT}" > "${SSL_DIR}/fullchain.crt"
 
 echo "Серверный сертификат: ${CRT}"
 echo "SAN: ${SAN}"

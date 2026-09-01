@@ -74,7 +74,8 @@
                     <p class="bench-op-step-desc">Опрос прибора и сравнение с заказом.</p>
                 </div>
             </div>
-            <div class="bench-op-step">
+            <!-- Паспорта DOCX временно скрыты: вернуть — убрать d-none и PASSPORTS_ENABLED=true в tm07-passport-generate.js -->
+            <div class="bench-op-step d-none" data-wb-passport-step="1" aria-hidden="true">
                 <span class="bench-op-step-num is-muted" aria-hidden="true">8</span>
                 <div>
                     <p class="bench-op-step-title">Паспорт</p>
@@ -97,8 +98,25 @@
                         <span id="paramOrder1cOrderStatus" class="badge rounded-pill text-bg-secondary" role="status">Статус: —</span>
                     </div>
                 </div>
-                <p class="small text-body-secondary mt-2 mb-0">После ввода номера заказ подгружается из 1С и открывается <strong>новая</strong> сессия. При сбое 1С — «Повторить» или «Из кэша».</p>
+                <p class="small text-body-secondary mt-2 mb-0">Введите номер и нажмите <strong>«Войти в заказ»</strong> — заказ загрузится из 1С и откроется новая сессия. При сбое 1С — «Повторить» или «Из кэша».</p>
                 <p id="paramOrder1cStatus" class="small param-order-status mt-2 mb-0" role="status"></p>
+                <div id="paramOrder1cContents" class="wb-order-contents d-none" role="status">
+                    <div class="wb-order-contents-label">Содержание заказа</div>
+                    <div id="paramOrder1cNom" class="wb-order-contents-nom"></div>
+                    <div id="paramOrder1cChar" class="wb-order-contents-char text-break"></div>
+                    <div id="wbCorrectorParamModeBar" class="wb-corrector-param-mode d-none">
+                        <div class="wb-corrector-param-mode-label">Параметризация (заказ только на корректор)</div>
+                        <div class="btn-group w-100" role="group" aria-label="Объём параметризации">
+                            <button type="button" class="btn btn-outline-primary btn-sm active" id="wbParamModeMeter" data-mode="meter">
+                                Корректор + счётчик
+                            </button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="wbParamModeComplex" data-mode="with-complex">
+                                +  комплекс
+                            </button>
+                        </div>
+                        <p id="wbParamModeHint" class="small text-body-secondary mb-0 mt-1" role="status"></p>
+                    </div>
+                </div>
                 <div id="paramOrder1cRetryBar" class="alert alert-warning py-2 small mt-2 mb-0 d-none" role="status"></div>
                 <div class="d-flex flex-wrap align-items-center gap-2 mt-3 pt-3 border-top">
                     <span id="wbOrderSessionBadge" class="badge rounded-pill text-bg-secondary">Сессия: не открыта</span>
@@ -123,9 +141,11 @@
                     <button type="button" class="btn btn-outline-primary" id="wbCorrectorSerialGenerate" disabled>
                         <i class="bi bi-hash me-1"></i>Сгенерировать
                     </button>
+                    <!-- Печать шильда временно отключена
                     <button type="button" class="btn btn-outline-secondary" id="wbCorrectorNameplatePrint" disabled title="Печать шильдика по шаблону S/N">
                         <i class="bi bi-printer me-1"></i>Печать шильдика
                     </button>
+                    -->
                 </div>
                 <p class="small text-body-secondary mb-3">
                     Print-агент:
@@ -145,6 +165,32 @@
             <div class="alert alert-info py-2 px-3 mb-3 wb-param-lock-banner" id="wbParamLockBanner" role="status">
                 <i class="bi bi-lock me-1"></i>Параметризация будет доступна после подтверждения сборки корректора.
             </div>
+
+        <div class="card bench-card mb-4 border-warning border-opacity-25 d-none" id="wbCorrectorTemplateCard">
+            <div class="card-header fw-semibold">
+                <i class="bi bi-collection me-1"></i>Шаблон счётчика
+            </div>
+            <div class="card-body">
+                <p class="small text-body-secondary mb-2">
+                    Заказ только на корректор ТМ-07. Выберите счётчик и типоразмер — заполнятся параметры счётчика (п.100–122), расход (п.28–33), погрешности (п.119/120), серийник 0, даты 01.01.2000 и направление 0.
+                </p>
+                <div class="row g-2">
+                    <div class="col-md-5">
+                        <label class="form-label fw-semibold" for="paramCorrectorMeterFamily">Тип счётчика</label>
+                        <select class="form-select" id="paramCorrectorMeterFamily">
+                            <option value="">— Выберите тип —</option>
+                        </select>
+                    </div>
+                    <div class="col-md-7">
+                        <label class="form-label fw-semibold" for="paramCorrectorMeterTemplate">Типоразмер</label>
+                        <select class="form-select" id="paramCorrectorMeterTemplate" disabled>
+                            <option value="">— Сначала тип —</option>
+                        </select>
+                    </div>
+                </div>
+                <p id="paramCorrectorTemplateHint" class="small text-body-secondary mt-2 mb-0" role="status"></p>
+            </div>
+        </div>
 
         <div class="card bench-card mb-4 border-primary border-opacity-25">
             <div class="card-header fw-semibold d-flex flex-wrap align-items-center gap-2">
@@ -183,21 +229,21 @@
             </div>
             <div class="card-body">
                 <p class="small text-body-secondary mb-3">
-                    S/N корректора (п.3) берётся из сборки. Даты поверки корректора (п.80/81, Меню 1.3.5/1.3.6) — вручную или «Даты сегодня». Затем «Записать корректор» в уже параметризованный прибор.
+                    S/N корректора (п.3) берётся из сборки. Даты поверки (п.80/81) — вручную или «Даты сегодня», затем «Записать корректор».
                 </p>
                 <label class="form-label fw-semibold" for="paramCorrectorSerialDisplay">Серийный номер (п.3)</label>
-                <input type="text" class="form-control font-monospace" id="paramCorrectorSerialDisplay" readonly placeholder="—" aria-readonly="true">
-                <div class="row g-2 align-items-end mt-2">
+                <input type="text" class="form-control form-control-lg font-monospace" id="paramCorrectorSerialDisplay" readonly placeholder="—" aria-readonly="true">
+                <div class="row g-2 align-items-end mt-3">
                     <div class="col-sm-4">
                         <label class="form-label small mb-1" for="paramCorrectorVerifyDate">Дата поверки (п.80)</label>
-                        <input type="text" class="form-control font-monospace" id="paramCorrectorVerifyDate" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" title="REG_SYS_LAST_VERIF_DATE, 0x0024, Меню 1.3.5">
+                        <input type="text" class="form-control font-monospace" id="paramCorrectorVerifyDate" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric" title="Дата поверки корректора, п.80, Меню 1.3.5">
                     </div>
                     <div class="col-sm-4">
                         <label class="form-label small mb-1" for="paramCorrectorVerifyNext">След. поверка (п.81)</label>
-                        <input type="text" class="form-control font-monospace" id="paramCorrectorVerifyNext" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" title="REG_SYS_NEXT_VERIF_DATE, 0x0026, Меню 1.3.6">
+                        <input type="text" class="form-control font-monospace" id="paramCorrectorVerifyNext" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric" title="След. поверка корректора, п.81, Меню 1.3.6">
                     </div>
                     <div class="col-sm-4 d-flex flex-wrap gap-2">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramCorrectorDatesToday" title="Сегодня и +МПИ">Даты сегодня</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramCorrectorDatesToday" title="Подставить сегодня и +МПИ в поля (без записи в прибор)">Даты сегодня</button>
                         <button type="button" class="btn btn-success btn-sm" id="paramCorrectorWrite" title="Записать п.3, 80, 81 в корректор">
                             <i class="bi bi-pencil-square me-1"></i>Записать корректор
                         </button>
@@ -214,22 +260,23 @@
             </div>
             <div class="card-body">
                 <p class="small text-body-secondary mb-3">
-                    Можно ввести позже (счётчик часто приходит после параметризации корректора). Затем «Записать счётчик» в уже параметризованный прибор.
+                    Можно ввести позже (счётчик часто приходит после параметризации корректора). S/N и даты — вручную или «Даты сегодня», затем «Записать счётчик».
                 </p>
                 <label class="form-label fw-semibold" for="paramMeterSerial">Серийный номер (п.102)</label>
                 <input type="text" class="form-control form-control-lg font-monospace" id="paramMeterSerial" placeholder="6509" autocomplete="off" spellcheck="false" inputmode="numeric" maxlength="16">
-                <p class="small text-body-secondary mt-1 mb-3">4–16 цифр с таблички. Enter — в п.102. Даты поверки — вручную или «Даты сегодня».</p>
-                <div class="row g-2 align-items-end">
+                <p class="small text-body-secondary mt-1 mb-0">4–16 цифр с таблички. Enter — в п.102.</p>
+                <p id="paramMeterVerifyHint" class="small text-body-secondary mt-1 mb-0"></p>
+                <div class="row g-2 align-items-end mt-3">
                     <div class="col-sm-4">
                         <label class="form-label small mb-1" for="paramMeterVerifyDate">Дата поверки (п.103)</label>
-                        <input type="text" class="form-control font-monospace" id="paramMeterVerifyDate" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10">
+                        <input type="text" class="form-control font-monospace" id="paramMeterVerifyDate" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric">
                     </div>
                     <div class="col-sm-4">
                         <label class="form-label small mb-1" for="paramMeterVerifyNext">След. поверка (п.104)</label>
-                        <input type="text" class="form-control font-monospace" id="paramMeterVerifyNext" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10">
+                        <input type="text" class="form-control font-monospace" id="paramMeterVerifyNext" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric">
                     </div>
                     <div class="col-sm-4 d-flex flex-wrap gap-2">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramMeterDatesToday" title="Сегодня и +МПИ">Даты сегодня</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramMeterDatesToday" title="Подставить сегодня и +МПИ в поля (без записи в прибор)">Даты сегодня</button>
                         <button type="button" class="btn btn-success btn-sm" id="paramMeterWrite" title="Записать п.102–104 в корректор">
                             <i class="bi bi-pencil-square me-1"></i>Записать счётчик
                         </button>
@@ -246,21 +293,26 @@
             </div>
             <div class="card-body">
                 <p class="small text-body-secondary mb-3">
-                    S/N комплекса (п.201) и даты поверки комплекса (п.202/203, Меню 3.03/3.04) — вручную или «Даты сегодня». Затем «Записать комплекс» в уже параметризованный прибор.
+                    S/N комплекса (п.201) и даты (п.202/203) — вручную, генерация из БД или «Даты сегодня», затем «Записать комплекс».
                 </p>
                 <label class="form-label fw-semibold" for="paramComplexSerial">Серийный номер (п.201)</label>
-                <input type="text" class="form-control form-control-lg font-monospace" id="paramComplexSerial" placeholder="S/N комплекса" autocomplete="off" spellcheck="false" maxlength="16">
-                <div class="row g-2 align-items-end mt-2">
+                <div class="input-group input-group-lg">
+                    <input type="text" class="form-control font-monospace" id="paramComplexSerial" placeholder="S/N комплекса (ввод или генерация из БД)" autocomplete="off" spellcheck="false" maxlength="16">
+                    <button type="button" class="btn btn-outline-primary" id="paramComplexSerialGenerate" title="Выдать следующий номер 400… из БД">
+                        <i class="bi bi-hash me-1"></i>Сгенерировать
+                    </button>
+                </div>
+                <div class="row g-2 align-items-end mt-3">
                     <div class="col-sm-4">
                         <label class="form-label small mb-1" for="paramComplexVerifyDate">Дата поверки (п.202)</label>
-                        <input type="text" class="form-control font-monospace" id="paramComplexVerifyDate" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10">
+                        <input type="text" class="form-control font-monospace" id="paramComplexVerifyDate" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric">
                     </div>
                     <div class="col-sm-4">
                         <label class="form-label small mb-1" for="paramComplexVerifyNext">След. поверка (п.203)</label>
-                        <input type="text" class="form-control font-monospace" id="paramComplexVerifyNext" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10">
+                        <input type="text" class="form-control font-monospace" id="paramComplexVerifyNext" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric">
                     </div>
                     <div class="col-sm-4 d-flex flex-wrap gap-2">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramComplexDatesToday" title="Сегодня и +МПИ">Даты сегодня</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramComplexDatesToday" title="Подставить сегодня и +МПИ в поля (без записи в прибор)">Даты сегодня</button>
                         <button type="button" class="btn btn-success btn-sm" id="paramComplexWrite" title="Записать п.201–203 в корректор">
                             <i class="bi bi-pencil-square me-1"></i>Записать комплекс
                         </button>
@@ -293,12 +345,29 @@
                         </div>
                         <p class="small text-body-secondary mb-0 mt-1">Закрытие калибровочного замка — перед очисткой регистров в финале. Открытие (AutoPass) выполняется при подключении КАО и перед записью.</p>
                         <div id="paramLockBanner" class="alert alert-warning py-2 small mt-2 mb-0 d-none" role="status"></div>
+                        <div id="paramFwBanner" class="alert alert-secondary py-2 small mt-2 mb-0" role="status">
+                            <div class="d-flex flex-wrap align-items-center gap-2">
+                                <i class="bi bi-cpu"></i>
+                                <span>ПО прибора (0x0007): <strong id="paramFwDeviceVer">—</strong></span>
+                                <span>ЛКГ (из файла): <strong id="paramFwLkg" class="font-monospace">—</strong></span>
+                                <span>нужно: <strong id="paramFwFolderVer">—</strong></span>
+                                <span id="paramFwMatch" class="badge rounded-pill text-bg-secondary">нет связи</span>
+                                <button type="button" class="btn btn-warning btn-sm" id="paramFwFlashBtn" disabled title="Залить файл из папки firmware по метке v…">
+                                    <i class="bi bi-download me-1"></i>Перепрошить
+                                </button>
+                                <label class="btn btn-outline-secondary btn-sm mb-0" for="paramFwFile" title="Если папка не видна — выбрать .bin вручную">
+                                    <i class="bi bi-folder2-open me-1"></i>Выбрать файл
+                                </label>
+                                <input type="file" id="paramFwFile" class="d-none" accept=".bin,application/octet-stream">
+                                <span id="paramFwStatus" class="text-body-secondary"></span>
+                            </div>
+                        </div>
                         <p id="paramUsbFilterHint" class="small text-body-secondary mb-0 mt-2" role="status"></p>
                     </div>
                     <div class="col-lg-auto d-flex flex-wrap gap-2 align-items-center">
                         <button type="button" class="btn btn-warning btn-lg wb-action-primary px-4" id="paramWriteAll"><i class="bi bi-lightning-charge me-1"></i>Параметризовать</button>
                         <button type="button" class="btn btn-outline-success btn-sm" id="paramReadAll" title="Полный опрос корректора и сверка с заказом"><i class="bi bi-eye"></i></button>
-                        <span id="paramTimer" class="badge rounded-pill text-bg-dark d-none fs-6 fw-semibold" title="Параметризация: осталось ≈" role="status">⏱ 2:00</span>
+                        <span id="paramTimer" class="badge rounded-pill text-bg-dark d-none fs-6 fw-semibold" title="Выполнено" role="status">0%</span>
                     </div>
                 </div>
                 <p id="paramWbAutoStatus" class="small mt-3 mb-0" role="status"></p>
@@ -330,7 +399,7 @@
         </div>
 
         <div class="accordion bench-accordion mb-3" id="paramExtraAccordion">
-            <div class="accordion-item bench-card border">
+            <div class="accordion-item bench-card border" id="wbMeterParamsItem">
                 <h2 class="accordion-header">
                     <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#paramMeterPanel" aria-expanded="true" aria-controls="paramMeterPanel">
                         <i class="bi bi-speedometer me-2 text-secondary"></i>Параметры счётчика
@@ -403,13 +472,16 @@
                     <div class="accordion-body p-0">
                         <div class="param-toolbar border-top border-bottom px-3 py-2 d-flex flex-wrap gap-2 align-items-center">
                             <input type="search" class="form-control form-control-sm" id="paramFinalFilter" placeholder="Поиск #318…" autocomplete="off" style="max-width:16rem">
-                            <button type="button" class="btn btn-warning btn-sm ms-auto d-none" id="paramFinalRun" title="Маски, даты, моточасы, закрытие калибр. замка, очистка регистров">
-                                <i class="bi bi-play-fill me-1"></i>Прогнать финальные параметры
-                            </button>
-                            <button type="button" class="btn btn-outline-success btn-sm d-none" id="paramFinalReadAll">Прочитать</button>
-                            <button type="button" class="btn btn-outline-warning btn-sm" id="paramFinalWriteAll" title="Записать только финальные параметры из таблицы">
-                                <i class="bi bi-pencil-square me-1"></i>Записать
-                            </button>
+                            <div class="ms-auto d-flex flex-wrap gap-2 align-items-center">
+                                <button type="button" class="btn btn-warning btn-sm d-none" id="paramFinalRun" title="Маски, даты, моточасы, закрытие калибр. замка, очистка регистров">
+                                    <i class="bi bi-play-fill me-1"></i>Прогнать финальные параметры
+                                </button>
+                                <button type="button" class="btn btn-outline-success btn-sm d-none" id="paramFinalReadAll">Прочитать</button>
+                                <span id="paramFinalTimer" class="badge rounded-pill text-bg-dark d-none fw-semibold" title="Прогресс записи финальных параметров" role="status">0%</span>
+                                <button type="button" class="btn btn-success" id="paramFinalWriteAll" title="Записать только финальные параметры из таблицы">
+                                    <i class="bi bi-pencil-square me-1"></i>Записать
+                                </button>
+                            </div>
                         </div>
                         <div class="table-responsive param-table-wrap" style="max-height:min(50vh,480px)">
                             <table class="table table-sm table-hover table-striped align-middle small mb-0">
@@ -457,9 +529,7 @@
     <input type="hidden" id="paramOrder1cBase" value="">
     <button type="button" class="d-none" id="paramNowToDatetime" tabindex="-1" aria-hidden="true"></button>
 
-    <button type="button" class="btn btn-primary wb-guide-help-btn shadow" id="wbGuideHelpBtn" title="Показать подсказку">
-        <i class="bi bi-question-lg me-1"></i>Подсказка
-    </button>
+    <button type="button" class="d-none" id="wbGuideHelpBtn" tabindex="-1" aria-hidden="true"></button>
 
     <div class="modal fade" id="sensorParamsModal" tabindex="-1" aria-labelledby="sensorParamsTitle" aria-hidden="true">
         <div class="modal-dialog modal-lg modal-dialog-scrollable">
@@ -488,7 +558,7 @@
         </div>
     </div>
 
-    <div class="modal fade" id="wbGuideModal" tabindex="-1" aria-labelledby="wbGuideTitle" aria-hidden="true" data-bs-backdrop="static" data-bs-keyboard="false">
+    <div class="modal fade d-none" id="wbGuideModal" tabindex="-1" aria-hidden="true" hidden>
         <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable">
             <div class="modal-content border-0 shadow-lg">
                 <div class="modal-header border-0 pb-0">
@@ -514,7 +584,6 @@
     <script src="/js/korrektor-device.js"></script>
     <script src="/js/parametrization/tm07-parametrization-data.js"></script>
     <script src="/js/parametrization/tm07-parametrization-extra-data.js"></script>
-    <script src="/js/parametrization/tm07-emis-rgs245-data.js"></script>
     <script src="/js/parametrization/tm07-complex-meter-types-data.js"></script>
     <script src="/js/parametrization/tm07-volume-error-limits-data.js"></script>
     <script src="/js/parametrization/tm07-corrector-execution-data.js"></script>

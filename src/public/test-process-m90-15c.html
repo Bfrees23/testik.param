@@ -347,11 +347,12 @@
                             <div class="accordion-item phase-card" data-phase="cal_min" data-phase-state="pending">
                                 <h2 class="accordion-header">
                                     <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ph2">
-                                        <span class="badge text-bg-secondary me-2 rounded-pill">2</span>Калибровка MIN (+20)
+                                        <span class="badge text-bg-secondary me-2 rounded-pill">2</span>Калибровка MIN
                                     </button>
                                 </h2>
                                 <div id="ph2" class="accordion-collapse collapse" data-bs-parent="#phaseAccordion">
                                     <div class="accordion-body small">
+                                        <p class="mb-2 text-body-secondary">Точка с минимальной уставкой M90 из профиля админки (по умолчанию −40 °C).</p>
                                         <button type="button" class="btn btn-outline-primary btn-sm" data-run-phase="cal_min">Запустить фазу 2</button>
                                         <button type="button" class="btn btn-outline-danger btn-sm ms-1" data-stop-phase="cal_min">Стоп фазу</button>
                                         <span class="ms-2 badge text-bg-secondary" id="badge_cal_min">ожидание</span>
@@ -361,11 +362,12 @@
                             <div class="accordion-item phase-card" data-phase="cal_max" data-phase-state="pending">
                                 <h2 class="accordion-header">
                                     <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ph3">
-                                        <span class="badge text-bg-secondary me-2 rounded-pill">3</span>Калибровка MAX (+20)
+                                        <span class="badge text-bg-secondary me-2 rounded-pill">3</span>Калибровка MAX
                                     </button>
                                 </h2>
                                 <div id="ph3" class="accordion-collapse collapse" data-bs-parent="#phaseAccordion">
                                     <div class="accordion-body small">
+                                        <p class="mb-2 text-body-secondary">Точка с максимальной уставкой M90 из профиля админки (по умолчанию +60 °C).</p>
                                         <button type="button" class="btn btn-outline-primary btn-sm" data-run-phase="cal_max">Запустить фазу 3</button>
                                         <button type="button" class="btn btn-outline-danger btn-sm ms-1" data-stop-phase="cal_max">Стоп фазу</button>
                                         <span class="ms-2 badge text-bg-secondary" id="badge_cal_max">ожидание</span>
@@ -380,6 +382,7 @@
                                 </h2>
                                 <div id="ph4" class="accordion-collapse collapse" data-bs-parent="#phaseAccordion">
                                     <div class="accordion-body small">
+                                        <p class="mb-2 text-body-secondary">Сравнение эталона МИТ и корректора на всех уставках камер M90 из профиля.</p>
                                         <button type="button" class="btn btn-outline-primary btn-sm" data-run-phase="temp_verify">Запустить фазу 4</button>
                                         <button type="button" class="btn btn-outline-danger btn-sm ms-1" data-stop-phase="temp_verify">Стоп фазу</button>
                                         <span class="ms-2 badge text-bg-secondary" id="badge_temp_verify">ожидание</span>
@@ -507,6 +510,7 @@
     </main>
 
     <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script src="/js/tm07-bench-events.js"></script>
     <script src="/js/calibration/serial-direct.js"></script>
     <script src="/js/calibration/m90-device.js"></script>
     <script src="/js/korrektor-device.js"></script>

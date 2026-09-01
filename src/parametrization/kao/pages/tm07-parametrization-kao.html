@@ -90,6 +90,23 @@
                         </div>
                         <p class="small text-body-secondary mb-0 mt-2">Закрытие калибровочного замка — перед очисткой регистров в финале. AutoPass открывает замки при подключении и перед записью.</p>
                         <div id="paramLockBanner" class="alert alert-warning py-2 small mt-2 mb-0 d-none" role="status"></div>
+                        <div id="paramFwBanner" class="alert alert-secondary py-2 small mt-2 mb-0" role="status">
+                            <div class="d-flex flex-wrap align-items-center gap-2">
+                                <i class="bi bi-cpu"></i>
+                                <span>ПО прибора (0x0007): <strong id="paramFwDeviceVer">—</strong></span>
+                                <span>ЛКГ (из файла): <strong id="paramFwLkg" class="font-monospace">—</strong></span>
+                                <span>нужно: <strong id="paramFwFolderVer">—</strong></span>
+                                <span id="paramFwMatch" class="badge rounded-pill text-bg-secondary">нет связи</span>
+                                <button type="button" class="btn btn-warning btn-sm" id="paramFwFlashBtn" disabled title="Залить файл из папки firmware по метке v…">
+                                    <i class="bi bi-download me-1"></i>Перепрошить
+                                </button>
+                                <label class="btn btn-outline-secondary btn-sm mb-0" for="paramFwFile" title="Если папка не видна — выбрать .bin вручную">
+                                    <i class="bi bi-folder2-open me-1"></i>Выбрать файл
+                                </label>
+                                <input type="file" id="paramFwFile" class="d-none" accept=".bin,application/octet-stream">
+                                <span id="paramFwStatus" class="text-body-secondary"></span>
+                            </div>
+                        </div>
                     </div>
                 </details>
             </div>
@@ -144,8 +161,10 @@
                     <button type="button" class="btn btn-primary btn-sm" id="paramSerialGenCorrector"><i class="bi bi-hash me-1"></i>Корректор → п.3</button>
                     <button type="button" class="btn btn-primary btn-sm" id="paramSerialGenComplex"><i class="bi bi-hash me-1"></i>Комплекс → п.201</button>
                     <button type="button" class="btn btn-outline-primary btn-sm" id="paramSerialGenPair"><i class="bi bi-collection me-1"></i>Пара (300 + 400)</button>
+                    <!-- Печать шильда временно отключена
                     <button type="button" class="btn btn-outline-secondary btn-sm" id="paramSerialPrintCorrector" title="Печать шильдика корректора"><i class="bi bi-printer me-1"></i>Шильдик 300</button>
                     <button type="button" class="btn btn-outline-secondary btn-sm" id="paramSerialPrintComplex" title="Печать шильдика комплекса"><i class="bi bi-printer me-1"></i>Шильдик 400</button>
+                    -->
                     <button type="button" class="btn btn-outline-secondary btn-sm" id="paramSerialRegistryRefresh" title="Показать следующие номера без выдачи"><i class="bi bi-arrow-clockwise"></i></button>
                 </div>
                 <p id="paramSerialRegistryHint" class="small text-body-secondary mb-1">—</p>
@@ -190,6 +209,11 @@
                     </div>
                 </details>
                 <p id="paramOrder1cStatus" class="small param-order-status mb-0" role="status"></p>
+                <div id="paramOrder1cContents" class="wb-order-contents d-none" role="status">
+                    <div class="wb-order-contents-label">Содержание заказа</div>
+                    <div id="paramOrder1cNom" class="wb-order-contents-nom"></div>
+                    <div id="paramOrder1cChar" class="wb-order-contents-char text-break"></div>
+                </div>
                 <input type="hidden" id="paramOrder1cEntity" value="Document_ЗаказНаПроизводство2_2">
                 <input type="hidden" id="paramOrder1cBase" value="">
             </div>
@@ -209,7 +233,7 @@
                             <li>Номер карты смотрите в идентификации прибора (<code>0x11</code>, ожидается <code>0x000B=50</code>).</li>
                             <li>Колонка «№ п/п» в Google Таблице ≠ номер шага на этой странице; сверяйте по <strong>адресу HEX</strong> и define.</li>
                             <li>Ошибка Modbus <code>0x02</code> — нет holding по адресу в данной прошивке.</li>
-                            <li>Загрузка прошивки (шаг 1) в браузере не выполняется.</li>
+                            <li>Версия ПО читается из регистра <code>0x0007</code>. Файл <code>.bin</code> берётся из папки <code>firmware/</code>; при расхождении предлагается перепрошивка (0x2000 / 0x2002).</li>
                         </ul>
                         <p class="mb-0">Перед записью параметров ключ доступа подставляется автоматически (настройки администратора).</p>
                     </div>
@@ -254,7 +278,7 @@
                         <button type="button" class="btn btn-outline-secondary btn-sm" id="paramNowToDatetime" title="Текущий unix в поле даты/времени"><i class="bi bi-clock me-1"></i>Сейчас → дата</button>
                         <button type="button" class="btn btn-success btn-sm" id="paramReadAll" title="Поочерёдное чтение всех holding"><i class="bi bi-arrow-down-circle me-1"></i>Прочитать все</button>
                         <button type="button" class="btn btn-warning btn-sm" id="paramWriteAll" title="Поочерёдная запись; пустые поля пропускаются"><i class="bi bi-arrow-up-circle me-1"></i>Записать все</button>
-                        <span id="paramTimer" class="badge rounded-pill text-bg-dark d-none fw-semibold" title="Параметризация: осталось ≈" role="status">⏱ 2:00</span>
+                        <span id="paramTimer" class="badge rounded-pill text-bg-dark d-none fw-semibold" title="Выполнено" role="status">0%</span>
                     </div>
                 </div>
             </div>
@@ -363,7 +387,8 @@
                                 <div class="col-lg-auto d-flex flex-wrap gap-2">
                                     <button type="button" class="btn btn-success btn-sm d-none" id="paramFinalReadAll"><i class="bi bi-arrow-down-circle me-1"></i>Прочитать все</button>
                                     <button type="button" class="btn btn-warning btn-sm d-none" id="paramFinalRun" title="Даты комплекса, моточасы, токи, очистка"><i class="bi bi-play-fill me-1"></i>Прогнать финальные</button>
-                                    <button type="button" class="btn btn-outline-warning btn-sm" id="paramFinalWriteAll"><i class="bi bi-arrow-up-circle me-1"></i>Записать все</button>
+                                    <span id="paramFinalTimer" class="badge rounded-pill text-bg-dark d-none fw-semibold" title="Прогресс записи финальных параметров" role="status">0%</span>
+                                    <button type="button" class="btn btn-success" id="paramFinalWriteAll"><i class="bi bi-arrow-up-circle me-1"></i>Записать все</button>
                                     <button type="button" class="btn btn-primary btn-sm d-none" id="paramFinalContinue"><i class="bi bi-forward-fill me-1"></i>Продолжить после закрытия замка</button>
                                 </div>
                             </div>
@@ -439,7 +464,6 @@
     <script src="/js/korrektor-device.js"></script>
     <script src="/js/parametrization/tm07-parametrization-data.js"></script>
     <script src="/js/parametrization/tm07-parametrization-extra-data.js"></script>
-    <script src="/js/parametrization/tm07-emis-rgs245-data.js"></script>
     <script src="/js/parametrization/tm07-complex-meter-types-data.js"></script>
     <script src="/js/parametrization/tm07-volume-error-limits-data.js"></script>
     <script src="/js/parametrization/tm07-corrector-execution-data.js"></script>

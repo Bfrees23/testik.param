@@ -44,6 +44,19 @@
         return String(inp.value || '').trim() !== '';
     }
 
+    function paintCorrectorSerialUi() {
+        const Ops = window.TM07_WORKBENCH_OPS;
+        if (Ops && typeof Ops.syncCorrectorVerifFieldsFromSteps === 'function') {
+            Ops.syncCorrectorVerifFieldsFromSteps();
+        } else if (Ops && typeof Ops.paintCorrectorVerifBadge === 'function') {
+            Ops.paintCorrectorVerifBadge();
+        }
+        const wb = window.TM07_WORKBENCH;
+        if (wb && typeof wb.paintAssemblyCard === 'function') {
+            wb.paintAssemblyCard();
+        }
+    }
+
     function applySerialToStep(stepId, serial, note) {
         const inp = el('val_' + stepId);
         if (stepId === 3) {
@@ -55,13 +68,85 @@
         }
         if (!inp || inp.disabled) {
             if (stepId === 3) {
+                paintCorrectorSerialUi();
                 plog('п.3 ← ' + serial + (note ? ' (' + note + ')' : '') + ' (карточка сборки)');
+                return;
+            }
+            if (stepId === 201) {
+                const ui = el('paramComplexSerial');
+                if (ui) {
+                    ui.value = serial;
+                }
+                const Ops = window.TM07_WORKBENCH_OPS;
+                if (Ops && typeof Ops.applyComplexSerial === 'function') {
+                    Ops.applyComplexSerial(serial);
+                }
+                plog('п.201 ← ' + serial + (note ? ' (' + note + ')' : '') + ' (карточка комплекса)');
                 return;
             }
             throw new Error('Поле п.' + stepId + ' недоступно');
         }
         inp.value = formatStepValue(stepId, serial);
         plog('п.' + stepId + ' ← ' + serial + (note ? ' (' + note + ')' : ''));
+        if (stepId === 201) {
+            const ui = el('paramComplexSerial');
+            if (ui) {
+                ui.value = serial;
+            }
+            const Ops = window.TM07_WORKBENCH_OPS;
+            if (Ops && typeof Ops.applyComplexSerial === 'function') {
+                Ops.applyComplexSerial(serial);
+            }
+        }
+        if (stepId === 3) {
+            const display = el('wbCorrectorSerialDisplay');
+            if (display) {
+                display.value = serial;
+            }
+            window.__wbAssemblyCorrectorSerial = serial;
+            paintCorrectorSerialUi();
+        }
+    }
+
+    function collectXlsxMeta() {
+        const meta = {
+            execution: 'И1',
+            productTitle: '',
+            characteristics: '',
+            customer: '',
+            fwVersion: '',
+        };
+        try {
+            const C = window.TM07_CORRECTOR_EXECUTION;
+            const Ops = window.TM07_WORKBENCH_OPS;
+            let text = '';
+            if (Ops && typeof Ops.collectOrderTextBlob === 'function') {
+                text = String(Ops.collectOrderTextBlob() || '');
+            }
+            if (C && typeof C.resolveCorrectorExecution === 'function') {
+                const exec = C.resolveCorrectorExecution({ fullText: text });
+                if (exec && exec.variant) {
+                    meta.execution = exec.variant;
+                }
+            }
+        } catch (_e) {}
+        const titleEl = el('paramProductTitle');
+        const charEl = el('paramCharacteristics');
+        const custEl = el('paramCustomer');
+        const fwEl = el('paramFwVersion');
+        if (titleEl) meta.productTitle = String(titleEl.value || '').trim();
+        if (charEl) meta.characteristics = String(charEl.value || '').trim();
+        if (custEl) meta.customer = String(custEl.value || '').trim();
+        if (fwEl) meta.fwVersion = String(fwEl.value || '').trim();
+        const s3 = el('val_3');
+        if (s3 && String(s3.value || '').trim()) {
+            meta.serialCorrector = String(s3.value).trim();
+        }
+        const s201 = el('val_201');
+        if (s201 && String(s201.value || '').trim()) {
+            meta.serialComplex = String(s201.value).trim();
+        }
+        return meta;
     }
 
     async function confirmOverwrite(stepId) {
@@ -69,10 +154,13 @@
             return true;
         }
         const cur = String(el('val_' + stepId).value || '').trim();
-        return window.confirm('П.п.' + stepId + ' уже заполнен (' + cur + '). Выдать новый серийный номер?');
+        plog('П.п.' + stepId + ' уже заполнен (' + cur + ') — выдаём новый номер.');
+        return true;
     }
 
     async function offerNameplatePrint(kind, serial) {
+        // Печать шильда временно отключена
+        return;
         const Nameplate = window.TM07_NAMEPLATE;
         if (!Nameplate || !serial || typeof Nameplate.printNameplate !== 'function') {
             return;
@@ -105,15 +193,33 @@
                 orderNumber = orderEl ? String(orderEl.value || '').trim() : null;
             }
         }
-        const result = await reg.allocate(kind, { orderNumber: orderNumber || null });
+        const result = await reg.allocate(kind, Object.assign(collectXlsxMeta(), {
+            orderNumber: orderNumber || null,
+        }));
         if (!result || !result.serial) {
             throw new Error('Реестр не вернул номер');
         }
-        const v = reg.validateSerial(result.serial, new Date(), result.prefix);
+        const v = reg.validateSerial(result.serial, new Date(), result.prefix, {
+            allowAnyProductionMonth: !!result.reused,
+        });
         if (!v.ok) {
             throw new Error(v.error || 'Неверный формат номера');
         }
-        applySerialToStep(stepId, result.serial, reg.describeKind(kind) + ', №' + String(result.seq).padStart(3, '0'));
+        const reusedNote = result.reused
+            ? 'заказ уже есть, номер из реестра'
+            : '№' + String(result.seq).padStart(3, '0');
+        applySerialToStep(stepId, result.serial, reg.describeKind(kind) + ', ' + reusedNote);
+        if (stepId === 201) {
+            const Ops = window.TM07_WORKBENCH_OPS;
+            if (Ops && typeof Ops.applyComplexSerial === 'function') {
+                Ops.applyComplexSerial(result.serial);
+            } else {
+                const ui = el('paramComplexSerial');
+                if (ui) {
+                    ui.value = result.serial;
+                }
+            }
+        }
         if (o.printNameplate !== false) {
             await offerNameplatePrint(kind, result.serial);
         }
@@ -142,25 +248,37 @@
         return inp ? String(inp.value || '').trim() : '';
     }
 
+    function formatAllocateStatus(label, result) {
+        if (!result) {
+            return '';
+        }
+        if (result.reused) {
+            const src = result.source === 'xlsx' ? 'таблица Excel' : 'реестр';
+            return label + ': ' + result.serial + ' — уже выдан (' + src + '), новый не создавался';
+        }
+        return (
+            label +
+            ': ' +
+            result.serial +
+            ' (' +
+            result.fullYear +
+            '-' +
+            String(result.mm).padStart(2, '0') +
+            ', №' +
+            String(result.seq).padStart(3, '0') +
+            ', ' +
+            (result.backend || '') +
+            ')'
+        );
+    }
+
     async function onGenerateCorrector() {
         try {
             const result = await runAllocate(R().KIND.CORRECTOR, 3);
             if (!result) {
                 return;
             }
-            setStatus(
-                'Корректор: ' +
-                    result.serial +
-                    ' (' +
-                    result.fullYear +
-                    '-' +
-                    String(result.mm).padStart(2, '0') +
-                    ', №' +
-                    String(result.seq).padStart(3, '0') +
-                    ', ' +
-                    result.backend +
-                    ')'
-            );
+            setStatus(formatAllocateStatus('Корректор', result));
         } catch (e) {
             setStatus(e.message || String(e), true);
         }
@@ -172,19 +290,7 @@
             if (!result) {
                 return;
             }
-            setStatus(
-                'Комплекс: ' +
-                    result.serial +
-                    ' (' +
-                    result.fullYear +
-                    '-' +
-                    String(result.mm).padStart(2, '0') +
-                    ', №' +
-                    String(result.seq).padStart(3, '0') +
-                    ', ' +
-                    result.backend +
-                    ')'
-            );
+            setStatus(formatAllocateStatus('Комплекс', result));
         } catch (e) {
             setStatus(e.message || String(e), true);
         }
@@ -218,16 +324,36 @@
             return;
         }
         try {
-            const c = await reg.peek(reg.KIND.CORRECTOR);
-            const k = await reg.peek(reg.KIND.COMPLEX);
-            hint.textContent =
-                'Следующий: корректор ' +
-                c.serial +
-                ', комплекс ' +
-                k.serial +
-                ' (бэкенд: ' +
-                reg.getBackend() +
-                ')';
+            let orderNumber = null;
+            const events = window.TM07_BENCH_EVENTS;
+            if (events && typeof events.getActiveOrderNumber === 'function') {
+                orderNumber = events.getActiveOrderNumber();
+            }
+            if (!orderNumber) {
+                const orderEl = el('paramOrder1cNumber');
+                orderNumber = orderEl ? String(orderEl.value || '').trim() : null;
+            }
+            const peekOpts = { orderNumber: orderNumber || null };
+            const c = await reg.peek(reg.KIND.CORRECTOR, peekOpts);
+            const k = await reg.peek(reg.KIND.COMPLEX, peekOpts);
+            if (c.reused || k.reused) {
+                hint.textContent =
+                    'Заказ уже в таблице: корректор ' +
+                    c.serial +
+                    (c.reused ? ' (есть)' : ' (новый)') +
+                    ', комплекс ' +
+                    k.serial +
+                    (k.reused ? ' (есть)' : ' (новый)');
+            } else {
+                hint.textContent =
+                    'Следующий: корректор ' +
+                    c.serial +
+                    ', комплекс ' +
+                    k.serial +
+                    ' (бэкенд: ' +
+                    reg.getBackend() +
+                    ')';
+            }
         } catch (e) {
             hint.textContent = e.message || String(e);
         }
@@ -251,7 +377,7 @@
                 }
                 const result = await runAllocate(kind, stepId);
                 if (result) {
-                    setStatus(reg.describeKind(kind) + ': ' + result.serial);
+                    setStatus(formatAllocateStatus(reg.describeKind(kind), result));
                     refreshPreview();
                 }
             } catch (e) {
@@ -303,8 +429,8 @@
         obs.observe(document.body, { childList: true, subtree: true });
     }
 
-    /** Автовыдача S/N для п.201 (комплекс) без диалогов; корректор — на карточке сборки. */
-    async function ensureSerialNumbersAuto(opts) {
+    /** Автоподстановка S/N корректора (п.3) и комплекса (п.201) по номеру заказа. */
+    async function ensureOrderSerials(opts) {
         const o = opts || {};
         const reg = R();
         if (!reg) {
@@ -316,27 +442,79 @@
             if (events && typeof events.getActiveOrderNumber === 'function') {
                 orderNumber = events.getActiveOrderNumber();
             }
-        }
-        const out = { corrector: null, complex: null };
-        const pairs = [{ kind: reg.KIND.COMPLEX, stepId: 201 }];
-        if (o.includeCorrector) {
-            pairs.unshift({ kind: reg.KIND.CORRECTOR, stepId: 3 });
-        }
-        for (const p of pairs) {
-            const inp = el('val_' + p.stepId);
-            if (!inp || inp.disabled || String(inp.value || '').trim()) {
-                continue;
+            if (!orderNumber) {
+                const orderEl = el('paramOrder1cNumber');
+                orderNumber = orderEl ? String(orderEl.value || '').trim() : null;
             }
-            const result = await runAllocate(p.kind, p.stepId, {
+        }
+        const out = { corrector: null, complex: null, correctorResult: null, complexResult: null };
+        try {
+            const corr = await runAllocate(reg.KIND.CORRECTOR, 3, {
                 force: true,
                 orderNumber: orderNumber,
                 printNameplate: false,
             });
-            if (result) {
-                out[p.kind === reg.KIND.CORRECTOR ? 'corrector' : 'complex'] = result.serial;
+            if (corr && corr.serial) {
+                out.corrector = corr.serial;
+                out.correctorResult = corr;
+            }
+        } catch (e) {
+            plog('S/N корректора: ' + (e.message || String(e)));
+            throw e;
+        }
+        const Ops = window.TM07_WORKBENCH_OPS;
+        const correctorOnly =
+            Ops && typeof Ops.isComplexOrder === 'function' && !Ops.isComplexOrder();
+        // Заказ только на корректор: п.201 = 0, номер 400… не выдаём.
+        if (correctorOnly && o.includeComplex !== true) {
+            if (typeof Ops.applyCorrectorOnlyComplexIdentity === 'function') {
+                Ops.applyCorrectorOnlyComplexIdentity();
+            } else if (typeof Ops.applyComplexSerial === 'function') {
+                Ops.applyComplexSerial('0');
+            } else {
+                const inp = el('val_201');
+                if (inp) {
+                    inp.value = '0';
+                }
+                const card = el('paramComplexSerial');
+                if (card) {
+                    card.value = '0';
+                }
+            }
+            out.complex = '0';
+            refreshPreview();
+            return out;
+        }
+        let needComplex = o.includeComplex !== false;
+        if (!needComplex && orderNumber) {
+            try {
+                const peek = await reg.peek(reg.KIND.COMPLEX, { orderNumber: orderNumber });
+                if (peek && peek.reused && peek.serial) {
+                    needComplex = true;
+                }
+            } catch (_e) {}
+        }
+        if (needComplex) {
+            try {
+                const cx = await runAllocate(reg.KIND.COMPLEX, 201, {
+                    force: true,
+                    orderNumber: orderNumber,
+                    printNameplate: false,
+                });
+                if (cx && cx.serial) {
+                    out.complex = cx.serial;
+                    out.complexResult = cx;
+                }
+            } catch (e) {
+                plog('S/N комплекса: ' + (e.message || String(e)));
             }
         }
+        refreshPreview();
         return out;
+    }
+
+    async function ensureSerialNumbersAuto(opts) {
+        return ensureOrderSerials(opts || {});
     }
 
     /** S/N корректора (п.3) для карточки сборки и шильда. */
@@ -354,7 +532,7 @@
             }
         }
         const inp = el('val_3');
-        if (inp && !inp.disabled && String(inp.value || '').trim() && !o.force) {
+        if (inp && !inp.disabled && String(inp.value || '').trim() && !o.force && !orderNumber) {
             return { serial: String(inp.value).trim(), stepId: 3 };
         }
         if (o.force || !inp || inp.disabled) {
@@ -373,6 +551,7 @@
 
     window.TM07_SERIAL_REGISTRY_UI = {
         ensureSerialNumbersAuto: ensureSerialNumbersAuto,
+        ensureOrderSerials: ensureOrderSerials,
         allocateCorrectorSerial: allocateCorrectorSerial,
         runAllocate: runAllocate,
         printNameplate: offerNameplatePrint,

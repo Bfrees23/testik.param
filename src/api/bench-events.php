@@ -10,7 +10,7 @@ try {
 
     if ($method === 'GET') {
         try {
-            bench_require_operator_session();
+            bench_require_operator_or_admin();
         } catch (RuntimeException $e) {
             bench_json_response(['ok' => false, 'error' => $e->getMessage()], 403);
         }
@@ -122,7 +122,7 @@ try {
                 bench_json_response(['ok' => false, 'error' => 'eventType обязателен'], 400);
             }
             try {
-                bench_require_operator_session();
+                bench_require_operator_or_admin();
             } catch (RuntimeException $e) {
                 bench_json_response(['ok' => false, 'error' => $e->getMessage()], 403);
             }

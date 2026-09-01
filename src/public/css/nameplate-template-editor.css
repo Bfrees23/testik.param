@@ -1,4 +1,33 @@
 /* Nameplate editor — industrial BarTender-style shell */
+@font-face {
+  font-family: 'Liberation Sans';
+  src: url('/fonts/nameplate/LiberationSans-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Liberation Sans';
+  src: url('/fonts/nameplate/LiberationSans-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Liberation Sans Narrow';
+  src: url('/fonts/nameplate/LiberationSansNarrow-Regular.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: 'Liberation Sans Narrow';
+  src: url('/fonts/nameplate/LiberationSansNarrow-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 .bt-page {
   --bt-workspace: #3d4148;
   --bt-workspace-deep: #32363c;

@@ -4,6 +4,9 @@
 (function () {
     'use strict';
 
+    /** Временно выключено: печать шильда не вызывается со стенда. Снять флаг, когда вернётесь к ней. */
+    const NAMEPLATE_PRINT_DISABLED = true;
+
     let cachedConfig = null;
     let configPromise = null;
 
@@ -20,11 +23,11 @@
     }
 
     function notifyUser(message) {
-        if (typeof window.plog === 'function') {
-            window.plog(message);
-        }
-        if (typeof window.alert === 'function') {
-            window.alert(message);
+        const le = $('paramLog');
+        if (le) {
+            const t = new Date().toLocaleTimeString();
+            le.innerHTML += '[' + t + '] [ШИЛЬД] ' + String(message || '') + '<br>';
+            le.scrollTop = le.scrollHeight;
         }
     }
 
@@ -164,6 +167,64 @@
     function buildPreviewUrl(payload) {
         const params = new URLSearchParams();
         params.set('action', 'preview');
+        params.set('kind', payload.kind || kindFromSerial(payload.serial));
+        params.set('serial', String(payload.serial || '').trim());
+        ['orderNumber', 'productTitle', 'manufactureDate', 'organizationName', 'configText', 'orderConfig'].forEach(function (key) {
+            if (payload[key]) {
+                params.set(key, String(payload[key]));
+            }
+        });
+        return '/api/nameplate-print.php?' + params.toString();
+    }
+
+    function pngFileFromJob(job) {
+        if (!job) {
+            return '';
+        }
+        const name = String(job.filename || (job.generated && job.generated.filename) || '');
+        if (/\.png$/i.test(name)) {
+            return name;
+        }
+        const urls = [
+            job.pngDownloadUrl,
+            job.previewUrl,
+            job.generated && job.generated.pngDownloadUrl,
+            job.generated && job.generated.previewUrl,
+        ];
+        for (let i = 0; i < urls.length; i += 1) {
+            const raw = String(urls[i] || '');
+            if (!raw) {
+                continue;
+            }
+            try {
+                const file = new URL(raw, window.location.origin).searchParams.get('file') || '';
+                if (/\.png$/i.test(file)) {
+                    return file;
+                }
+            } catch (_e) {
+                /* ignore */
+            }
+        }
+        return '';
+    }
+
+    function buildPrintPageUrl(payload, job) {
+        if (job && job.printPageUrl) {
+            return String(job.printPageUrl);
+        }
+        const params = new URLSearchParams();
+        params.set('action', 'print-page');
+        const pngFile = pngFileFromJob(job);
+        if (pngFile) {
+            params.set('file', pngFile);
+            if (payload && payload.serial) {
+                params.set('serial', String(payload.serial));
+            }
+            return '/api/nameplate-print.php?' + params.toString();
+        }
+        if (!payload || !payload.serial) {
+            return '';
+        }
         params.set('kind', payload.kind || kindFromSerial(payload.serial));
         params.set('serial', String(payload.serial || '').trim());
         ['orderNumber', 'productTitle', 'manufactureDate', 'organizationName', 'configText', 'orderConfig'].forEach(function (key) {
@@ -498,7 +559,7 @@
     }
 
     const AGENT_HINT =
-        'Агент печати не запущен. На этом ПК: C:\\tm07-agent\\restart-print-agent.cmd (или scripts\\windows\\install-print-agent.cmd один раз)';
+        'USB-принтер из сайта не виден. На этом Windows-ПК один раз: LAST VERSION\\scripts\\windows\\install-print-agent.cmd — это не BarTender, только сырой TSPL на TSC. Потом C:\\tm07-agent\\restart-print-agent.cmd';
 
     async function ensurePrintAgentReady(config, job) {
         const pa = (config && config.printAgent) || {};
@@ -511,6 +572,40 @@
         } catch (_e) {
             throw new Error(AGENT_HINT);
         }
+    }
+
+    const BT_AGENT_HINT =
+        'Агент BarTender не запущен. На ПК с принтером: scripts\\windows\\start-bartender-agent.cmd (нужен BarTender Automation).';
+
+    function bartenderAgentUrl(job, config) {
+        const bt = (config && config.bartender) || {};
+        return String(job.agentUrl || bt.agentUrl || 'http://127.0.0.1:18777').replace(/\/$/, '');
+    }
+
+    async function printViaBartenderAgent(job, config) {
+        const agentUrl = bartenderAgentUrl(job, config);
+        let health;
+        try {
+            health = await checkPrintAgentHealth(agentUrl);
+        } catch (_e) {
+            throw new Error(BT_AGENT_HINT);
+        }
+        if (health && health.bartenderCom === false) {
+            throw new Error('BarTender COM недоступен. Установите BarTender Automation и перезапустите агент.');
+        }
+        const templateName = String(job.template || '').replace(/^.*[\\/]/, '') || 'corrector-300.btw';
+        const body = {
+            serial: job.serial,
+            kind: job.kind,
+            template: templateName,
+            printer: job.printer || ((config.bartender && config.bartender.printer) || 'TSC TE200'),
+            fields: job.fields || {},
+            btxml: job.btxml || '',
+            filename: job.filename || (job.serial + '-' + (job.kind || 'corrector') + '.btw'),
+            saveCopy: true,
+        };
+        const token = (config.printAgent && config.printAgent.agentToken) || job.printAgentToken;
+        return postPrintAgentRequest(agentUrl, body, token);
     }
 
     async function printViaPrintAgent(job, config) {
@@ -570,63 +665,20 @@
         return data;
     }
 
-    async function printViaSystemDialog(job, config) {
+    async function printViaSystemDialog(job, config, payload) {
         const paCfg = (config && config.printAgent) || {};
         const dlg = paCfg.dialog || {};
         const wmm = Number(dlg.pageWidthMm) > 0 ? Number(dlg.pageWidthMm) : 58;
         const hmm = Number(dlg.pageHeightMm) > 0 ? Number(dlg.pageHeightMm) : 20;
-        const src =
-            job.pngDownloadUrl ||
-            job.previewUrl ||
-            (job.generated && (job.generated.pngDownloadUrl || job.generated.previewUrl)) ||
-            '';
-        if (!src) {
-            throw new Error('Нет PNG-изображения шильдика для печати');
+        const url = buildPrintPageUrl(payload || {}, job);
+        if (!url) {
+            throw new Error('Нет страницы печати шильдика');
         }
-        const html =
-            '<!DOCTYPE html>\n' +
-            '<html lang="ru">\n' +
-            '<head>\n' +
-            '<meta charset="utf-8">\n' +
-            '<title>' + String(job.serial || '') + '</title>\n' +
-            '<style>\n' +
-            '  @page { size: ' + wmm + 'mm ' + hmm + 'mm; margin: 0; }\n' +
-            '  * { margin: 0; padding: 0; box-sizing: border-box; }\n' +
-            '  html, body { margin: 0; padding: 0; background: #fff; }\n' +
-            '  img { display: block; width: ' + wmm + 'mm; height: ' + hmm + 'mm; }\n' +
-            '</style>\n' +
-            '</head>\n' +
-            '<body><img src="' + src + '" alt=""></body>\n' +
-            '</html>';
-        const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-        const url = URL.createObjectURL(blob);
-        const w = window.open(url, '_blank', 'width=640,height=480');
+        const w = window.open(url, '_blank', 'width=720,height=360');
         if (!w) {
-            URL.revokeObjectURL(url);
             throw new Error('Браузер заблокировал окно печати — разрешите всплывающие окна для сайта');
         }
-        const done = function () {
-            try {
-                w.close();
-            } catch (_e) {
-                /* ignore */
-            }
-            URL.revokeObjectURL(url);
-        };
-        w.addEventListener('load', function () {
-            try {
-                w.focus();
-                w.print();
-            } catch (_e) {
-                done();
-            }
-        });
-        if (w.onafterprint !== undefined) {
-            w.onafterprint = done;
-        } else {
-            setTimeout(done, 20000);
-        }
-        return { opened: true, widthMm: wmm, heightMm: hmm, src: src };
+        return { opened: true, widthMm: wmm, heightMm: hmm, printPageUrl: url };
     }
 
     async function openPdfPreview(job, payload, serial) {
@@ -660,6 +712,14 @@
     }
 
     async function printNameplate(opts) {
+        if (NAMEPLATE_PRINT_DISABLED) {
+            return {
+                printed: false,
+                skipped: true,
+                disabled: true,
+                userMessage: 'Печать шильда временно отключена',
+            };
+        }
         const o = opts || {};
         const serial = String(o.serial || '').trim();
         if (!/^\d{10}$/.test(serial)) {
@@ -684,9 +744,67 @@
         }
         const job = await fetchPrintJob(payload);
         const pa = config.printAgent || {};
+        const dialogOn = !!(pa.dialog && pa.dialog.enabled === true);
+        const agentOn = pa.enabled === true;
+        const gb = config.gotenberg || {};
+        const gotenbergOn = gb.enabled === true;
+        const pdfUrl = job.pdfPreviewUrl || job.pdfDownloadUrl || '';
+        const directOn = !!(pa.direct && pa.direct.enabled === true);
+
+        if (directOn && (job.engine === 'raster' || job.engine === 'html' || job.engine === 'pdf')) {
+            const directResult = await printDirect(payload);
+            const printer = job.printer || pa.printer || 'TSC TE200';
+            const msg = 'TSPL отправлен на TSC TE200 напрямую (S/N ' + serial + ')';
+            if (typeof window.plog === 'function') {
+                window.plog(msg);
+            }
+            return Object.assign({}, job, {
+                generatedBy: 'print-direct-tspl',
+                filled: true,
+                printed: true,
+                userMessage: msg,
+                direct: directResult,
+            });
+        }
+
+        if (job.engine === 'btw' || job.engine === 'bartender') {
+            const agentResult = await printViaBartenderAgent(job, config);
+            const printer = job.printer || (config.bartender && config.bartender.printer) || 'TSC TE200';
+            const msg = 'Шильд из .btw отправлен в BarTender → ' + printer + ' (S/N ' + serial + ')';
+            if (typeof window.plog === 'function') {
+                window.plog(msg);
+            }
+            return Object.assign({}, job, {
+                generatedBy: 'bartender-btw',
+                filled: true,
+                printed: true,
+                userMessage: msg,
+                agent: agentResult,
+            });
+        }
+
+        if (gotenbergOn && pdfUrl) {
+            const w = window.open(pdfUrl, '_blank');
+            if (!w) {
+                throw new Error('Браузер заблокировал PDF — разрешите всплывающие окна');
+            }
+            const msg = 'Открыт PDF шильдика (Gotenberg) — печать S/N ' + serial;
+            if (typeof window.plog === 'function') {
+                window.plog(msg);
+            }
+            return Object.assign({}, job, {
+                generatedBy: 'gotenberg-pdf',
+                filled: true,
+                printed: false,
+                userMessage: msg,
+            });
+        }
+        if (gotenbergOn && job.gotenbergError && typeof window.plog === 'function') {
+            window.plog('Gotenberg: ' + job.gotenbergError + ' — запасной путь печати');
+        }
 
         const agentEngines = { raster: true, pdf: true, html: true };
-        if (agentEngines[job.engine] && pa.enabled !== false && pa.direct && pa.direct.enabled === true) {
+        if (agentEngines[job.engine] && agentOn && pa.direct && pa.direct.enabled === true) {
             try {
                 const directResult = await printDirect(payload);
                 const printer = job.printer || pa.printer || 'TSC TE200';
@@ -719,39 +837,7 @@
             }
         }
 
-        if (agentEngines[job.engine] && pa.enabled !== false && pa.dialog && pa.dialog.enabled === true) {
-        try {
-            const dlgResult = await printViaSystemDialog(job, config);
-            const printer = job.printer || pa.printer || 'TSC TE200';
-            const msg = 'Открыт системный диалог печати — выберите ' + printer + ' (S/N ' + serial + ')';
-            if (typeof window.plog === 'function') {
-                window.plog(msg);
-            }
-            return Object.assign({}, job, {
-                generatedBy: 'system-dialog',
-                filled: true,
-                printed: false,
-                dialog: dlgResult,
-                userMessage: msg,
-            });
-        } catch (dialogErr) {
-            const errMsg = dialogErr && dialogErr.message ? dialogErr.message : String(dialogErr);
-            if (pa.fallbackPreview !== false) {
-                if (typeof window.plog === 'function') {
-                    window.plog('Диалог печати: ' + errMsg + ' — открываем превью');
-                }
-                const preview = await openPdfPreview(job, payload, serial);
-                return Object.assign({}, preview, {
-                    printed: false,
-                    previewFallback: true,
-                    userMessage: 'Диалог печати недоступен (' + errMsg + ') — открыто превью шильдика (S/N ' + serial + ').',
-                });
-            }
-            throw new Error(errMsg);
-        }
-    }
-
-        if (agentEngines[job.engine] && pa.enabled !== false) {
+        if (agentEngines[job.engine] && agentOn && !dialogOn) {
             try {
                 const agentResult = await printViaPrintAgent(job, config);
                 const printer = job.printer || pa.printer || 'TSC TE200';
@@ -770,7 +856,11 @@
                 const errMsg = agentErr && agentErr.message ? agentErr.message : String(agentErr);
                 // По умолчанию — превью, если агент не запущен (как раньше).
                 // Явно выключить: printAgent.fallbackPreview = false в nameplate-config.
-                if (pa.fallbackPreview !== false) {
+                if (dialogOn) {
+                    if (typeof window.plog === 'function') {
+                        window.plog('Агент печати: ' + errMsg + ' — системный диалог');
+                    }
+                } else if (pa.fallbackPreview !== false) {
                     if (typeof window.plog === 'function') {
                         window.plog('Агент печати: ' + errMsg + ' — открываем превью');
                     }
@@ -783,12 +873,45 @@
                             serial +
                             '). Запустите агент или нажмите «Печать шильдика».',
                     });
+                } else {
+                    throw new Error(errMsg.indexOf('Агент печати') >= 0 ? errMsg : (AGENT_HINT + ' (' + errMsg + ')'));
                 }
-                throw new Error(errMsg.indexOf('Агент печати') >= 0 ? errMsg : (AGENT_HINT + ' (' + errMsg + ')'));
             }
         }
 
-        // Agent disabled: only then open preview
+        if (agentEngines[job.engine] && dialogOn) {
+            try {
+                const dlgResult = await printViaSystemDialog(job, config, payload);
+                const printer = job.printer || pa.printer || 'TSC TE200';
+                const msg = 'Открыт системный диалог печати — выберите ' + printer + ' (S/N ' + serial + ')';
+                if (typeof window.plog === 'function') {
+                    window.plog(msg);
+                }
+                return Object.assign({}, job, {
+                    generatedBy: 'system-dialog',
+                    filled: true,
+                    printed: false,
+                    dialog: dlgResult,
+                    userMessage: msg,
+                });
+            } catch (dialogErr) {
+                const errMsg = dialogErr && dialogErr.message ? dialogErr.message : String(dialogErr);
+                if (pa.fallbackPreview !== false) {
+                    if (typeof window.plog === 'function') {
+                        window.plog('Диалог печати: ' + errMsg + ' — открываем превью');
+                    }
+                    const preview = await openPdfPreview(job, payload, serial);
+                    return Object.assign({}, preview, {
+                        printed: false,
+                        previewFallback: true,
+                        userMessage: 'Диалог печати недоступен (' + errMsg + ') — открыто превью шильдика (S/N ' + serial + ').',
+                    });
+                }
+                throw new Error(errMsg);
+            }
+        }
+
+        // Agent/dialog off: preview
         if (job.engine === 'raster' || job.engine === 'pdf' || (job.engine === 'html' && (job.previewUrl || job.downloadUrl))) {
             return openPdfPreview(job, payload, serial);
         }
@@ -837,6 +960,23 @@
         });
         if (!result || !result.serial) {
             throw new Error('Не удалось выдать S/N корректора');
+        }
+
+        if (result.reused) {
+            const display = $('wbCorrectorSerialDisplay');
+            if (display) {
+                display.value = result.serial;
+            }
+            const val3 = $('val_3');
+            if (val3) {
+                val3.value = result.serial;
+            }
+            window.__wbAssemblyCorrectorSerial = result.serial;
+            return Object.assign({}, result, {
+                printed: false,
+                printResult: null,
+                skippedPrint: true,
+            });
         }
 
         const display = $('wbCorrectorSerialDisplay');

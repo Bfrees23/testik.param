@@ -9,7 +9,7 @@ COPY --from=composer/composer:2 /usr/bin/composer /usr/bin/composer
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git curl zip unzip cron supervisor msmtp msmtp-mta nodejs \
     chromium \
-    fonts-dejavu-core fonts-dejavu-extra \
+    fonts-dejavu-core fonts-dejavu-extra fonts-liberation fonts-liberation-sans-narrow \
     && rm -rf /var/lib/apt/lists/*
 
 # Устанавливаем все расширения, КРОМЕ xdebug

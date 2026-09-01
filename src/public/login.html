@@ -50,7 +50,15 @@
                     err.classList.remove('d-none');
                     return;
                 }
-                window.location.href = '/admin.html';
+                let next = '/admin.html';
+                try {
+                    const sp = new URLSearchParams(window.location.search);
+                    const raw = sp.get('next') || '';
+                    if (raw.startsWith('/') && !raw.startsWith('//')) {
+                        next = raw;
+                    }
+                } catch (_e) {}
+                window.location.href = next;
             } catch (x) {
                 err.textContent = 'Нет связи с сервером. Запущен ли PHP / Docker?';
                 err.classList.remove('d-none');

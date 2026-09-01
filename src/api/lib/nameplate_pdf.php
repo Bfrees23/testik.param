@@ -352,14 +352,24 @@ function nameplate_pdf_font_metrics_canvas(): Imagick
     return $canvas;
 }
 
+function nameplate_pdf_font_ink_above_px(array $metrics, float $fontPx): float
+{
+    $box = $metrics['boundingBox'] ?? null;
+    if (is_array($box) && isset($box['y2']) && (float) $box['y2'] > 1.0) {
+        return (float) $box['y2'];
+    }
+
+    return (float) ($metrics['ascender'] ?? ($fontPx * 0.80));
+}
+
 function nameplate_pdf_font_ascender_px(float $fontPx, string $fontPath, Imagick $canvas): float
 {
     $draw = new ImagickDraw();
     $draw->setFont($fontPath);
     $draw->setFontSize($fontPx);
-    $metrics = $canvas->queryFontMetrics($draw, 'AyАБВ', false);
+    $metrics = $canvas->queryFontMetrics($draw, 'HАБ0123', false);
 
-    return (float) ($metrics['ascender'] ?? ($fontPx * 0.85));
+    return nameplate_pdf_font_ink_above_px($metrics, $fontPx);
 }
 
 /** GOST drawing font height (mm) -> Imagick font size for matching cap height. */
@@ -408,18 +418,64 @@ function nameplate_pdf_y_top_from_baseline_mm(
     return max(0.0, $baselinePx - $asc);
 }
 
-function nameplate_pdf_font_path_for_object(array $obj, string $defaultPath): string
+/** @return list<string> */
+function nameplate_pdf_font_search_dirs(): array
 {
-    if (!empty($obj['mono'])) {
-        $mono = preg_replace('/DejaVuSans\.ttf$/', 'DejaVuSansMono-Bold.ttf', $defaultPath);
-        if (is_string($mono) && is_readable($mono)) {
-            return $mono;
+    return [
+        dirname(__DIR__, 2) . '/data/nameplate-templates/fonts',
+        '/usr/share/fonts/truetype/liberation',
+        '/usr/share/fonts/truetype/liberation2',
+        '/usr/share/fonts/truetype/dejavu',
+        '/usr/share/fonts/dejavu',
+    ];
+}
+
+function nameplate_pdf_font_file_readable(string $filename): ?string
+{
+    foreach (nameplate_pdf_font_search_dirs() as $dir) {
+        $path = $dir . '/' . $filename;
+        if (is_readable($path)) {
+            return $path;
         }
     }
-    if (!empty($obj['bold'])) {
-        $bold = preg_replace('/DejaVuSans\.ttf$/', 'DejaVuSans-Bold.ttf', $defaultPath);
-        if (is_string($bold) && is_readable($bold)) {
-            return $bold;
+
+    return null;
+}
+
+function nameplate_pdf_font_path(): string
+{
+    $found = nameplate_pdf_font_file_readable('LiberationSans-Regular.ttf')
+        ?? nameplate_pdf_font_file_readable('DejaVuSans.ttf');
+    if ($found !== null) {
+        return $found;
+    }
+
+    throw new RuntimeException('Sans font not found for Imagick (Liberation/DejaVu)');
+}
+
+function nameplate_pdf_font_path_for_object(array $obj, string $defaultPath): string
+{
+    $family = strtolower((string) ($obj['fontFamily'] ?? ''));
+    $wantBold = !empty($obj['bold']);
+    $narrow = str_contains($family, 'narrow') || str_contains($family, 'condensed');
+
+    $names = [];
+    if ($narrow) {
+        $names[] = $wantBold ? 'LiberationSansNarrow-Bold.ttf' : 'LiberationSansNarrow-Regular.ttf';
+        if ($wantBold) {
+            $names[] = 'LiberationSansNarrow-Regular.ttf';
+        }
+    }
+    $names[] = $wantBold ? 'LiberationSans-Bold.ttf' : 'LiberationSans-Regular.ttf';
+    if ($wantBold) {
+        $names[] = 'LiberationSans-Regular.ttf';
+    }
+    $names[] = $wantBold ? 'DejaVuSans-Bold.ttf' : 'DejaVuSans.ttf';
+
+    foreach ($names as $name) {
+        $found = nameplate_pdf_font_file_readable($name);
+        if ($found !== null) {
+            return $found;
         }
     }
 
@@ -608,21 +664,6 @@ function nameplate_pdf_trim(string $text, int $maxLen): string
     return mb_substr($text, 0, $maxLen - 1, 'UTF-8') . '…';
 }
 
-function nameplate_pdf_font_path(): string
-{
-    $candidates = [
-        '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
-        '/usr/share/fonts/dejavu/DejaVuSans.ttf',
-    ];
-    foreach ($candidates as $path) {
-        if (is_readable($path)) {
-            return $path;
-        }
-    }
-
-    throw new RuntimeException('DejaVu Sans font not found for Imagick');
-}
-
 function nameplate_pdf_font_size_px(float $fontPt, float $refH = 364.0, float $pageHeightMm = 20.0): float
 {
     if ($pageHeightMm <= 0) {
@@ -769,8 +810,8 @@ function nameplate_pdf_draw_text_at_ink_top(
     }
 
     $metrics = $base->queryFontMetrics($draw, $text, false);
-    $ascender = (float) ($metrics['ascender'] ?? $fontPx * 0.85);
-    $baseline = $y + $ascender;
+    $inkAbove = nameplate_pdf_font_ink_above_px($metrics, $fontPx);
+    $baseline = $y + $inkAbove;
 
     // Fit to object width is handled by caller via smaller fontPt; keep annotate simple.
     if ($align === Imagick::ALIGN_CENTER && $centerX !== null) {
@@ -1010,7 +1051,7 @@ function nameplate_pdf_render_editor_objects(Imagick $im, array $context, array 
 
         // Stroke helps tiny fonts on TE200, but fattens 2+ mm config lines into each other.
         $fontMmObj = isset($obj['fontMm']) ? (float) $obj['fontMm'] : 0.0;
-        $thermalStroke = $fontPx < 40.0 && $fontMmObj > 0.0 && $fontMmObj < 2.0;
+        $thermalStroke = $fontPx < 40.0 && $fontMmObj > 0.0 && $fontMmObj < 1.25;
         $lineH = max(4.0, $fontPx * 1.05);
         $yBase = (float) ($obj['y'] ?? 0);
         foreach ($lines as $idx => $line) {
@@ -1097,8 +1138,16 @@ function nameplate_pdf_write_editor_qr_barcodes(\TCPDF $pdf, array $document, ar
 }
 
 /**
+ * Official BarTender I4 plate with logo+title baked in; variable fields are drawn on top.
+ */
+function nameplate_official_static_plate_path(): string
+{
+    return dirname(__DIR__, 2) . '/data/nameplate-templates/corrector-official-static.png';
+}
+
+/**
  * Render corrector label as Imagick PNG from blank-canvas editorObjects.
- * Falls back to reference drawing ТМР.754463.091 when no override is set.
+ * Corrector: composite onto the official BarTender plate (logo/title), then draw data.
  *
  * @param array<string, string> $context
  */
@@ -1120,10 +1169,37 @@ function nameplate_render_corrector_raster(array $context): string
 
     $refW = max(100, (int) ($fieldsDoc['refW'] ?? 1052));
     $refH = max(100, (int) ($fieldsDoc['refH'] ?? 364));
+    $kind = strtolower(trim((string) ($context['kind'] ?? 'corrector')));
+    $staticPath = nameplate_official_static_plate_path();
+    $useOfficial = ($kind === 'corrector' || $kind === '300') && is_readable($staticPath);
+
     $im = new Imagick();
-    $im->newImage($refW, $refH, new ImagickPixel('#ffffff'));
-    $im->setImageFormat('png');
-    $im->setImageType(Imagick::IMGTYPE_TRUECOLOR);
+    if ($useOfficial) {
+        $im->readImage($staticPath);
+        $im->setImageBackgroundColor('#ffffff');
+        if ($im->getImageWidth() !== $refW || $im->getImageHeight() !== $refH) {
+            $im->resizeImage($refW, $refH, Imagick::FILTER_LANCZOS, 1, false);
+        }
+        $im->setImageFormat('png');
+        $im->setImageType(Imagick::IMGTYPE_TRUECOLOR);
+        $skip = ['logo' => true, 'productTitleShort' => true];
+        $kept = [];
+        foreach ((array) ($fieldsDoc['editorObjects'] ?? []) as $obj) {
+            if (!is_array($obj)) {
+                continue;
+            }
+            $id = (string) ($obj['id'] ?? '');
+            if (isset($skip[$id])) {
+                continue;
+            }
+            $kept[] = $obj;
+        }
+        $fieldsDoc['editorObjects'] = $kept;
+    } else {
+        $im->newImage($refW, $refH, new ImagickPixel('#ffffff'));
+        $im->setImageFormat('png');
+        $im->setImageType(Imagick::IMGTYPE_TRUECOLOR);
+    }
 
     if (is_array($fieldsDoc['editorObjects'] ?? null) && $fieldsDoc['editorObjects'] !== []) {
         nameplate_pdf_render_editor_objects($im, $context, $fieldsDoc);

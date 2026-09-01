@@ -74,7 +74,7 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 try {
     require_once __DIR__ . '/bench_context.php';
     try {
-        bench_require_operator_session();
+        bench_require_operator_or_admin();
     } catch (RuntimeException $e) {
         http_response_code(403);
         echo json_encode(['success' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);

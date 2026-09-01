@@ -29,7 +29,7 @@
                 62: '1',
                 63: '1',
                 64: null,
-                // п.66 (запомнить ЧЭ) — не авто; только вручную при необходимости
+                66: '1',
                 10: null,
                 11: null,
                 18: null,
@@ -41,6 +41,7 @@
                 62: '1',
                 63: '1',
                 64: null,
+                66: '1',
                 10: null,
                 11: null,
                 18: null,
@@ -671,7 +672,43 @@
                     applied += 1;
                 }
             });
-            if (statusEl) statusEl.textContent = 'Применено параметров: ' + applied + '.';
+            if (statusEl) {
+                statusEl.textContent = '✓ Применено параметров: ' + applied + '.';
+                statusEl.className = 'small text-success me-auto mb-0';
+            }
+            const Ops = window.TM07_WORKBENCH_OPS;
+            if (Ops && typeof Ops.markSensorScanned === 'function') {
+                [
+                    { key: 'DA', sid: 57 },
+                    { key: 'DT', sid: 61 },
+                    { key: 'DD', sid: 64 },
+                    { key: 'TT', sid: 68 },
+                ].forEach(function (row) {
+                    const v = document.getElementById('val_' + row.sid);
+                    const sn = v ? String(v.value || '').trim() : '';
+                    if (sn) {
+                        Ops.markSensorScanned(row.key, sn);
+                    }
+                });
+            }
+            if (Ops && typeof Ops.paintSensorBadges === 'function') {
+                Ops.paintSensorBadges();
+            }
+            if (Ops && typeof Ops.paintWorkflowSteps === 'function') {
+                Ops.paintWorkflowSteps();
+            }
+            const qrSt = document.getElementById('paramQrStatus');
+            if (qrSt) {
+                qrSt.textContent = '✓ Ручной ввод датчиков применён (' + applied + ')';
+                qrSt.className = 'small text-success mt-2 mb-0';
+            }
+            const modalEl = document.getElementById('sensorParamsModal');
+            if (modalEl && window.bootstrap) {
+                const inst = window.bootstrap.Modal.getInstance(modalEl);
+                if (inst) {
+                    inst.hide();
+                }
+            }
         });
     }
 
@@ -684,13 +721,23 @@
         function runApply() {
             const r = applyTelemetryBarcodeToInputs(inp.value);
             if (!r.ok) {
-                if (statusEl) statusEl.textContent = '✗ ' + (r.error || 'Ошибка');
+                if (statusEl) {
+                    statusEl.textContent = '✗ ' + (r.error || 'Ошибка');
+                    statusEl.className = 'small mt-2 mb-0 text-danger';
+                }
                 inp.select();
                 return;
             }
-            if (statusEl) statusEl.textContent = '✓ п.228 ← ' + r.serial;
+            if (statusEl) {
+                statusEl.textContent = '✓ п.228 ← ' + r.serial;
+                statusEl.className = 'small mt-2 mb-0 text-success';
+            }
             inp.value = '';
-            inp.focus();
+            try {
+                inp.focus({ preventScroll: true });
+            } catch (_e) {
+                inp.focus();
+            }
         }
         document.getElementById('paramTelemetryApply')?.addEventListener('click', runApply);
         inp.addEventListener('keydown', function (e) {
@@ -738,13 +785,21 @@
             if (Ops && typeof Ops.paintWorkflowSteps === 'function') {
                 Ops.paintWorkflowSteps();
             }
-            inp.focus();
+            try {
+                inp.focus({ preventScroll: true });
+            } catch (_e) {
+                inp.focus();
+            }
         }
         document.getElementById('paramQrApply')?.addEventListener('click', runApply);
         document.getElementById('paramQrClear')?.addEventListener('click', function () {
             inp.value = '';
             setQrStatus('', false);
-            inp.focus();
+            try {
+                inp.focus({ preventScroll: true });
+            } catch (_e) {
+                inp.focus();
+            }
         });
         inp.addEventListener('keydown', function (e) {
             if (e.key === 'Enter') {
@@ -752,9 +807,7 @@
                 runApply();
             }
         });
-        if (document.body.classList.contains('wb-page')) {
-            inp.focus();
-        }
+        // Не фокусируем QR при загрузке страницы — иначе браузер прокручивает вниз.
     }
 
     window.TM07_MIDA_QR = {

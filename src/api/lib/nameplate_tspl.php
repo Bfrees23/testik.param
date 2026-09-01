@@ -565,8 +565,14 @@ function nameplate_tspl_send_direct(string $bytes, array $config): array
     }
 
     if ($mode === 'tcp') {
-        $host = trim((string) ($direct['host'] ?? ''));
-        $port = (int) ($direct['port'] ?? 9100);
+        $host = trim((string) (getenv('TM07_TSC_HOST') ?: ''));
+        if ($host === '') {
+            $host = trim((string) ($direct['host'] ?? ''));
+        }
+        $port = (int) (getenv('TM07_TSC_PORT') ?: 0);
+        if ($port <= 0) {
+            $port = (int) ($direct['port'] ?? 9100);
+        }
         if ($host === '') {
             return ['ok' => false, 'mode' => $mode, 'error' => 'Не задан printAgent.direct.host'];
         }

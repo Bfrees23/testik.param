@@ -33,32 +33,30 @@ function nameplate_reference_btw_layout_objects(): array
     $x = static fn (float $mm): float => round($mm * 1052.0 / 58.0, 1);
     $y = static fn (float $mm): float => round($mm * 364.0 / 20.0, 1);
 
-    // 58×20 with ~4.5 mm top margin (+2 mm vs previous).
-    // Do NOT use large yOffsetMm — it squashes the bitmap and causes overlap.
-    // Text column stops before QR (x≈43); keep ~1 mm gutter.
-    $textLeft = $x(2.0);
-    $textW = $x(37.0);
+    // Pixel-measured from «Корректор шильд произв с qr И4.pdf» as 58×20 mm.
+    $textLeft = $x(2.80);
+    $textW = $x(38.4);
 
-    $qrSizeMm = 13.0;
+    $qrSizeMm = 15.15;
     $qrSize = $x($qrSizeMm);
-    $qrX = $x(43.0); // 58 − 2 − 13
-    $qrY = $y(4.8);
+    $qrX = $x(42.30);
+    $qrY = $y(0.35);
 
-    // Logo (trim + fill height). Slightly shorter so +2 mm shift still fits.
-    $logoY = 4.5;
-    $logoH = 3.5;
-    $logoW = 26.0;
+    $logoY = 0.80;
+    $logoH = 4.72;
+    $logoW = 18.2;
 
-    // Title must end above specs: titleY + titleMm + gap ≤ specStart.
-    $titleY = 8.2;
-    $titleMm = 2.5;
+    $titleY = 6.59;
+    $titleMm = 2.20;
 
-    $specMm = 1.55;
-    $specStart = 11.4; // ≥ 8.2 + 2.5 + 0.7
-    $specPitch = 2.25;
+    $specMm = 1.52;
+    $specStart = 10.48;
+    $specPitch = 2.05;
 
-    $bottomMm = 2.15;
-    $bottomY = 17.7;
+    $bottomMm = 1.64;
+    $bottomY = 17.04;
+    $serialMm = 2.03;
+    $serialY = 16.35;
 
     return [
         [
@@ -86,7 +84,7 @@ function nameplate_reference_btw_layout_objects(): array
             'label' => 'Название изделия',
             'dataField' => 'productTitleShort',
             'bartenderField' => 'ProductTitleShort',
-            'fontFamily' => 'DejaVu Sans',
+            'fontFamily' => 'Liberation Sans',
             'bold' => true,
             'italic' => false,
             'visible' => true,
@@ -106,8 +104,8 @@ function nameplate_reference_btw_layout_objects(): array
             'label' => 'Строка конфигурации 1',
             'dataField' => 'specLine1',
             'bartenderField' => 'SpecLine1',
-            'fontFamily' => 'DejaVu Sans',
-            'bold' => true,
+            'fontFamily' => 'Liberation Sans Narrow',
+            'bold' => false,
             'x' => $textLeft,
             'y' => $y($specStart),
             'w' => $textW,
@@ -123,8 +121,8 @@ function nameplate_reference_btw_layout_objects(): array
             'label' => 'Строка конфигурации 2',
             'dataField' => 'specLine2',
             'bartenderField' => 'SpecLine2',
-            'fontFamily' => 'DejaVu Sans',
-            'bold' => true,
+            'fontFamily' => 'Liberation Sans Narrow',
+            'bold' => false,
             'x' => $textLeft,
             'y' => $y($specStart + $specPitch),
             'w' => $textW,
@@ -140,8 +138,8 @@ function nameplate_reference_btw_layout_objects(): array
             'label' => 'Строка конфигурации 3',
             'dataField' => 'specLine3',
             'bartenderField' => 'SpecLine3',
-            'fontFamily' => 'DejaVu Sans',
-            'bold' => true,
+            'fontFamily' => 'Liberation Sans Narrow',
+            'bold' => false,
             'x' => $textLeft,
             'y' => $y($specStart + (2.0 * $specPitch)),
             'w' => $textW,
@@ -157,7 +155,7 @@ function nameplate_reference_btw_layout_objects(): array
             'label' => 'Выпуск',
             'dataField' => 'releaseLabel',
             'bartenderField' => 'ReleaseLabel',
-            'fontFamily' => 'DejaVu Sans',
+            'fontFamily' => 'Liberation Sans',
             'bold' => true,
             'x' => $textLeft,
             'y' => $y($bottomY),
@@ -173,15 +171,14 @@ function nameplate_reference_btw_layout_objects(): array
             'label' => 'Серийный номер',
             'dataField' => 'serial',
             'bartenderField' => 'Serial',
-            'fontFamily' => 'DejaVu Sans Mono',
+            'fontFamily' => 'Liberation Sans',
             'bold' => true,
             'centerX' => $qrX + ($qrSize / 2.0),
-            'y' => $y($bottomY),
-            'w' => $x(16.0),
-            'fontMm' => $bottomMm,
-            'fontPt' => round($bottomMm / 0.352778, 1),
+            'y' => $y($serialY),
+            'w' => $x($qrSizeMm + 1.0),
+            'fontMm' => $serialMm,
+            'fontPt' => round($serialMm / 0.352778, 1),
             'align' => 'center',
-            'mono' => true,
             'zIndex' => 60,
         ],
         [
@@ -191,7 +188,7 @@ function nameplate_reference_btw_layout_objects(): array
             'label' => 'QR',
             'dataField' => 'serial',
             'bartenderField' => 'Serial',
-            'fontFamily' => 'DejaVu Sans',
+            'fontFamily' => 'Liberation Sans',
             'bold' => false,
             'x' => $qrX,
             'y' => $qrY,

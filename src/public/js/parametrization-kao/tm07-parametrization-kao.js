@@ -19,21 +19,206 @@
     const el = (id) => document.getElementById(id);
     const LOG_PREFIX = '[TM07-param]';
 
-    /** Статус справа от Прочитать/Записать: ok → зелёный, err → красный. */
+    const READ_DATETIME_TOLERANCE_SEC = 120;
+
+    function expectedInputForOut(out) {
+        if (!out || !out.id) {
+            return null;
+        }
+        if (out.id.indexOf('out_final_') === 0) {
+            return el('val_final_' + out.id.slice('out_final_'.length));
+        }
+        if (out.id.indexOf('out_') === 0) {
+            return el('val_' + out.id.slice(4));
+        }
+        return null;
+    }
+
+    function stepIdFromOut(out) {
+        if (!out || !out.id) {
+            return '';
+        }
+        return String(out.id.replace(/^out_(final_)?/, ''));
+    }
+
+    function normalizeReadCompareValue(val) {
+        const s = String(val ?? '')
+            .trim()
+            .replace(/\s+/g, ' ');
+        if (!s) {
+            return '';
+        }
+        if (/^0x[0-9a-f]+$/i.test(s)) {
+            return String(parseInt(s, 16));
+        }
+        const n = Number(s.replace(',', '.'));
+        if (Number.isFinite(n) && /^-?\d+([.,]\d+)?$/.test(s.replace(/\s/g, ''))) {
+            return String(Number(n.toFixed(4)));
+        }
+        return s.toLowerCase();
+    }
+
+    function parseReadUnixSeconds(val) {
+        // parseDatetimeInputToUnix объявлен ниже (function declaration — hoisted).
+        if (typeof parseDatetimeInputToUnix === 'function') {
+            return parseDatetimeInputToUnix(val);
+        }
+        const s = String(val ?? '').trim();
+        if (!s) {
+            return null;
+        }
+        if (/^\d{9,12}$/.test(s)) {
+            const n = Number(s);
+            return Number.isFinite(n) ? n : null;
+        }
+        const m = /\(unix\s+(\d+)\)/i.exec(s);
+        if (m) {
+            const n = Number(m[1]);
+            return Number.isFinite(n) ? n : null;
+        }
+        const t = Date.parse(s);
+        if (Number.isFinite(t)) {
+            return Math.floor(t / 1000);
+        }
+        return null;
+    }
+
+    function readValueMatchesExpected(stepId, expected, actual) {
+        if (String(stepId) === '20') {
+            const a = parseReadUnixSeconds(expected);
+            const b = parseReadUnixSeconds(actual);
+            if (a != null && b != null) {
+                return Math.abs(a - b) <= READ_DATETIME_TOLERANCE_SEC;
+            }
+            // Живые часы: если в приборе валидное время — не считаем «расхождением с заказом».
+            return b != null;
+        }
+        if (window.TM07_WORKBENCH && typeof window.TM07_WORKBENCH.valuesMatchForVerify === 'function') {
+            return window.TM07_WORKBENCH.valuesMatchForVerify(stepId, expected, actual);
+        }
+        return normalizeReadCompareValue(expected) === normalizeReadCompareValue(actual);
+    }
+
+    function clearReadComparePaint(out) {
+        if (!out) {
+            return;
+        }
+        out.classList.remove('param-read-mismatch-val');
+        out.removeAttribute('title');
+        const row = out.closest('tr');
+        if (row) {
+            row.classList.remove('param-read-mismatch', 'param-read-match');
+        }
+    }
+
+    /** После опроса: совпало с полем «Значение» (заказ) — зелёный; расхождение — красный. */
+    function applyReadComparePaint(out, actualText) {
+        if (!out) {
+            return;
+        }
+        clearReadComparePaint(out);
+        const actual = String(actualText == null ? out.textContent : actualText).trim();
+        if (!actual || actual === '—' || actual === '…' || actual === 'ошибка' || actual === '✓') {
+            return;
+        }
+        const sid = stepIdFromOut(out);
+        const step = sid != null ? findStep(sid) : null;
+        // п.59/66: в поле команда «1», справа — запомненный S/N ЧЭ; сравнивать с полем нельзя.
+        if (isSensorMemoryCmd(step)) {
+            return;
+        }
+        // Маски staging в основной таблице: реальные И1…И4 пишутся в финале.
+        if (step && step.paramMask) {
+            return;
+        }
+        // п.20 — часы прибора «сейчас»; поле заказа устаревает за время опроса → не красим в красный.
+        if (step && (step.type === 't' || String(sid) === '20')) {
+            const unix = parseReadUnixSeconds(actual);
+            const row = out.closest('tr');
+            const inp = expectedInputForOut(out);
+            if (unix != null && inp) {
+                const human = typeof formatUnixMoscow === 'function' ? formatUnixMoscow(unix) : '';
+                if (human) {
+                    inp.value = human;
+                    if (typeof updateDatetimeHint === 'function') {
+                        updateDatetimeHint(sid);
+                    }
+                }
+            }
+            out.classList.remove('text-success', 'text-danger', 'text-body-secondary', 'text-warning');
+            out.classList.add('text-success');
+            if (row) {
+                row.classList.add('param-read-match');
+                row.classList.remove('param-read-mismatch');
+            }
+            return;
+        }
+        const inp = expectedInputForOut(out);
+        const expected = inp ? String(inp.value || '').trim() : '';
+        if (!expected) {
+            return;
+        }
+        const row = out.closest('tr');
+        const ok = readValueMatchesExpected(sid, expected, actual);
+        out.classList.remove('text-success', 'text-danger', 'text-body-secondary', 'text-warning');
+        if (ok) {
+            out.classList.add('text-success');
+            if (row) {
+                row.classList.add('param-read-match');
+            }
+            return;
+        }
+        out.classList.add('text-danger', 'param-read-mismatch-val');
+        out.title = 'Заказ: ' + expected + ' · в корректоре: ' + actual;
+        if (row) {
+            row.classList.add('param-read-mismatch');
+        }
+    }
+
+    /** Статус справа от Прочитать/Записать: ok → зелёный, err → красный; расхождение с заказом → красный. */
     function setOutStatus(out, text, status) {
         if (!out) {
             return;
         }
         out.textContent = text == null ? '' : String(text);
         out.classList.remove('text-success', 'text-danger', 'text-body-secondary', 'text-warning');
+        clearReadComparePaint(out);
         if (status === 'ok') {
             out.classList.add('text-success');
+            const isCheck = !text || String(text).toLowerCase() === 'ok';
+            if (isCheck) {
+                out.textContent = '✓';
+                const row = out.closest('tr');
+                if (row) {
+                    row.classList.add('param-write-ok');
+                    if (row.getAttribute('data-step-id') === '228') {
+                        row.classList.add('param-write-ok-228');
+                    }
+                    if (row.closest('#paramFinalTbody')) {
+                        row.classList.add('param-write-ok-final');
+                    }
+                }
+            } else {
+                applyReadComparePaint(out, text);
+            }
         } else if (status === 'err') {
             out.classList.add('text-danger');
+            const row = out.closest('tr');
+            if (row) {
+                row.classList.remove('param-write-ok', 'param-write-ok-228', 'param-write-ok-final');
+            }
         } else if (status === 'pending') {
             out.classList.add('text-warning');
+            const row = out.closest('tr');
+            if (row) {
+                row.classList.remove('param-write-ok', 'param-write-ok-228', 'param-write-ok-final');
+            }
         } else {
             out.classList.add('text-body-secondary');
+            const row = out.closest('tr');
+            if (row) {
+                row.classList.remove('param-write-ok', 'param-write-ok-228', 'param-write-ok-final');
+            }
         }
     }
 
@@ -56,10 +241,156 @@
     /** Карты, совместимые с текущими таблицами UI / REG_LKG 0x07B6. */
     const ALLOWED_DEVICE_MAP_VERSIONS = [49, 50];
 
-    /** Прибор хранит «московское» unix (+3 ч к UTC ПК). */
-    const DEVICE_TIME_UTC_OFFSET_SEC = 3 * 3600;
+    /**
+     * П.20 / 0x008C: прошивка ТМ-07 хранит «стену» как unix без часового пояса
+     * (gmtime(Д/М/Ч) = то, что на дисплее). Для Москвы пишем 17:xx как UTC-компоненты 17:xx,
+     * а не настоящий UTC 14:xx — иначе на приборе будет 14 при реальных 17.
+     * AutoPass (0x06A7) тоже берёт UTC-компоненты этого unix.
+     */
+    const DEVICE_TIME_TZ = 'Europe/Moscow';
+
+    /** Текущая московская стена → unix «как на дисплее прибора» (naive UTC). */
     function nowUnixForDevice() {
-        return Math.floor(Date.now() / 1000) + DEVICE_TIME_UTC_OFFSET_SEC;
+        const p = moscowWallPartsNow();
+        return Math.floor(Date.UTC(p.y, p.m - 1, p.d, p.h, p.mi, p.s) / 1000);
+    }
+
+    function pad2(n) {
+        return String(n).padStart(2, '0');
+    }
+
+    /** Московская стена «сейчас» (для записи в прибор). */
+    function moscowWallPartsNow() {
+        const fmt = new Intl.DateTimeFormat('en-GB', {
+            timeZone: DEVICE_TIME_TZ,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hourCycle: 'h23',
+        });
+        const map = {};
+        fmt.formatToParts(new Date()).forEach(function (p) {
+            if (p.type !== 'literal') {
+                map[p.type] = p.value;
+            }
+        });
+        return {
+            y: parseInt(map.year, 10),
+            m: parseInt(map.month, 10),
+            d: parseInt(map.day, 10),
+            h: parseInt(map.hour, 10),
+            mi: parseInt(map.minute, 10),
+            s: parseInt(map.second, 10),
+        };
+    }
+
+    /**
+     * Д/М/ЧЧ из unix 0x008C так, как их видит прошивка (UTC-компоненты = дисплей).
+     * @returns {{ y:number, m:number, d:number, h:number, mi:number, s:number }|null}
+     */
+    function deviceWallPartsFromUnix(unixSec) {
+        const n = Number(unixSec);
+        if (!Number.isFinite(n) || n <= 0) {
+            return null;
+        }
+        const dt = new Date(n * 1000);
+        if (Number.isNaN(dt.getTime())) {
+            return null;
+        }
+        return {
+            y: dt.getUTCFullYear(),
+            m: dt.getUTCMonth() + 1,
+            d: dt.getUTCDate(),
+            h: dt.getUTCHours(),
+            mi: dt.getUTCMinutes(),
+            s: dt.getUTCSeconds(),
+        };
+    }
+
+    /** Человекочитаемо: то же время, что на дисплее корректора. */
+    function formatUnixMoscow(unixSec) {
+        const p = deviceWallPartsFromUnix(unixSec);
+        if (!p) {
+            return '';
+        }
+        return (
+            pad2(p.d) +
+            '.' +
+            pad2(p.m) +
+            '.' +
+            p.y +
+            ', ' +
+            pad2(p.h) +
+            ':' +
+            pad2(p.mi) +
+            ':' +
+            pad2(p.s)
+        );
+    }
+
+    /**
+     * Ввод ДД.ММ.ГГГГ[, ]ЧЧ:ММ[:СС] = стена на приборе → naive unix (Date.UTC).
+     * Не сдвигать на −3 ч: прошивка не знает Europe/Moscow.
+     */
+    function parseDatetimeInputToUnix(val) {
+        if (val instanceof Date && !Number.isNaN(val.getTime())) {
+            // Date из браузера — взять московскую стену этого момента.
+            const fmt = new Intl.DateTimeFormat('en-GB', {
+                timeZone: DEVICE_TIME_TZ,
+                year: 'numeric',
+                month: '2-digit',
+                day: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hourCycle: 'h23',
+            });
+            const map = {};
+            fmt.formatToParts(val).forEach(function (p) {
+                if (p.type !== 'literal') {
+                    map[p.type] = p.value;
+                }
+            });
+            return Math.floor(
+                Date.UTC(
+                    parseInt(map.year, 10),
+                    parseInt(map.month, 10) - 1,
+                    parseInt(map.day, 10),
+                    parseInt(map.hour, 10),
+                    parseInt(map.minute, 10),
+                    parseInt(map.second, 10)
+                ) / 1000
+            );
+        }
+        const s = String(val ?? '').trim();
+        if (!s) {
+            return null;
+        }
+        const mUnix = /\(unix\s+(\d+)\)/i.exec(s);
+        if (mUnix) {
+            return parseInt(mUnix[1], 10);
+        }
+        if (/^\d{9,12}$/.test(s)) {
+            return parseInt(s, 10);
+        }
+        const m = /^(\d{2})\.(\d{2})\.(\d{4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/.exec(s);
+        if (m) {
+            const dd = parseInt(m[1], 10);
+            const mm = parseInt(m[2], 10);
+            const yyyy = parseInt(m[3], 10);
+            const hh = m[4] != null ? parseInt(m[4], 10) : 0;
+            const mi = m[5] != null ? parseInt(m[5], 10) : 0;
+            const ss = m[6] != null ? parseInt(m[6], 10) : 0;
+            return Math.floor(Date.UTC(yyyy, mm - 1, dd, hh, mi, ss) / 1000);
+        }
+        const t = Date.parse(s);
+        if (Number.isFinite(t)) {
+            return parseDatetimeInputToUnix(new Date(t));
+        }
+        return null;
     }
 
     const REG_STATUS_LOCK = 0x0028;
@@ -166,7 +497,11 @@
 
     function isStepWriteMarkedOk(stepId) {
         const out = el('out_' + stepId);
-        return !!(out && String(out.textContent || '').trim().toLowerCase() === 'ok');
+        if (!out) {
+            return false;
+        }
+        const t = String(out.textContent || '').trim().toLowerCase();
+        return t === 'ok' || t === '✓' || t === '✔' || out.classList.contains('text-success');
     }
 
     function u32leBytes(n) {
@@ -544,7 +879,11 @@
         lkgSession.busy = true;
         try {
             const allowManufacturer = !!(opts && opts.allowManufacturer);
-            ensureLkgConfigReady({ allowManufacturer: allowManufacturer });
+            const saveOverride = opts && opts.saveLkg != null ? opts.saveLkg : null;
+            const accessOverride = opts && opts.accessKey ? opts.accessKey : null;
+            if (saveOverride == null && !accessOverride) {
+                ensureLkgConfigReady({ allowManufacturer: allowManufacturer });
+            }
             const force = !!(opts && opts.force);
             const sn = await readCurrentCorrectorSerialForLkg();
             const now = await readDeviceDateForLkg();
@@ -560,7 +899,7 @@
                 return lkgSession;
             }
 
-            let saveLkg = resolveSaveLkgForInit();
+            let saveLkg = saveOverride != null ? BigInt(saveOverride) : resolveSaveLkgForInit();
             let crypt = K.computeCryptLkg(saveLkg, sn, now);
             if (!crypt) {
                 saveLkg = (saveLkg + 1n) & 0xffffffffffffffffn;
@@ -571,7 +910,7 @@
                 throw new Error('CryptLkg=0 — прошивка отклонит INIT 0x07B8');
             }
 
-            const accessKey = lkgConfig.supplierKey || lkgConfig.manufacturerKey;
+            const accessKey = accessOverride || lkgConfig.supplierKey || lkgConfig.manufacturerKey;
             const reg = parseLkgReg();
             const initReg = lkgConfig.initReg & 0xffff;
             const dly = lkgConfig.delayMs;
@@ -801,19 +1140,21 @@
         log('AutoPass: открытие замка производителя через КАО (' + formatHoldingAddr(mfgReg) + ')…');
         try {
             const opened = await dev.openManufacturerLock(4000);
-            const pad2 = (n) => String(n).padStart(2, '0');
-            const d = opened.date;
             const stamp =
-                pad2(d.getUTCDate()) +
-                '.' +
-                pad2(d.getUTCMonth() + 1) +
-                ' ' +
-                pad2(d.getUTCHours()) +
-                ':xx (unix ' +
+                formatUnixMoscow(opened.unix).replace(', ', ' ').replace(/:\d{2}$/, ':xx') +
+                ' (unix ' +
                 opened.unix +
                 ')';
-            clog('AutoPass TX', formatHoldingAddr(mfgReg), 'dt', stamp, 'pwd', bytesToHex(opened.bytes));
-            log('AutoPass: пароль по дате/времени прибора ' + stamp + ', кадр ' + bytesToHex(opened.bytes));
+            const mode = opened.mode || 'utc';
+            clog('AutoPass TX', formatHoldingAddr(mfgReg), 'dt', stamp, 'pwdMode', mode, 'pwd', bytesToHex(opened.bytes));
+            log(
+                'AutoPass: пароль по дате/времени прибора ' +
+                    stamp +
+                    ' [' +
+                    mode +
+                    '], кадр ' +
+                    bytesToHex(opened.bytes)
+            );
             await new Promise((r) => setTimeout(r, 200));
             lock = await refreshLockStatus();
             if (isMfgOptLockOpen()) {
@@ -916,20 +1257,6 @@
         const html = lockPreflightHtml(lock.raw);
         log(html);
         clog('lock block', lockRawHex(lock.raw), describeLockStatus(lock.raw));
-        if (o.allowConfirmOverride) {
-            const force = window.confirm(
-                'Замки ' +
-                    lockRawHex(lock.raw) +
-                    ', для записи нужен замок производителя.\n\n' +
-                    describeLockStatus(lock.raw) +
-                    '\n\nAutoPass через КАО не открыл доступ. Проверьте SA2 и пароль замка.\n\nВсё равно продолжить запись? (не рекомендуется)'
-            );
-            if (force) {
-                clog('lock force override', lockRawHex(lock.raw));
-                log('<strong>Продолжение записи вопреки замкам</strong> — возможны ошибки 0x0B.');
-                return { ok: true, lock, forced: true };
-            }
-        }
         return { ok: false, lock };
     }
 
@@ -1010,9 +1337,12 @@
     const DEFAULT_SETTINGS_CMD3_VALUE = 3;
     /** CorrReader: ответ на 0x06B4 ~1,5–2 с. */
     const DEFAULT_SETTINGS_TIMEOUT_MS = 8000;
+    /** Команда 3 (Flash): эха 0x10 может не быть, повтор опасен. */
+    const DEFAULT_SETTINGS_CMD3_TIMEOUT_MS = 25000;
     const DEFAULT_SETTINGS_POST_DELAY_MS = 1500;
+    const DEFAULT_SETTINGS_CMD3_POST_DELAY_MS = 4000;
 
-    /** Сброс в начале (п.2) — только вручную / отдельной кнопкой. */
+    /** Сброс в начале (п.2) — входит в автопакет «Параметризировать» первым по порядку. */
     function isBootstrapDefaultSettings(step) {
         return step && step.id === 2;
     }
@@ -1108,6 +1438,30 @@
         }
     }
 
+    async function waitForDeviceAfterSettingsFlash(maxMs) {
+        const deadline = Date.now() + (maxMs || 20000);
+        await new Promise((r) => setTimeout(r, 1500));
+        let lastErr = null;
+        while (Date.now() < deadline) {
+            try {
+                await recoverAfterCommError();
+                const passport = await probeModbusLink(3500);
+                if (passport) {
+                    window.__paramDevicePassport = passport;
+                    log('Связь после DEFAULT_SETTINGS (команда 3) восстановлена.');
+                    return passport;
+                }
+            } catch (e) {
+                lastErr = e;
+            }
+            await new Promise((r) => setTimeout(r, 700));
+        }
+        throw new Error(
+            'DEFAULT_SETTINGS (команда 3): прибор не ответил после сохранения во Flash' +
+                (lastErr && lastErr.message ? ' (' + lastErr.message + ')' : '')
+        );
+    }
+
     async function doWriteDefaultSettingsCmd(step, options) {
         const s = step || findStep(2);
         if (!s || !s.reg) {
@@ -1153,7 +1507,9 @@
             const val = cmdVal;
             const title = s.title || 'DEFAULT_SETTINGS';
             const dataBytes = defaultSettingsPayloadBytes(val);
-            const timeoutMs = DEFAULT_SETTINGS_TIMEOUT_MS;
+            const isCmd3 = cmdVal === DEFAULT_SETTINGS_CMD3_VALUE;
+            const timeoutMs = isCmd3 ? DEFAULT_SETTINGS_CMD3_TIMEOUT_MS : DEFAULT_SETTINGS_TIMEOUT_MS;
+            const writeRetries = isCmd3 ? 0 : 1;
 
             log(`<<< - Send data. [${formatHoldingAddr(r)}](${title})`);
             log(`Запись значения: ${val}`);
@@ -1167,10 +1523,21 @@
             );
 
             let resp;
+            let noEcho = false;
             try {
-                resp = await dev.writeMultiple(r, dataBytes, timeoutMs);
+                resp = await dev.writeMultiple(r, dataBytes, timeoutMs, writeRetries);
             } catch (e) {
-                if (isModbusWriteAccessError(e.message) || isLkgValueError(e.message)) {
+                if (isCmd3 && /нет ответа|timeout|время/i.test(String(e.message || e))) {
+                    noEcho = true;
+                    log(
+                        '[' +
+                            s.id +
+                            '] DEFAULT_SETTINGS (команда 3): нет эха 0x10 — прибор сохраняет настройки во Flash. Ждём связь…'
+                    );
+                    clog('WRITE', 'п.' + s.id, 'DEFAULT_SETTINGS cmd3 no echo — wait device');
+                    await recoverAfterCommError();
+                    await waitForDeviceAfterSettingsFlash();
+                } else if (isModbusWriteAccessError(e.message) || isLkgValueError(e.message)) {
                     await refreshLockStatus();
                     if (defaultSettingsLockReady(window.__paramLockStatus || lock)) {
                         log('DEFAULT_SETTINGS: повтор после обновления ЛКГ-сессии…');
@@ -1196,10 +1563,13 @@
                     throw e;
                 }
             }
-            assertDefaultSettingsWriteResponse(resp, r);
-
-            log(`>>> - Received data. [${formatHoldingAddr(r)}](${title})`);
-            log(`Записано значение: ${val}`);
+            if (!noEcho) {
+                assertDefaultSettingsWriteResponse(resp, r);
+                log(`>>> - Received data. [${formatHoldingAddr(r)}](${title})`);
+                log(`Записано значение: ${val}`);
+            } else {
+                log(`Записано значение: ${val} (эхо не пришло — Flash)`);
+            }
 
             const vin = el(stepInputId(s));
             if (vin) {
@@ -1210,11 +1580,12 @@
                 setOutStatus(out, 'ok', 'ok');
             }
 
-            if (DEFAULT_SETTINGS_POST_DELAY_MS > 0) {
-                await new Promise((resolve) => setTimeout(resolve, DEFAULT_SETTINGS_POST_DELAY_MS));
+            const postMs = isCmd3 ? DEFAULT_SETTINGS_CMD3_POST_DELAY_MS : DEFAULT_SETTINGS_POST_DELAY_MS;
+            if (postMs > 0) {
+                await new Promise((resolve) => setTimeout(resolve, postMs));
             }
 
-            clog('WRITE ←', 'п.' + s.id, 'DEFAULT_SETTINGS ok', formatFrameForLog(resp));
+            clog('WRITE ←', 'п.' + s.id, 'DEFAULT_SETTINGS ok', noEcho ? 'no echo' : formatFrameForLog(resp));
             if (cmdVal === DEFAULT_SETTINGS_CMD_VALUE) {
                 window.__tm07DefaultSettingsApplied = true;
                 // После сброса CryptLkg/S/N могут смениться.
@@ -1231,9 +1602,10 @@
         }
     }
     function batchWriteSkipReason(step) {
-        // п.2 (сброс) — только вручную; финальная команда 3 пишется в автопакете.
-        if (isBootstrapDefaultSettings(step)) {
-            return 'команда DEFAULT_SETTINGS (0x06B4) — вручную, не в автопакете PRM';
+        // п.2 DEFAULT_SETTINGS пишется в автопакете (см. isDefaultSettingsCmd в runWriteAllSteps).
+        // После прошивки — не сбрасываем настройки повторно.
+        if (isBootstrapDefaultSettings(step) && window.__tm07SkipDefaultSettingsAfterFlash) {
+            return 'DEFAULT_SETTINGS после прошивки не выполняем';
         }
         if (isSensorMemoryCmd(step) && !shouldWriteSensorMemoryCmd(step)) {
             return 'sensor memory cmd (нет S/N датчика / QR)';
@@ -1268,16 +1640,26 @@
                 return 'п.228 пусто (нет штрихкода БПЭК / значения из заказа)';
             }
         }
+        // п.200 — для одиночного корректора в режиме «+ комплекс» наименование не пишем.
+        if (
+            step.id === 200 &&
+            Ops &&
+            typeof Ops.shouldSkipComplexName === 'function' &&
+            Ops.shouldSkipComplexName()
+        ) {
+            return 'п.200 наименование комплекса не пишется (заказ только на корректор)';
+        }
+        // п.227 — без .БТ в заказе не пишем.
+        if (
+            step.id === 227 &&
+            Ops &&
+            typeof Ops.shouldSkipTelemetryName === 'function' &&
+            Ops.shouldSkipTelemetryName()
+        ) {
+            return 'п.227 без .БТ в заказе не пишется';
+        }
         if (step.readOnly) {
             return 'только чтение';
-        }
-        if (step.manufacturerOnly && !lkgConfig.manufacturerKey) {
-            if (isManufacturerWriteUnlocked(step)) {
-                return null;
-            }
-            return step.id === 3
-                ? 'S/N корректора, нет ключа производителя и замок производителя закрыт'
-                : 'производитель, нет ключа и замок производителя закрыт';
         }
         return null;
     }
@@ -1557,7 +1939,9 @@
             if (b.length < 8) return bytesToHex(b);
             const u = toUnix64LE(new Uint8Array(b.slice(0, 8)));
             const n = Number(u);
-            if (n > 0) return new Date(n * 1000).toISOString() + ` (unix ${n})`;
+            if (n > 0) {
+                return formatUnixMoscow(n) + ' (unix ' + n + ')';
+            }
             return `raw ${u}`;
         }
         if (t === 's') {
@@ -1610,7 +1994,7 @@
             if (b.length < 8) return null;
             const u = toUnix64LE(new Uint8Array(b.slice(0, 8)));
             const n = Number(u);
-            return n > 0 ? String(n) : String(u);
+            return n > 0 ? formatUnixMoscow(n) : String(u);
         }
         if (t === 's' || t === 'c32' || t === 'chr') {
             return decodeCp1251(b) || null;
@@ -1660,11 +2044,33 @@
 
     /** Запись Uint64 / опрос датчика может занимать несколько секунд. */
     function writeTimeoutMsForStep(step) {
-        if (isDefaultSettingsCmd(step)) return DEFAULT_SETTINGS_TIMEOUT_MS;
+        if (isDefaultSettingsCmd(step)) {
+            if (step.defaultSettingsCmd === DEFAULT_SETTINGS_CMD3_VALUE || Number(step.defaultSettingsCmd) === 3) {
+                return DEFAULT_SETTINGS_CMD3_TIMEOUT_MS;
+            }
+            return DEFAULT_SETTINGS_TIMEOUT_MS;
+        }
         if (step.id === 59 || step.id === 66) return 10000;
+        if (step.settingsCrcCmd || step.id === 316) return DEFAULT_SETTINGS_TIMEOUT_MS;
         if (step.type === 'q' || step.type === '6' || step.type === 't' || step.type === 's') return 5000;
         if (step.type === 'c32' || step.type === 'chr' || step.type === 'd') return 4000;
         return 2000;
+    }
+
+    function isMotoHoursResetStep(step) {
+        const id = step && Number(step.id);
+        return id >= 302 && id <= 308;
+    }
+
+    function isZeroMotoHoursValue(text) {
+        const s = String(text ?? '')
+            .trim()
+            .replace(',', '.');
+        if (!s || s === '—' || s === '0' || s === '0.00') {
+            return true;
+        }
+        const n = Number(s);
+        return Number.isFinite(n) && n === 0;
     }
 
     /** п.59/66 — «запомнить S/N чувствительного элемента в памяти корректора». */
@@ -1691,6 +2097,54 @@
         return true;
     }
 
+    function paintSensorMemoryVerify(step, polled, remembered, match) {
+        const pair = SENSOR_MEMORY_PAIR[step.id];
+        const out = el(stepOutId(step));
+        const pollStep = pair ? findStep(String(pair.pollId)) : null;
+        const pollOut = pollStep ? el(stepOutId(pollStep)) : null;
+        const shown = String(remembered || '').trim() || '—';
+        const pollShown = String(polled || '').trim() || '—';
+        if (pollOut) {
+            setOutStatus(pollOut, pollShown, match ? 'ok' : 'err');
+            if (match) {
+                const prow = pollOut.closest('tr');
+                if (prow) {
+                    prow.classList.add('param-read-match', 'param-write-ok');
+                }
+            }
+        }
+        if (!out) {
+            return;
+        }
+        clearReadComparePaint(out);
+        out.textContent = shown;
+        out.classList.remove('text-success', 'text-danger', 'text-body-secondary', 'text-warning');
+        const row = out.closest('tr');
+        if (match) {
+            out.classList.add('text-success');
+            out.title = 'п.' + (pair && pair.pollId) + ' = п.' + step.id + ' = ' + shown;
+            if (row) {
+                row.classList.add('param-write-ok', 'param-read-match');
+                row.classList.remove('param-read-mismatch');
+            }
+            return;
+        }
+        out.classList.add('text-danger', 'param-read-mismatch-val');
+        out.title =
+            'п.' +
+            (pair && pair.pollId) +
+            ': ' +
+            pollShown +
+            ' · п.' +
+            step.id +
+            ': ' +
+            shown;
+        if (row) {
+            row.classList.add('param-read-mismatch');
+            row.classList.remove('param-write-ok', 'param-read-match');
+        }
+    }
+
     async function doWriteSensorMemoryCmd(step) {
         assertModbusReady();
         const pair = SENSOR_MEMORY_PAIR[step.id];
@@ -1702,13 +2156,14 @@
             throw new Error('Сначала запишите п.' + pair.snId + ' (S/N датчика)');
         }
 
+        let polledStr = '';
         const pollStep = findStep(String(pair.pollId));
         if (pollStep) {
             log(`[${step.id}] опрос чувствительного элемента (${pair.label}), п.${pair.pollId}…`);
             clog('SENSOR MEM poll', `п.${pair.pollId}`, pair.label);
             try {
                 const polled = await doReadStep(pollStep);
-                const polledStr = String(polled || '').trim();
+                polledStr = String(polled || '').trim();
                 log(`[${pair.pollId}] опрос: ${polledStr || '—'}`);
                 const polledNum = parseFloat(polledStr.replace(',', '.'));
                 if (!polledStr || polledStr === '0' || (Number.isFinite(polledNum) && polledNum === 0)) {
@@ -1732,20 +2187,93 @@
 
         const r = step.reg & 0xffff;
         const timeoutMs = writeTimeoutMsForStep(step);
-        clog('WRITE →', `п.${step.id}`, formatHoldingAddr(r), 'sensor memory cmd=1', 'без LKG');
+        const armed = Object.assign({}, step, { writeLkg: true });
+        clog('WRITE →', `п.${step.id}`, formatHoldingAddr(r), 'sensor memory cmd=1', 'с Access-ЛКГ');
         log(`[${step.id}] запоминание S/N в памяти (${pair.label}), команда 1 → ${formatHoldingAddr(r)}…`);
-        await dev.writeUint64LE(r, 1n, timeoutMs);
+        try {
+            await writeWithLkgRetry(armed, function () {
+                return dev.writeUint64LE(r, 1n, timeoutMs);
+            });
+        } catch (e) {
+            if (!isLkgValueError(e.message)) {
+                throw e;
+            }
+            // Как DEFAULT_SETTINGS: 1 регистр, значение 1 (u16 LE) — если uint64 без Access даёт 0x0B.
+            log(`[${step.id}] 0x0B на Uint64 — повтор командой u16=1 и Access-ЛКГ…`);
+            invalidateLkgSession('п.' + step.id + ' sensor mem u16');
+            await writeWithLkgRetry(armed, function () {
+                return dev.writeMultiple(r, [0x01, 0x00], timeoutMs);
+            });
+        }
         await new Promise((r) => setTimeout(r, BATCH_GAP_SENSOR_MEMORY_MS));
 
+        let remembered = '';
         try {
-            const rb = await doReadStep(step);
-            if (rb && String(rb).trim() && String(rb).trim() !== '0') {
-                log(`[${step.id}] в памяти: ${rb}`);
-            }
-        } catch (_e) {
-            // контрольное чтение не блокирует успех записи
+            remembered = String((await doReadStep(step, null, { updateInput: false })) || '').trim();
+        } catch (e) {
+            throw new Error(
+                'Не удалось прочитать п.' + step.id + ' после записи: ' + (e.message || String(e))
+            );
         }
-        clog('WRITE ←', `п.${step.id}`, 'sensor memory ok');
+        const match =
+            !!polledStr &&
+            !!remembered &&
+            remembered !== '0' &&
+            readValueMatchesExpected(step.id, polledStr, remembered);
+        paintSensorMemoryVerify(step, polledStr, remembered, match);
+        if (!match) {
+            log(
+                `[${step.id}] сверка с п.${pair.pollId}: ${remembered || '—'} ≠ ${polledStr || '—'}`
+            );
+            throw new Error(
+                'п.' +
+                    step.id +
+                    ' в памяти (' +
+                    (remembered || '—') +
+                    ') не совпадает с п.' +
+                    pair.pollId +
+                    ' (' +
+                    (polledStr || '—') +
+                    ')'
+            );
+        }
+        log(`[${step.id}] в памяти: ${remembered} = п.${pair.pollId} ✓`);
+        clog('WRITE ←', `п.${step.id}`, 'sensor memory ok', remembered);
+        return { painted: true, match: true, polled: polledStr, remembered: remembered };
+    }
+
+    async function doReadSensorMemoryCompare(step) {
+        assertModbusReady();
+        const pair = SENSOR_MEMORY_PAIR[step.id];
+        if (!pair) {
+            return doReadStep(step, null, { updateInput: false });
+        }
+        const pollStep = findStep(String(pair.pollId));
+        let polledStr = '';
+        if (pollStep) {
+            log(`[${step.id}] сверка с п.${pair.pollId} (${pair.label})…`);
+            try {
+                polledStr = String((await doReadStep(pollStep, null, { updateInput: false })) || '').trim();
+                log(`[${pair.pollId}] опрос ЧЭ: ${polledStr || '—'}`);
+            } catch (e) {
+                log(`[${pair.pollId}] опрос ЧЭ: ` + (e.message || String(e)));
+            }
+        }
+        const remembered = String((await doReadStep(step, null, { updateInput: false })) || '').trim();
+        const match =
+            !!polledStr &&
+            !!remembered &&
+            remembered !== '0' &&
+            readValueMatchesExpected(step.id, polledStr, remembered);
+        paintSensorMemoryVerify(step, polledStr, remembered, match);
+        if (match) {
+            log(`[${step.id}] память ${remembered} = п.${pair.pollId} ✓`);
+        } else {
+            log(
+                `[${step.id}] память ${remembered || '—'} ≠ п.${pair.pollId} ${polledStr || '—'}`
+            );
+        }
+        return remembered;
     }
 
     async function recoverAfterCommError() {
@@ -1784,10 +2312,64 @@
         return decoded;
     }
 
+    function isIllegalDataValueError(msg) {
+        return /0x0?3\b|недопустимое значение в запросе/i.test(String(msg ?? ''));
+    }
+
+    /**
+     * п.316 (0x06B1): CRC калибровки Settings №1.
+     * 1 регистр (01 00) даёт exception 0x03 — в карте UINT32 (2 рег.).
+     */
+    async function doWriteSettingsCrcCmd(step, val, regOverride) {
+        const r = (regOverride != null ? regOverride : step.reg) & 0xffff;
+        const timeoutMs = writeTimeoutMsForStep(step);
+        const s = String(val ?? '1').trim();
+        const parsed = s.startsWith('0x') || s.startsWith('0X') ? parseInt(s, 16) : parseInt(s, 10);
+        const n = Number.isFinite(parsed) && parsed >= 0 ? parsed >>> 0 : 1;
+        const payloads = [
+            { name: 'uint32 LE', bytes: u32leBytes(n) },
+            {
+                name: 'uint64 LE',
+                bytes: [n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >> 24) & 0xff, 0, 0, 0, 0],
+            },
+        ];
+        let lastErr = null;
+        for (let i = 0; i < payloads.length; i += 1) {
+            const p = payloads[i];
+            clog(
+                'WRITE →',
+                'п.' + step.id,
+                formatHoldingAddr(r),
+                'Settings CRC',
+                p.name,
+                bytesToHex(new Uint8Array(p.bytes))
+            );
+            try {
+                return await writeWithLkgRetry(step, function () {
+                    return dev.writeMultiple(r, p.bytes, timeoutMs);
+                });
+            } catch (e) {
+                lastErr = e;
+                if (i + 1 < payloads.length && isIllegalDataValueError(e.message)) {
+                    log('[' + step.id + '] 0x03 на ' + p.name + ' — повтор ' + payloads[i + 1].name + '…');
+                    continue;
+                }
+                throw e;
+            }
+        }
+        throw lastErr || new Error('п.316: не удалось записать CRC Settings №1');
+    }
+
     async function doWriteStep(step, val, regOverride) {
         assertModbusReady();
         if (step.readOnly) throw new Error('Параметр только для чтения');
         if (!step.reg) throw new Error('Нет регистра');
+        if (step.settingsCrcCmd || step.id === 316) {
+            val = stripUnitFromValue(val);
+            const wrCrc = await doWriteSettingsCrcCmd(step, val, regOverride);
+            clog('WRITE ←', `п.${step.id} ok`);
+            return wrCrc;
+        }
         const r = regOverride != null ? regOverride : step.reg;
         const t = step.type;
         const timeoutMs = writeTimeoutMsForStep(step);
@@ -1836,8 +2418,15 @@
                 return await dev.writeUint64LE(r, BigInt(s), timeoutMs);
             }
             if (t === 't') {
-                const sec = val instanceof Date ? Math.floor(val.getTime() / 1000) : parseInt(String(val), 10);
-                if (!Number.isFinite(sec)) throw new Error('Некорректное время');
+                let sec;
+                if (val instanceof Date) {
+                    sec = Math.floor(val.getTime() / 1000);
+                } else {
+                    sec = parseDatetimeInputToUnix(val);
+                }
+                if (sec == null || !Number.isFinite(sec)) {
+                    throw new Error('Дата/время: ДД.ММ.ГГГГ, ЧЧ:ММ:СС (Москва) или unix');
+                }
                 return await dev.writeUint64LE(r, BigInt(sec), timeoutMs);
             }
             if (t === 's') {
@@ -1990,6 +2579,9 @@
                 }
                 log('Связь с корректором установлена.');
                 clog('identify', passport);
+                void offerFirmwareAfterConnect().catch(function (e) {
+                    clogErr('firmware', e);
+                });
             } else {
                 throw new Error('Нет ответа на identify');
             }
@@ -2004,6 +2596,9 @@
             const p = await dev.readElectronicPassport();
             window.__paramDevicePassport = { ...window.__paramDevicePassport, ...p };
             clog('passport', p);
+            void offerFirmwareAfterConnect().catch(function (e) {
+                clogErr('firmware', e);
+            });
         } catch (e) {
             clogErr('passport', e);
         }
@@ -2242,6 +2837,7 @@
         window.__tm07DefaultSettingsApplied = false;
         if (el('paramConnStatus')) el('paramConnStatus').textContent = 'отключено';
         updateLockStatusUi(null);
+        renderFwPanel({ deviceVer: '' });
         log('Отключено');
         if (window.TM07_WORKBENCH_STATE && typeof window.TM07_WORKBENCH_STATE.save === 'function') {
             window.TM07_WORKBENCH_STATE.save();
@@ -2320,7 +2916,7 @@
     });
 
     el('paramNowToDatetime')?.addEventListener('click', () => {
-        const s = String(nowUnixForDevice());
+        const s = formatUnixMoscow(nowUnixForDevice());
         const inp = el('val_20');
         if (inp) inp.value = s;
         updateDatetimeHint(20);
@@ -2457,37 +3053,47 @@
         return escapeHtml(s).replace(/"/g, '&quot;');
     }
     function parseUnixSeconds(val) {
-        const s = String(val ?? '').trim();
-        if (!s) return null;
-        const n = /^0x/i.test(s) ? parseInt(s, 16) : Number(s);
-        if (!Number.isFinite(n) || n <= 0) return null;
-        return Math.floor(n);
+        return parseDatetimeInputToUnix(val);
     }
 
     function formatUnixToHuman(val) {
         const n = parseUnixSeconds(val);
         if (n == null) return '';
-        const dt = new Date(n * 1000);
-        if (Number.isNaN(dt.getTime())) return '';
-        return dt.toLocaleString('ru-RU', {
-            day: '2-digit',
-            month: '2-digit',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-            second: '2-digit',
-        });
+        return formatUnixMoscow(n);
     }
 
     function updateDatetimeHint(stepId) {
         const hint = el('valhint_' + stepId);
         const inp = el('val_' + stepId);
-        if (!hint || !inp) return;
+        if (!inp) return;
         const raw = String(inp.value ?? '').trim();
-        const formatted = formatUnixToHuman(raw);
-        hint.textContent = formatted || (raw ? 'некорректный unix' : '—');
-        hint.classList.toggle('text-danger', !!raw && !formatted);
-        hint.classList.toggle('text-body-secondary', !raw || !!formatted);
+        const unix = parseDatetimeInputToUnix(raw);
+        if (unix != null) {
+            const human = formatUnixMoscow(unix);
+            // Сырой unix / ISO / «… (unix N)» → нормальный вид в поле.
+            if (
+                human &&
+                raw !== human &&
+                (/^\d{9,12}$/.test(raw) ||
+                    /\(unix\s+\d+\)/i.test(raw) ||
+                    /T\d{2}:\d{2}/.test(raw) ||
+                    /Z$/i.test(raw))
+            ) {
+                inp.value = human;
+            }
+        }
+        if (!hint) return;
+        const shown = String(inp.value ?? '').trim();
+        const u2 = parseDatetimeInputToUnix(shown);
+        if (!shown) {
+            hint.textContent = '—';
+        } else if (u2 == null) {
+            hint.textContent = 'формат: ДД.ММ.ГГГГ, ЧЧ:ММ:СС';
+        } else {
+            hint.textContent = 'Москва · unix ' + u2;
+        }
+        hint.classList.toggle('text-danger', !!shown && u2 == null);
+        hint.classList.toggle('text-body-secondary', !shown || u2 != null);
     }
 
     function placeholderForType(step) {
@@ -2495,7 +3101,7 @@
         if (step.type === 'u' || step.type === 'w') return 'число или 0x…';
         if (step.type === 'f') return 'число';
         if (step.type === 's') return 'текст ≤20';
-        if (step.type === 't') return 'Unix сек или пусто → «сейчас»';
+        if (step.type === 't') return 'ДД.ММ.ГГГГ, ЧЧ:ММ:СС (Москва) или пусто → сейчас';
         if (step.type === 'q') return 'Uint64: цифры или 0x…';
         if (step.type === 'c32') return 'ASCII ≤32 симв.';
         if (step.type === 'chr') return `текст ≤${(step.regCount || 1) * 2} симв.`;
@@ -2547,14 +3153,33 @@
         return !!(dev && dev.port);
     }
 
-    /** Сначала параметры поставщика, затем производителя — иначе после п.3 падает 0x0B на п.6+. */
-    function orderStepsForBatchWrite(steps) {
+    /**
+     * Порядок как в карте (п.2 → п.3 → …), если preserveStepOrder.
+     * Иначе: сначала поставщик, затем производитель (legacy; после п.3 раньше ловили 0x0B на п.6+ —
+     * сейчас после п.3 сессия ЛКГ пересобирается).
+     */
+    function orderStepsForBatchWrite(steps, opts) {
+        const keep = [];
+        for (const step of steps) {
+            if (!step || step.type === 'x' || !step.reg) {
+                continue;
+            }
+            if (step.readOnly && step.id !== 315 && step.type !== 'battery') {
+                continue;
+            }
+            keep.push(step);
+        }
+        if (!opts || opts.preserveStepOrder !== false) {
+            return keep;
+        }
         const supplier = [];
         const manufacturer = [];
-        for (const step of steps) {
-            if (step.type === 'x' || !step.reg || step.readOnly) continue;
-            if (step.manufacturerOnly) manufacturer.push(step);
-            else supplier.push(step);
+        for (const step of keep) {
+            if (step.manufacturerOnly) {
+                manufacturer.push(step);
+            } else {
+                supplier.push(step);
+            }
         }
         return supplier.concat(manufacturer);
     }
@@ -2638,7 +3263,7 @@
             }
             else if (step.defaultHex != null) defaultVal = String(step.defaultHex);
             if (isDefaultSettingsCmd(step)) defaultVal = String(defaultSettingsCmdValue(step));
-            if (step.type === 't' && !defaultVal) defaultVal = String(nowUnixForDevice());
+            if (step.type === 't' && !defaultVal) defaultVal = formatUnixMoscow(nowUnixForDevice());
             const dateHintHtml =
                 step.type === 't'
                     ? `<div class="small text-body-secondary mt-1 param-datetime-hint" id="valhint_${step.id}">—</div>`
@@ -2676,14 +3301,7 @@
                           : step.id === 77
                             ? 'emergency'
                             : 'mask';
-                maskRowClass =
-                    maskKind === 'warning'
-                        ? ' table-warning param-mask-row param-mask-warning'
-                        : maskKind === 'alarm'
-                          ? ' table-danger param-mask-row param-mask-alarm'
-                          : maskKind === 'emergency'
-                            ? ' table-danger param-mask-row param-mask-emergency'
-                            : ' table-info param-mask-row';
+                maskRowClass = '';
                 const kindLabel =
                     maskKind === 'warning'
                         ? 'предупреждения'
@@ -2694,8 +3312,8 @@
                             : 'маска';
                 maskExecHtml =
                     `<div class="mt-1 d-flex flex-wrap gap-1">` +
-                    `<span class="badge text-bg-dark param-mask-kind">${kindLabel}</span>` +
-                    `<span class="badge text-bg-primary param-mask-exec" data-mask-step="${step.id}">исполнение ${escapeHtml(
+                    `<span class="badge text-bg-secondary param-mask-kind">${kindLabel}</span>` +
+                    `<span class="badge text-bg-light border text-dark param-mask-exec" data-mask-step="${step.id}">исполнение ${escapeHtml(
                         variant
                     )}</span></div>`;
             }
@@ -2787,90 +3405,117 @@
         return m + ':' + String(s).padStart(2, '0');
     }
 
-    /** Обратный отсчёт параметризации — «⏱ 2:00» (2 минуты), простой таймер. */
-    const BATCH_TIMER_SECONDS = 120;
+    let batchTimer = null; // { total, done, base, count }
 
-    let batchTimer = null; // { t0, total, done, count, tick }
-
-    function startBatchTimer(total) {
-        if (!batchTimer) batchTimer = { count: 0 };
-        const t = batchTimer;
-        t.t0 = performance.now();
-        t.total = Math.max(1, Number(total) || 1);
-        t.done = 0;
-        t.count += 1;
-        const b = el('paramTimer');
-        if (b) b.classList.remove('d-none');
-        if (t.count === 1) {
-            t.tick = setInterval(renderBatchTimer, 500);
-            renderBatchTimer();
-        }
+    function countReadableSteps(steps) {
+        return (steps || []).filter(function (s) {
+            return s && s.type !== 'x' && s.reg && !s.writeOnly;
+        }).length;
     }
 
-    function bumpBatchTimer(done) {
+    function startBatchTimer(total, opts) {
+        const nested = !!(opts && opts.nested);
+        const accumulate = !!(opts && opts.accumulate);
+        if (!batchTimer) {
+            batchTimer = { count: 0, total: 1, done: 0, base: 0 };
+        }
+        const t = batchTimer;
+        if (!nested) {
+            t.done = 0;
+            t.base = 0;
+            t.total = Math.max(1, Number(total) || 1);
+        } else if (accumulate) {
+            t.base = t.done;
+        } else {
+            t.base = 0;
+            t.total = Math.max(1, Number(total) || t.total || 1);
+        }
+        t.count += 1;
+        if (opts && opts.progressId) {
+            t.progressId = opts.progressId;
+        } else if (!nested) {
+            t.progressId = null;
+        }
+        const b = el('paramTimer');
+        if (b) b.classList.remove('d-none');
+        const fb = el('paramFinalTimer');
+        if (fb && t.progressId === 'paramFinalTimer') {
+            fb.classList.remove('d-none');
+        }
+        renderBatchTimer();
+    }
+
+    function bumpBatchTimer(localDone) {
         if (batchTimer) {
-            batchTimer.done = Math.max(0, Number(done) || 0);
+            batchTimer.done = (batchTimer.base || 0) + Math.max(0, Number(localDone) || 0);
             renderBatchTimer();
         }
     }
 
     function suspendBatchTimer() {
-        if (batchTimer && batchTimer.tick) {
-            clearInterval(batchTimer.tick);
-            batchTimer.tick = null;
-        }
+        renderBatchTimer();
     }
 
     function resumeBatchTimer() {
-        if (batchTimer && batchTimer.count > 0) {
-            if (batchTimer.tick) clearInterval(batchTimer.tick);
-            batchTimer.tick = setInterval(renderBatchTimer, 500);
-            renderBatchTimer();
-        }
+        renderBatchTimer();
     }
 
     function stopBatchTimer() {
         if (!batchTimer) return;
         batchTimer.count -= 1;
         if (batchTimer.count <= 0) {
-            if (batchTimer.tick) clearInterval(batchTimer.tick);
             const b = el('paramTimer');
             if (b) b.classList.add('d-none');
+            const keepFinal = batchTimer.progressId === 'paramFinalTimer' && batchProgressPct() >= 100;
+            const fb = el('paramFinalTimer');
+            if (fb && !keepFinal) {
+                fb.classList.add('d-none');
+            }
             batchTimer = null;
         }
     }
 
-    function renderBatchTimer() {
-        if (!batchTimer || !batchTimer.t0) return;
-        const b = el('paramTimer');
-        const elapsed = performance.now() - batchTimer.t0;
-        const done = batchTimer.done;
-        const total = batchTimer.total;
-        const remaining = Math.max(0, total - done);
-        let etaMs = 0;
-        if (done > 0 && remaining > 0) {
-            etaMs = Math.round((elapsed / done) * remaining);
+    function batchProgressPct() {
+        if (!batchTimer) {
+            return 0;
         }
-        const past = formatElapsed(elapsed);
-        const left = done > 0 && remaining > 0 ? formatElapsed(etaMs) : '';
-        // Простой таймер «⏱ 2:00» — обратный отсчёт фиксированной длительности параметризации.
-        const countdownMs = Math.max(0, BATCH_TIMER_SECONDS * 1000 - elapsed);
+        const total = Math.max(1, Number(batchTimer.total) || 1);
+        const done = Math.max(0, Number(batchTimer.done) || 0);
+        return Math.min(100, Math.round((done / total) * 100));
+    }
+
+    function renderBatchTimer() {
+        if (!batchTimer) return;
+        const b = el('paramTimer');
+        const done = Math.max(0, Number(batchTimer.done) || 0);
+        const total = Math.max(1, Number(batchTimer.total) || 1);
+        const pct = batchProgressPct();
         if (b) {
-            b.textContent = '⏱ ' + formatElapsed(countdownMs);
-            b.title = 'Параметризация: осталось ≈ ' + formatElapsed(countdownMs);
+            b.textContent = pct + '%';
+            b.title = 'Выполнено ' + done + ' из ' + total + ' (' + pct + '%)';
         }
         const wl = el('wbWriteTimerLeft');
         if (wl) {
-            wl.textContent = left ? '⏳ осталось ≈ ' + left : '⏳ расчёт…';
+            wl.textContent = pct + '%';
         }
         const we = el('wbWriteTimerElapsed');
-        if (we) we.textContent = past;
+        if (we) we.textContent = done + ' / ' + total;
         const ws = el('wbWriteTimerStep');
-        if (ws) ws.textContent = total > 0 ? done + ' из ' + total : '—';
+        if (ws) ws.textContent = pct + '%';
+        const fb = el('paramFinalTimer');
+        if (fb && batchTimer.progressId === 'paramFinalTimer') {
+            fb.textContent = pct + '%';
+            fb.title = 'Выполнено ' + done + ' из ' + total + ' (' + pct + '%)';
+            fb.classList.remove('d-none');
+            fb.classList.toggle('text-bg-success', pct >= 100);
+            fb.classList.toggle('text-bg-dark', pct < 100);
+        }
     }
 
-    async function runReadAllSteps(steps, label) {
-        if (batchParamRunning) {
+    async function runReadAllSteps(steps, label, opts) {
+        const nested = !!(opts && opts.nested);
+        const accumulate = !!(opts && opts.accumulate);
+        if (!nested && batchParamRunning) {
             return { ok: 0, fail: 0, skipped: true };
         }
         if (connectBusy) {
@@ -2881,11 +3526,13 @@
             log('Сначала подключите КАО');
             return { ok: 0, fail: 0, skipped: true };
         }
-        batchParamRunning = true;
-        setBatchParamButtonsDisabled(true);
+        if (!nested) {
+            batchParamRunning = true;
+            setBatchParamButtonsDisabled(true);
+        }
         const t0 = performance.now();
         const readableSteps = steps.filter((s) => s.type !== 'x' && s.reg && !s.writeOnly);
-        startBatchTimer(readableSteps.length);
+        startBatchTimer(readableSteps.length, { nested: nested, accumulate: accumulate });
         let doneCount = 0;
         let ok = 0;
         let fail = 0;
@@ -2897,11 +3544,16 @@
                 const out = el(stepOutId(step));
                 if (out) setOutStatus(out, '…', 'pending');
                 try {
-                    // Опрос не должен затирать поля «Значение» (ожидание из заказа) — только out_*.
+                    if (isSensorMemoryCmd(step)) {
+                        const t = await doReadSensorMemoryCompare(step);
+                        log(`[${step.id}] чтение памяти / сверка → ${t}`);
+                        ok += 1;
+                    } else {
                     const t = await doReadStep(step, oreg, { updateInput: false });
                     if (out) setOutStatus(out, t, 'ok');
                     log(`[${step.id}] чтение ${formatHoldingAddr(oreg ?? step.reg)} → ${t}`);
                     ok += 1;
+                    }
                 } catch (e) {
                     if (out) setOutStatus(out, 'ошибка', 'err');
                     let m = e.message;
@@ -2925,9 +3577,11 @@
             );
             return { ok, fail, skipped: false };
         } finally {
-            batchParamRunning = false;
-            setBatchParamButtonsDisabled(false);
             stopBatchTimer();
+            if (!nested) {
+                batchParamRunning = false;
+                setBatchParamButtonsDisabled(false);
+            }
         }
     }
 
@@ -2975,19 +3629,33 @@
         let abortStepId = null;
         const t0 = performance.now();
         const skipAlreadyOk = !!(opts && opts.skipAlreadyOk);
-        const ordered = orderStepsForBatchWrite(steps);
-        startBatchTimer(ordered.length);
+        const ordered = orderStepsForBatchWrite(steps, opts);
+        startBatchTimer(ordered.length, {
+            nested: !!nested,
+            accumulate: !!(opts && opts.accumulate),
+            progressId: /финал/i.test(String(label || '')) ? 'paramFinalTimer' : opts && opts.progressId,
+        });
         let stepCount = 0;
         const mfgPending = ordered.filter((s) => s.manufacturerOnly && lkgConfig.manufacturerKey);
+        const mfgAtEnd =
+            !!(opts && opts.preserveStepOrder === false) && mfgPending.length > 0;
         clog(
             'WRITE ALL start',
             label || 'основные',
             ordered.length,
             'шагов',
-            skipAlreadyOk ? '(resume/skip ok)' : ''
+            skipAlreadyOk ? '(resume/skip ok)' : '',
+            opts && opts.preserveStepOrder === false ? '(производитель в конце)' : '(порядок карты)'
         );
-        if (mfgPending.length) {
+        if (mfgAtEnd) {
             clog('WRITE ALL', 'производитель в конце', mfgPending.map((s) => s.id).join(','));
+            // В таблице п.3–5 сверху: пока идут параметры поставщика — помечаем «в конце».
+            mfgPending.forEach(function (s) {
+                const o = el(stepOutId(s));
+                if (o && !isStepWriteMarkedOk(s.id)) {
+                    setOutStatus(o, 'в конце', 'pending');
+                }
+            });
         }
         try {
             if (
@@ -3016,7 +3684,7 @@
                 }
                 if (step.manufacturerOnly && !prevManufacturer) {
                     prevManufacturer = true;
-                    if (mfgPending.length) {
+                    if (mfgAtEnd) {
                         log('Регистры производителя (S/N и др.) — в конце, после параметров поставщика…');
                     }
                     await new Promise((r) => setTimeout(r, BATCH_GAP_MANUFACTURER_MS));
@@ -3035,8 +3703,10 @@
                     }
                     if (out) setOutStatus(out, '…', 'pending');
                     try {
-                        await doWriteSensorMemoryCmd(step);
-                        if (out) setOutStatus(out, 'ok', 'ok');
+                        const mem = await doWriteSensorMemoryCmd(step);
+                        if (out && !(mem && mem.painted)) {
+                            setOutStatus(out, 'ok', 'ok');
+                        }
                         log(`[${step.id}] запись ${formatHoldingAddr(step.reg)} ok (запоминание S/N)`);
                         ok += 1;
                         consecutiveFails = 0;
@@ -3044,7 +3714,7 @@
                         if (out) setOutStatus(out, 'ошибка', 'err');
                         let m = e.message || String(e);
                         if (/0xb|недопустимое значение лкг/i.test(m)) {
-                            m += ' — для п.59/66 используется запись без LKG; проверьте подключение датчика.';
+                            m += ' — п.59/66: нужен Access-ЛКГ и ответ ЧЭ (п.58/65).';
                         }
                         log(`[${step.id}] ${m}`);
                         clogErr('WRITE ALL', `п.${step.id}`, m);
@@ -3052,7 +3722,7 @@
                         consecutiveFails += 1;
                         noteWriteAbort(step.id, label);
                         await recoverAfterCommError();
-                        if (isLockBlocked0b(m, window.__paramLockStatus)) {
+                        if (isLockBlocked0b(m, window.__paramLockStatus) && !isSensorMemoryCmd(step)) {
                             log(lockPreflightHtml((window.__paramLockStatus && window.__paramLockStatus.raw) || 0x0001));
                             clog('WRITE ALL aborted', '0x0B lock', lockRawHex((window.__paramLockStatus && window.__paramLockStatus.raw) || 0));
                             aborted = true;
@@ -3069,11 +3739,42 @@
                     await new Promise((r) => setTimeout(r, BATCH_GAP_MS));
                     continue;
                 }
+                if (step.id === 315 || step.type === 'battery') {
+                    if (out) setOutStatus(out, '…', 'pending');
+                    try {
+                        const decoded = await doReadStep(step, oreg, { updateInput: false });
+                        if (out) setOutStatus(out, decoded || 'ok', 'ok');
+                        log(
+                            `[${step.id}] опрос ${formatHoldingAddr(oreg ?? step.reg)}: ${decoded}`
+                        );
+                        ok += 1;
+                        consecutiveFails = 0;
+                    } catch (e) {
+                        if (out) setOutStatus(out, 'ошибка', 'err');
+                        const m = e.message || String(e);
+                        log(`[${step.id}] ${m}`);
+                        clogErr('WRITE ALL', `п.${step.id}`, m);
+                        fail += 1;
+                        consecutiveFails += 1;
+                        noteWriteAbort(step.id, label);
+                        await recoverAfterCommError();
+                        if (consecutiveFails >= MAX_CONSECUTIVE_WRITE_FAILS) {
+                            log('<strong>Запись прервана: слишком много ошибок подряд.</strong>');
+                            aborted = true;
+                            abortStepId = step.id;
+                            break;
+                        }
+                    }
+                    await new Promise((r) => setTimeout(r, BATCH_GAP_MS));
+                    continue;
+                }
                 const batchSkip = batchWriteSkipReason(step);
                 if (batchSkip) {
-                    if (out) setOutStatus(out, '—', 'idle');
+                    if (out) {
+                        setOutStatus(out, '—', 'idle');
+                    }
                     if (isBootstrapDefaultSettings(step)) {
-                        log(`[${step.id}] пропуск (команда DEFAULT_SETTINGS — не входит в автопараметризацию)`);
+                        log(`[${step.id}] пропуск (${batchSkip})`);
                     } else if (step.manufacturerOnly && !lkgConfig.manufacturerKey) {
                         const msg =
                             step.id === 3
@@ -3093,17 +3794,18 @@
                     skip += 1;
                     continue;
                 }
-                if (isDefaultSettingsCmd(step) && !isBootstrapDefaultSettings(step)) {
+                if (isDefaultSettingsCmd(step)) {
                     if (out) setOutStatus(out, '…', 'pending');
                     try {
                         const dres = await doWriteDefaultSettingsCmd(step, {
-                            force: true,
+                            force: !isBootstrapDefaultSettings(step),
                             nested: true,
+                            skipPassport: !!window.__paramDevicePassport,
                         });
                         if (dres && dres.skipped) {
-                            if (out) setOutStatus(out, '—', 'idle');
+                            if (out) setOutStatus(out, 'ok', 'ok');
                             log(
-                                `[${step.id}] DEFAULT_SETTINGS (команда ${defaultSettingsCmdValue(step)}) уже выполнена — пропуск.`
+                                `[${step.id}] DEFAULT_SETTINGS (команда ${defaultSettingsCmdValue(step)}) уже выполнена — ok.`
                             );
                             skip += 1;
                         } else {
@@ -3192,21 +3894,42 @@
                 }
                 let val = vin?.value;
                 if (step.type === 't' && (!val || !String(val).trim())) {
-                    val = String(nowUnixForDevice());
+                    val = formatUnixMoscow(nowUnixForDevice());
                     if (vin) vin.value = val;
                     updateDatetimeHint(step.id);
                 } else if (!String(val ?? '').trim()) {
-                    if (out) setOutStatus(out, '—', 'idle');
-                    log(`[${step.id}] запись пропущена (пустое поле)`);
-                    clog('WRITE ALL skip', `п.${step.id}`, 'пустое поле');
-                    skip += 1;
-                    continue;
+                    if (isMotoHoursResetStep(step)) {
+                        val = '0';
+                        if (vin) vin.value = '0';
+                    } else if (step.settingsCrcCmd || step.id === 316) {
+                        val = String(step.defaultNum != null ? step.defaultNum : 1);
+                        if (vin) vin.value = val;
+                    } else {
+                        if (out) setOutStatus(out, '—', 'idle');
+                        log(`[${step.id}] запись пропущена (пустое поле)`);
+                        clog('WRITE ALL skip', `п.${step.id}`, 'пустое поле');
+                        skip += 1;
+                        continue;
+                    }
                 }
                 if (out) setOutStatus(out, '…', 'pending');
                 try {
                     await doWriteStepWithLockRetry(step, val, oreg);
-                    if (out) setOutStatus(out, 'ok', 'ok');
-                    log(`[${step.id}] запись ${formatHoldingAddr(oreg ?? step.reg)} ok`);
+                    if (isMotoHoursResetStep(step)) {
+                        const decoded = await doReadStep(step, oreg, { updateInput: false });
+                        if (!isZeroMotoHoursValue(decoded)) {
+                            throw new Error(
+                                'моточасы не обнулились (прочитано ' + (decoded || '—') + ')'
+                            );
+                        }
+                        if (out) setOutStatus(out, decoded || '0', 'ok');
+                        log(
+                            `[${step.id}] обнуление ${formatHoldingAddr(oreg ?? step.reg)} ok, прочитано ${decoded}`
+                        );
+                    } else {
+                        if (out) setOutStatus(out, 'ok', 'ok');
+                        log(`[${step.id}] запись ${formatHoldingAddr(oreg ?? step.reg)} ok`);
+                    }
                     ok += 1;
                     consecutiveFails = 0;
                     const holdMs = Number(step.testModeHoldMs) || 0;
@@ -3278,6 +4001,18 @@
                         ? ' Можно продолжить с п.' + abortStepId + ' (кнопка «Продолжить»).'
                         : '')
             );
+            if (/финал/i.test(String(label || '')) && ok > 0 && fail === 0 && !aborted) {
+                const tb = el('paramFinalTbody');
+                if (tb) {
+                    tb.querySelectorAll('tr[data-step-id]').forEach(function (row) {
+                        const out = row.querySelector('span.out');
+                        const t = out ? String(out.textContent || '').trim().toLowerCase() : '';
+                        if (t === '✓' || t === 'ok' || (out && out.classList.contains('text-success'))) {
+                            row.classList.add('param-write-ok', 'param-write-ok-final');
+                        }
+                    });
+                }
+            }
             return { ok, fail, skip, aborted, abortStepId };
         } finally {
             stopBatchTimer();
@@ -3311,7 +4046,10 @@
         try {
             if (br) {
                 if (out) setOutStatus(out, '…', 'pending');
-                // П.8: прочитанное значение не переносим в поле ввода.
+                if (isSensorMemoryCmd(step)) {
+                    await doReadSensorMemoryCompare(step);
+                    return;
+                }
                 const t = await doReadStep(step, oreg, { updateInput: false });
                 if (out) setOutStatus(out, t, 'ok');
                 log(`[${step.id}] чтение ${formatHoldingAddr(oreg ?? step.reg)} → ${t}`);
@@ -3334,16 +4072,22 @@
                 }
                 let val = vin?.value;
                 if (step.type === 't' && (!val || !String(val).trim())) {
-                    val = String(nowUnixForDevice());
+                    val = formatUnixMoscow(nowUnixForDevice());
                     if (vin) vin.value = val;
                     updateDatetimeHint(step.id);
                 }
                 if (out) setOutStatus(out, '…', 'pending');
                 if (isSensorMemoryCmd(step)) {
-                    await doWriteSensorMemoryCmd(step);
-                } else {
-                    await doWriteStepWithLockRetry(step, val, oreg);
+                    const mem = await doWriteSensorMemoryCmd(step);
+                    if (out && !(mem && mem.painted)) {
+                        setOutStatus(out, 'ok', 'ok');
+                    }
+                    log(
+                        `[${step.id}] запись ${formatHoldingAddr(oreg ?? step.reg)} ok (запоминание S/N)`
+                    );
+                    return;
                 }
+                await doWriteStepWithLockRetry(step, val, oreg);
                 if (out) setOutStatus(out, 'ok', 'ok');
                 log(`[${step.id}] запись ${formatHoldingAddr(oreg ?? step.reg)} ok`);
             }
@@ -3419,21 +4163,37 @@
             log('Секция «Финальные параметры» не найдена.');
             return { ok: 0, fail: 0, skip: 0, aborted: true };
         }
-        // Перед прогоном финалов проверяем обязательные параметры: S/N, датчики, даты…
+        // Перед прогоном финалов проверяем всё: обязательные S/N/датчики/ЛКГ/направление
+        // И все незаполненные строки параметризации (основные + счётчик + комплекс).
         const OpsBeforeFinal = window.TM07_WORKBENCH_OPS;
+        const hardErrors = [];
         if (OpsBeforeFinal && typeof OpsBeforeFinal.validateBeforeParametrize === 'function') {
             try {
                 const v = OpsBeforeFinal.validateBeforeParametrize();
                 if (v && !v.ok && v.errors && v.errors.length) {
-                    v.errors.forEach(function (msg) {
-                        log('<span class="text-danger">Не хватает: ' + (msg || '').replace(/<\/?[^>]+>/g, '') + '</span>');
-                    });
-                    log('Прогон финальных параметров остановлен — заполните недостающее.');
-                    return { ok: 0, fail: 0, skip: 0, aborted: true, validationErrors: v.errors };
+                    v.errors.forEach((msg) => hardErrors.push(String(msg || '')));
                 }
             } catch (_eBeforeFinal) {
                 /* валидация не должна останавливать прогон при сбоях модуля */
             }
+        }
+        if (OpsBeforeFinal && typeof OpsBeforeFinal.collectEmptyRequiredSteps === 'function') {
+            try {
+                const missing = OpsBeforeFinal.collectEmptyRequiredSteps();
+                (missing || []).forEach(function (m) {
+                    hardErrors.push('не заполнено: п.' + m.id + ' — ' + (m.title || '').replace(/<\/?[^>]+>/g, ''));
+                });
+            } catch (_eBeforeEmpty) {
+                /* аналогично — не критично при сбое модуля */
+            }
+        }
+        if (hardErrors.length) {
+            // Выводим по строке; для «не заполнено» — без тегов, читаемо.
+            hardErrors.forEach(function (msg) {
+                log('<span class="text-danger">Не хватает: ' + msg.replace(/<\/?[^>]+>/g, '') + '</span>');
+            });
+            log('Прогон финальных параметров остановлен — заполните недостающее.');
+            return { ok: 0, fail: 0, skip: 0, aborted: true, validationErrors: hardErrors };
         }
         // Дубль дат поверки комплекса (п.202/203 → п.298/299) перед прогоном.
         (finalSec.steps || []).forEach(function (step) {
@@ -3449,7 +4209,7 @@
                 }
             }
         });
-        log('<strong>Прогон финальных параметров</strong> — маски И1…И4, даты, моточасы, очистка…');
+        log('<strong>Прогон финальных параметров</strong> — маски И1…И4, даты, моточасы 302–308, заряд 315, CRC Settings №1 (п.316), очистка…');
         try {
             await writeFinalComplexModeFlags();
         } catch (e) {
@@ -3460,6 +4220,7 @@
             // Финальный прогон останавливается перед закрытием калибровочного замка (п.317):
             // оператор закрывает замок вручную и нажимает «Продолжить после закрытия замка».
             pauseAtCloseCalibLock: true,
+            preserveStepOrder: true,
         });
     }
 
@@ -3485,6 +4246,7 @@
             el(section.writeAllId)?.addEventListener('click', () => {
                 void runWriteAllSteps(section.steps, section.title || section.key, {
                     pauseAtCloseCalibLock: !!section.pauseAtCloseCalibLock,
+                    preserveStepOrder: !!section.pauseAtCloseCalibLock || section.key === 'final',
                 });
             });
         }
@@ -3576,18 +4338,14 @@
             const mUnix = s.match(/unix\s+(\d+)/i);
             if (mUnix) {
                 unix = parseInt(mUnix[1], 10);
-            } else if (/^\d+$/.test(s)) {
-                unix = parseInt(s, 10);
+            } else {
+                const parsed = parseDatetimeInputToUnix(s);
+                unix = parsed != null ? parsed : NaN;
             }
             if (Number.isFinite(unix) && unix > 0) {
-                const d = new Date((unix + DEVICE_TIME_UTC_OFFSET_SEC) * 1000);
-                const dd = String(d.getUTCDate()).padStart(2, '0');
-                const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
-                const yyyy = d.getUTCFullYear();
-                const hh = String(d.getUTCHours()).padStart(2, '0');
-                const mi = String(d.getUTCMinutes()).padStart(2, '0');
-                const ss = String(d.getUTCSeconds()).padStart(2, '0');
-                return dd + '.' + mm + '.' + yyyy + ',' + hh + ':' + mi + ':' + ss;
+                const human = formatUnixMoscow(unix);
+                // .prm: ДД.ММ.ГГГГ,ЧЧ:ММ:СС (как CorrReader)
+                return human.replace(', ', ',');
             }
             return s;
         }
@@ -3672,7 +4430,9 @@
 
         const Ops = window.TM07_WORKBENCH_OPS;
         const writeComplex =
-            !Ops || typeof Ops.isComplexOrder !== 'function' || Ops.isComplexOrder();
+            !Ops ||
+            typeof Ops.shouldWriteComplexParams !== 'function' ||
+            Ops.shouldWriteComplexParams();
         const sections = [{ steps: DOC.steps, title: 'основные', key: 'main' }].concat(
             EXTRA?.sections || []
         );
@@ -3695,7 +4455,7 @@
         try {
             log('<strong>Считывание параметров в файл…</strong>');
             for (const sec of sections) {
-                if (!writeComplex && (sec.key === 'meter' || sec.key === 'complex')) {
+                if (!writeComplex && sec.key === 'complex') {
                     continue;
                 }
                 if (!isKaoPortOpen()) {
@@ -3757,6 +4517,515 @@
         });
     });
 
+    function setFwBanner(html, kind) {
+        const st = el('paramFwStatus');
+        if (st) {
+            st.textContent = html ? String(html).replace(/<[^>]+>/g, ' ') : '';
+        }
+        const b = el('paramFwBanner');
+        if (!b) {
+            return;
+        }
+        b.classList.remove('d-none', 'alert-info', 'alert-warning', 'alert-success', 'alert-danger', 'alert-secondary');
+        b.classList.add('alert', kind === 'warn' ? 'alert-warning' : kind === 'ok' ? 'alert-success' : kind === 'err' ? 'alert-danger' : kind === 'info' ? 'alert-info' : 'alert-secondary');
+    }
+
+    function attachFwNameMeta(file) {
+        if (!file) {
+            return file;
+        }
+        const parsed = K.parseFirmwareFilename(file.name || '');
+        if (!file.version && parsed.version) {
+            file.version = parsed.version;
+            file.versionTag = 'v' + parsed.version;
+        }
+        file.lkgHex = parsed.lkgHex || file.lkgHex || '';
+        file.lkgBytes = parsed.lkgBytes && parsed.lkgBytes.length ? parsed.lkgBytes : file.lkgBytes || [];
+        file.lkgKeys = parsed.lkgKeys && parsed.lkgKeys.length ? parsed.lkgKeys : file.lkgKeys || [];
+        file.sizeFromName = parsed.sizeFromName || 0;
+        return file;
+    }
+
+    function bytesToUint64LE(bytes) {
+        let v = 0n;
+        const n = Math.min(8, (bytes && bytes.length) || 0);
+        for (let i = 0; i < n; i += 1) {
+            v |= BigInt(bytes[i] & 0xff) << BigInt(8 * i);
+        }
+        return v;
+    }
+
+    function keyBytesLabel(bytes) {
+        return (bytes || [])
+            .map(function (b) {
+                return b.toString(16).padStart(2, '0').toUpperCase();
+            })
+            .join('');
+    }
+
+    /** Варианты SaveLkg / Access из хвоста имени TM-07_…_v…_XXXXXXXX_XXXXXXXX. */
+    function firmwareLkgCandidates(file) {
+        attachFwNameMeta(file);
+        const words = file.lkgKeys || [];
+        const keys = [];
+        const seenK = new Set();
+        const addKey = function (k) {
+            if (!k || k.length !== 4) {
+                return;
+            }
+            const id = keyBytesLabel(k);
+            if (seenK.has(id)) {
+                return;
+            }
+            seenK.add(id);
+            keys.push(k);
+        };
+        words.forEach(function (w) {
+            addKey(w);
+            addKey(w.slice().reverse());
+        });
+        const saves = [];
+        const seenS = new Set();
+        const addSave = function (bytes) {
+            if (!bytes || bytes.length < 8) {
+                return;
+            }
+            const v = bytesToUint64LE(bytes);
+            const id = v.toString(16);
+            if (!v || seenS.has(id)) {
+                return;
+            }
+            seenS.add(id);
+            saves.push(v);
+        };
+        if (file.lkgBytes && file.lkgBytes.length >= 8) {
+            addSave(file.lkgBytes);
+            addSave(file.lkgBytes.slice().reverse());
+        }
+        if (words.length >= 2) {
+            addSave(words[0].slice().reverse().concat(words[1].slice().reverse()));
+            addSave(words[1].concat(words[0]));
+        }
+        return { keys: keys, saves: saves, lkgHex: file.lkgHex || '' };
+    }
+
+    function parseFwList(j) {
+        const files = (j && j.files) || [];
+        return files
+            .map(function (f) {
+                const name = f.name || f.filename || '';
+                const version = K.normalizeFwVersion(f.version || f.versionTag || name);
+                return attachFwNameMeta({
+                    name: name,
+                    version: version,
+                    versionTag: version ? 'v' + version : '',
+                    lkgHex: f.lkgHex || '',
+                    size: f.size || 0,
+                });
+            })
+            .filter(function (f) {
+                return f.name && f.version;
+            });
+    }
+
+    /** Правильная прошивка: выбранный вручную файл, иначе из папки (по v…). */
+    function pickCorrectFwFile(files) {
+        if (window.__tm07FwLocal && window.__tm07FwLocal.name) {
+            return window.__tm07FwLocal;
+        }
+        const list = files || window.__tm07FwFiles || [];
+        return list[0] || null;
+    }
+
+    function renderFwPanel(opts) {
+        const o = opts || {};
+        const deviceVer = K.normalizeFwVersion(
+            o.deviceVer != null && o.deviceVer !== ''
+                ? o.deviceVer
+                : window.__paramDevicePassport && window.__paramDevicePassport.fwVersion
+        );
+        const file = pickCorrectFwFile();
+        window.__tm07FwPicked = file;
+        const folderVer = file && file.version ? file.version : '';
+        const connected = isKaoPortOpen();
+        const match = !!(folderVer && deviceVer && folderVer === deviceVer);
+        const dv = el('paramFwDeviceVer');
+        const fv = el('paramFwFolderVer');
+        const badge = el('paramFwMatch');
+        const btn = el('paramFwFlashBtn');
+        const st = el('paramFwStatus');
+        const banner = el('paramFwBanner');
+        if (dv) {
+            dv.textContent = deviceVer ? 'v' + deviceVer : '—';
+        }
+        const lkgEl = el('paramFwLkg');
+        if (lkgEl) {
+            lkgEl.textContent = (file && file.lkgHex) || '—';
+        }
+        if (fv) {
+            if (file && file.local) {
+                fv.textContent = (folderVer ? 'v' + folderVer : file.name) + ' (вручную)';
+            } else {
+                fv.textContent = folderVer ? 'v' + folderVer : 'нет файла';
+            }
+        }
+        if (badge) {
+            badge.className = 'badge rounded-pill ';
+            if (!connected) {
+                badge.className += 'text-bg-secondary';
+                badge.textContent = 'нет связи';
+            } else if (!folderVer) {
+                badge.className += 'text-bg-warning text-dark';
+                badge.textContent = 'нет файла — выберите вручную';
+            } else if (!deviceVer) {
+                badge.className += 'text-bg-warning text-dark';
+                badge.textContent = connected ? 'версия не считана' : 'ожидание версии';
+            } else if (match) {
+                badge.className += 'text-bg-success';
+                badge.textContent = 'сходится';
+            } else {
+                badge.className += 'text-bg-danger';
+                badge.textContent = 'не сходится';
+            }
+        }
+        if (btn) {
+            btn.disabled = !connected || !file || !!o.busy;
+            btn.title = file
+                ? 'Залить ' + (file.versionTag || file.name) + (file.local ? ' (выбранный файл)' : ' из папки firmware')
+                : 'Нет файла — выберите .bin вручную или положите в firmware/';
+        }
+        if (st && o.status != null) {
+            st.textContent = o.status;
+        } else if (st && !o.keepStatus) {
+            if (file && file.local) {
+                st.textContent = 'файл: ' + file.name;
+            } else if (connected && folderVer && deviceVer && !match) {
+                st.textContent = 'нужна прошивка v' + folderVer;
+            } else if (connected && match) {
+                st.textContent = '';
+            } else if (!folderVer) {
+                st.textContent = 'выберите .bin или положите в firmware/';
+            } else if (!connected) {
+                st.textContent = '';
+            }
+        }
+        if (banner) {
+            banner.classList.remove('d-none', 'alert-info', 'alert-warning', 'alert-success', 'alert-danger', 'alert-secondary');
+            banner.classList.add(
+                'alert',
+                !connected ? 'alert-secondary' : match ? 'alert-success' : folderVer ? 'alert-warning' : 'alert-secondary'
+            );
+        }
+    }
+
+    async function loadFirmwareList() {
+        const r = await fetch('/api/tm07-firmware.php?action=list', { credentials: 'same-origin' });
+        const j = await r.json();
+        if (!j.ok) {
+            throw new Error(j.error || 'список прошивок');
+        }
+        window.__tm07FwFiles = parseFwList(j);
+        return window.__tm07FwFiles;
+    }
+
+    async function readDeviceFwVersion() {
+        if (!dev) {
+            throw new Error('КАО не подключён');
+        }
+        const resp = await dev.readHolding(K.REG_SW_VER || 0x0007, 5, 5000);
+        const ver = K.trimRegisterText(K.modbusDataBytes(resp));
+        const passport = window.__paramDevicePassport || {};
+        passport.fwVersion = ver;
+        window.__paramDevicePassport = passport;
+        return K.normalizeFwVersion(ver);
+    }
+
+    function delayMs(ms) {
+        return new Promise(function (res) {
+            setTimeout(res, ms);
+        });
+    }
+
+    /** После заливки прибор перезапускается — сразу 0x0007 пустой. */
+    const FW_POST_FLASH_DELAY_MS = 8000;
+    const FW_POST_FLASH_RETRY_MS = 2000;
+    const FW_POST_FLASH_RETRIES = 8;
+
+    async function waitAndReadFwVersionAfterFlash() {
+        const totalSec = Math.round(FW_POST_FLASH_DELAY_MS / 1000);
+        log('Пауза ' + totalSec + ' с после прошивки (перезапуск прибора), DEFAULT_SETTINGS не выполняется.');
+        for (let left = totalSec; left > 0; left -= 1) {
+            renderFwPanel({
+                busy: true,
+                keepStatus: true,
+                status: 'ожидание перезапуска… ' + left + ' с',
+            });
+            await delayMs(1000);
+        }
+        let lastErr = null;
+        for (let i = 0; i < FW_POST_FLASH_RETRIES; i += 1) {
+            renderFwPanel({
+                busy: true,
+                keepStatus: true,
+                status: 'чтение версии ПО (' + (i + 1) + '/' + FW_POST_FLASH_RETRIES + ')…',
+            });
+            try {
+                const newVer = await readDeviceFwVersion();
+                if (newVer) {
+                    return newVer;
+                }
+            } catch (e) {
+                lastErr = e;
+                log('Версия ПО пока не отвечает: ' + (e.message || e));
+            }
+            await delayMs(FW_POST_FLASH_RETRY_MS);
+        }
+        throw lastErr || new Error('не удалось прочитать версию ПО после прошивки');
+    }
+
+    async function offerFirmwareAfterConnect() {
+        try {
+            if (!window.__tm07FwFiles || !window.__tm07FwFiles.length) {
+                await loadFirmwareList();
+            }
+        } catch (e) {
+            renderFwPanel({ status: 'папка прошивок: ' + (e.message || e) });
+        }
+        let deviceVer = K.normalizeFwVersion(window.__paramDevicePassport && window.__paramDevicePassport.fwVersion);
+        try {
+            deviceVer = await readDeviceFwVersion();
+        } catch (e) {
+            clogErr('firmware 0x0007', e);
+        }
+        renderFwPanel({ deviceVer: deviceVer });
+        const file = pickCorrectFwFile();
+        if (file && file.lkgHex) {
+            log('ЛКГ из имени файла: ' + file.lkgHex);
+        }
+        if (deviceVer) {
+            const need = file && file.version && file.version !== deviceVer;
+            log('Версия ПО (0x0007): v' + deviceVer + (need ? ' — не сходится с v' + file.version : file ? ' — сходится' : ''));
+        }
+    }
+
+    async function flashSelectedFirmware() {
+        let flashed = false;
+        let lastFwErr = null;
+        const file = pickCorrectFwFile();
+        if (!file || (!file.name && !file.bytes)) {
+            throw new Error('Нет файла прошивки — выберите .bin вручную или положите в firmware/');
+        }
+        if (!dev) {
+            throw new Error('КАО не подключён');
+        }
+        const label = file.versionTag || file.version || file.name;
+        log('Прошивка: залив ' + label + ' (кнопка «Залить» — подтверждение).');
+        renderFwPanel({ busy: true, keepStatus: true, status: 'загрузка ' + label + '…' });
+        let buf;
+        if (file.local && file.bytes) {
+            buf = file.bytes;
+        } else {
+            const r = await fetch(
+                '/api/tm07-firmware.php?action=file&name=' + encodeURIComponent(file.versionTag || file.version || file.name),
+                { credentials: 'same-origin' }
+            );
+            if (!r.ok) {
+                let msg = 'HTTP ' + r.status;
+                try {
+                    const j = await r.json();
+                    if (j && j.error) {
+                        msg = j.error;
+                    }
+                } catch (_e) {}
+                throw new Error(msg);
+            }
+            buf = new Uint8Array(await r.arrayBuffer());
+        }
+        if (!buf.length) {
+            throw new Error('Пустой файл прошивки');
+        }
+        log('Прошивка: ' + label + ' (' + file.name + '), ' + buf.length + ' байт.');
+        attachFwNameMeta(file);
+        if (file.sizeFromName && file.sizeFromName !== buf.length) {
+            log('Размер файла ' + buf.length + ' байт не совпадает с именем (' + file.sizeFromName + ').');
+        }
+        const cands = firmwareLkgCandidates(file);
+        if (!cands.keys.length && !cands.saves.length) {
+            throw new Error('В имени файла нет ЛКГ (ожидается TM-07_…_v…_XXXXXXXX_XXXXXXXX.bin)');
+        }
+        log('ЛКГ из имени файла: ' + cands.lkgHex);
+        try {
+            await ensureLockWriteReady({ allowConfirmOverride: false, strictLock: true });
+        } catch (_e) {}
+        if (typeof dev.openManufacturerLock === 'function') {
+            try {
+                await dev.openManufacturerLock();
+            } catch (e) {
+                log('Замок производителя: ' + (e.message || e));
+            }
+        }
+
+        const progress = function (done, total) {
+            const pct = total ? Math.round((done / total) * 100) : 0;
+            const st = el('paramFwStatus');
+            if (st) {
+                st.textContent = 'запись ' + label + ': ' + pct + '%';
+            }
+        };
+        const isLkgErr = function (e) {
+            return /0x0?b\b|exception\s*11|недопустимое значение лкг/i.test(String((e && e.message) || e || ''));
+        };
+        const tryDump = async function (armFn, retries) {
+            renderFwPanel({ busy: true, keepStatus: true, status: 'запись ' + label + '… 0%' });
+            await dev.writeFirmwareImage(buf, {
+                timeoutMs: 20000,
+                retries: retries,
+                armLkg: armFn,
+                onProgress: progress,
+            });
+            flashed = true;
+        };
+        const isCalibOpen =
+            window.__paramLockStatus &&
+            window.__paramLockStatus.raw != null &&
+            typeof isCalibLockOpen === 'function' &&
+            isCalibLockOpen(window.__paramLockStatus.raw);
+        if (isMfgOptLockOpen() || isCalibOpen) {
+            log('Замок открыт. Старт загрузки — ЛКГ-сессия из имени файла (без записи ключа на каждый блок 0x2002).');
+        }
+
+        for (let si = 0; si < cands.saves.length && !flashed; si += 1) {
+            for (let ki = 0; ki < Math.max(1, cands.keys.length) && !flashed; ki += 1) {
+                const save = cands.saves[si];
+                const access = cands.keys[ki] || cands.keys[0];
+                log(
+                    'Прошивка ЛКГ-сессия: SaveLkg 0x' +
+                        save.toString(16) +
+                        (access ? ', Access ' + keyBytesLabel(access) : '')
+                );
+                try {
+                    await beginLkgSession('прошивка', {
+                        force: true,
+                        allowManufacturer: true,
+                        saveLkg: save,
+                        accessKey: access,
+                    });
+                    await tryDump(async function () {
+                        if (access) {
+                            await dev.writeLkgKey(access, parseLkgReg(), 4000);
+                            await new Promise(function (r) {
+                                setTimeout(r, lkgConfig.delayMs);
+                            });
+                        }
+                    }, 2);
+                } catch (e) {
+                    lastFwErr = e;
+                    if (!isLkgErr(e)) {
+                        throw e;
+                    }
+                    log('Прошивка: 0x0B при этом ЛКГ — ' + (e.message || e));
+                }
+            }
+        }
+
+        if (!flashed && !(isMfgOptLockOpen() || isCalibOpen)) {
+            log('Прошивка: пробую заливку без записи ЛКГ из имени.');
+            try {
+                await tryDump(null, 1);
+            } catch (e) {
+                lastFwErr = e;
+            }
+        }
+
+        if (!flashed) {
+            throw lastFwErr || new Error('Недопустимое значение ЛКГ (0x0B) при старте загрузки 0x2000');
+        }
+        window.__tm07SkipDefaultSettingsAfterFlash = true;
+        log('Прошивка записана (' + buf.length + ' байт). DEFAULT_SETTINGS (п.2) не вызываем.');
+        let newVer = '';
+        try {
+            newVer = await waitAndReadFwVersionAfterFlash();
+            renderFwPanel({
+                deviceVer: newVer,
+                status: file.version && newVer === file.version ? 'залито, v' + newVer : 'залито, ПО v' + newVer,
+            });
+            log('Версия ПО после прошивки: v' + newVer);
+        } catch (e) {
+            renderFwPanel({
+                keepStatus: true,
+                status: 'залито, версия пока не считалась. ' + (e.message || e),
+            });
+            log('Версия ПО после прошивки не считалась: ' + (e.message || e));
+        }
+        try {
+            log('Инициализация замков после опроса ПО…');
+            let lock = await refreshLockStatus();
+            log('Статус замков: ' + describeLockStatus(lock.raw) + ' (' + lockRawHex(lock.raw) + ')');
+            if (!isLockWriteReady(lock.raw)) {
+                lock = await runAutoPassLocks({ force: true });
+                log('Статус замков после AutoPass: ' + describeLockStatus(lock.raw) + ' (' + lockRawHex(lock.raw) + ')');
+            }
+            if (isLockWriteReady(lock.raw)) {
+                log('Замки готовы к записи (' + lockRawHex(lock.raw) + ').');
+            }
+        } catch (e) {
+            log('Замки после прошивки: ' + (e.message || e));
+            clogErr('lock after flash', e);
+        }
+    }
+
+    el('paramFwFlashBtn')?.addEventListener('click', function () {
+        void flashSelectedFirmware()
+            .catch(function (err) {
+                log('<strong>Прошивка:</strong> ' + (err.message || String(err)));
+                renderFwPanel({ keepStatus: true, status: err.message || String(err) });
+            })
+            .finally(function () {
+                const btn = el('paramFwFlashBtn');
+                if (btn) {
+                    btn.disabled = !isKaoPortOpen() || !pickCorrectFwFile();
+                }
+            });
+    });
+    el('paramFwFile')?.addEventListener('change', function () {
+        const inp = el('paramFwFile');
+        const f = inp && inp.files && inp.files[0];
+        if (!f) {
+            return;
+        }
+        const version = K.normalizeFwVersion(f.name);
+        const reader = new FileReader();
+        reader.onload = function () {
+            const raw = reader.result;
+            window.__tm07FwLocal = attachFwNameMeta({
+                name: f.name,
+                version: version,
+                versionTag: version ? 'v' + version : '',
+                size: f.size,
+                local: true,
+                bytes: new Uint8Array(raw),
+            });
+            log(
+                'Выбран файл прошивки: ' +
+                    f.name +
+                    (version ? ' → ' + window.__tm07FwLocal.versionTag : '') +
+                    (window.__tm07FwLocal.lkgHex ? ', ЛКГ ' + window.__tm07FwLocal.lkgHex : '')
+            );
+            renderFwPanel({ status: 'выбран ' + f.name });
+        };
+        reader.onerror = function () {
+            renderFwPanel({ keepStatus: true, status: 'не удалось прочитать файл' });
+        };
+        reader.readAsArrayBuffer(f);
+    });
+    void loadFirmwareList()
+        .then(function () {
+            renderFwPanel({ deviceVer: '' });
+        })
+        .catch(function (e) {
+            renderFwPanel({ deviceVer: '', status: e.message || String(e) });
+        });
+
     window.TM07_PARAM_KAO = {
         isConnected: isKaoConnected,
         isPortOpen: isKaoPortOpen,
@@ -3793,31 +5062,49 @@
             let totalFail = 0;
             const Ops = window.TM07_WORKBENCH_OPS;
             const writeComplex =
-                !Ops || typeof Ops.isComplexOrder !== 'function' || Ops.isComplexOrder();
+                !Ops ||
+                typeof Ops.shouldWriteComplexParams !== 'function' ||
+                Ops.shouldWriteComplexParams();
             const sections = [{ steps: DOC.steps, title: 'основные', key: 'main' }].concat(
                 EXTRA?.sections || []
             );
+            const planned = [];
             for (const sec of sections) {
-                if (!writeComplex && (sec.key === 'meter' || sec.key === 'complex')) {
+                if (!writeComplex && sec.key === 'complex') {
                     continue;
                 }
-                if (sec.final || sec.key === 'final') {
-                    if (skipFinal) {
-                        continue;
-                    }
+                if ((sec.final || sec.key === 'final') && skipFinal) {
+                    continue;
                 }
-                if (!isKaoPortOpen()) {
-                    break;
-                }
-                await waitModbusIdle(120000);
                 if (!sec.steps || !sec.steps.length) {
                     continue;
                 }
-                const r = await runReadAllSteps(sec.steps, sec.title || sec.key || 'доп.');
-                if (r && !r.skipped) {
-                    totalOk += r.ok || 0;
-                    totalFail += r.fail || 0;
+                planned.push(sec);
+            }
+            const grand = planned.reduce(function (n, sec) {
+                return n + countReadableSteps(sec.steps);
+            }, 0);
+            batchParamRunning = true;
+            setBatchParamButtonsDisabled(true);
+            startBatchTimer(Math.max(1, grand));
+            try {
+                for (const sec of planned) {
+                    if (!isKaoPortOpen()) {
+                        break;
+                    }
+                    const r = await runReadAllSteps(sec.steps, sec.title || sec.key || 'доп.', {
+                        nested: true,
+                        accumulate: true,
+                    });
+                    if (r && !r.skipped) {
+                        totalOk += r.ok || 0;
+                        totalFail += r.fail || 0;
+                    }
                 }
+            } finally {
+                stopBatchTimer();
+                batchParamRunning = false;
+                setBatchParamButtonsDisabled(false);
             }
             log(
                 `<strong>Опрос завершён</strong> — прочитано ${totalOk}` +
@@ -3877,10 +5164,13 @@
                     skipEnsure78: true,
                     skipLockPreflight: true,
                     nested: true,
+                    accumulate: true,
                     skipAlreadyOk: skipAlreadyOk,
-                    // Маски 71/72/74/75/77: в начале уже записаны staging (0/0/3/3/0) —
-                    // в пакете «основные» пропускаем, чтобы не перезаписать полями (реальные И1…И4 — в финале).
-                    stagingMasks: true,
+                    // Порядок как в карте: п.2 DEFAULT_SETTINGS → … → маски 71/72/74/75/77 из полей
+                    // (staging 0/0/3/3/0). Не пишем staging ДО п.2 — DEFAULT_SETTINGS сбрасывает маски.
+                    // Реальные И1…И4 — только в финале (другие поля).
+                    preserveStepOrder: true,
+                    stagingMasks: false,
                 };
 
                 // Пропуск основных по отпечатку — только в явном resume (иначе похожий заказ не пишется).
@@ -3888,13 +5178,58 @@
                 if (resume) {
                     mainAlready = await isMainSectionAlreadyOnDevice();
                 }
+
+                const Ops = window.TM07_WORKBENCH_OPS;
+                const writeComplex =
+                    !Ops ||
+                    typeof Ops.shouldWriteComplexParams !== 'function' ||
+                    Ops.shouldWriteComplexParams();
+                const skipComplexName =
+                    Ops &&
+                    typeof Ops.shouldSkipComplexName === 'function' &&
+                    Ops.shouldSkipComplexName();
+                const skipTelemetryName =
+                    Ops &&
+                    typeof Ops.shouldSkipTelemetryName === 'function' &&
+                    Ops.shouldSkipTelemetryName();
+                let grand = 0;
+                if (!mainAlready) {
+                    grand += orderStepsForBatchWrite(DOC.steps, nestedOpts).length;
+                }
+                for (const sec of EXTRA?.sections || []) {
+                    // Заказ только на корректор (режим «счётчик»): комплекс не пишем.
+                    if (!writeComplex && sec.key === 'complex') {
+                        continue;
+                    }
+                    if (sec.key === 'final') {
+                        continue;
+                    }
+                    if (sec.steps && sec.steps.length) {
+                        let stepsForCount = sec.steps;
+                        if (sec.key === 'complex' && (skipComplexName || skipTelemetryName)) {
+                            stepsForCount = sec.steps.filter(function (s) {
+                                if (!s) return false;
+                                const id = Number(s.id);
+                                if (skipComplexName && id === 200) return false;
+                                if (skipTelemetryName && id === 227) return false;
+                                return true;
+                            });
+                        }
+                        grand += orderStepsForBatchWrite(stepsForCount, {
+                            nested: true,
+                            accumulate: true,
+                        }).length;
+                    }
+                }
+                startBatchTimer(Math.max(1, grand));
+
                 if (mainAlready) {
                     log(
                         '<strong>Основные параметры уже записаны в корректоре</strong> (отпечаток диапазонов/газа/Q) — пропуск п.6–79, переход к счётчику/комплексу.'
                     );
                 } else {
-                    // Staging масок: предупр.=0, тревоги=3; реальные маски — в финале.
-                    await writeMaskStagingDuringParam();
+                    // Маски пишем в пакете после п.2 (DEFAULT_SETTINGS), а не заранее —
+                    // иначе сброс настроек затирает staging 0/0/3/3/0 → в приборе остаётся 0xFFFFFFFF.
                     const mainResult = await runWriteAllSteps(DOC.steps, 'основные', nestedOpts);
                     if (mainResult && mainResult.lockBlocked) {
                         throw new Error(
@@ -3922,17 +5257,21 @@
                     throw new Error('КАО отключился после записи основных — счётчик/комплекс не записаны.');
                 }
 
-                const Ops = window.TM07_WORKBENCH_OPS;
-                const writeComplex =
-                    !Ops || typeof Ops.isComplexOrder !== 'function' || Ops.isComplexOrder();
                 if (!writeComplex) {
                     log(
-                        '<strong>Только корректор</strong> (в заказе нет ПК-ТМ-) — параметры счётчика и комплекса не пишем.'
+                        '<strong>Только корректор + счётчик</strong> — параметры комплекса не пишем; счётчик (п.100+) пишем.'
+                    );
+                } else if (skipComplexName || skipTelemetryName) {
+                    log(
+                        '<strong>Корректор + счётчик + комплекс</strong> — регистры комплекса пишем' +
+                            (skipComplexName ? ', <em>п.200 не записываем</em>' : '') +
+                            (skipTelemetryName ? ', <em>п.227 не записываем (нет .БТ)</em>' : '') +
+                            '.'
                     );
                 }
 
                 for (const sec of EXTRA?.sections || []) {
-                    if (!writeComplex && (sec.key === 'meter' || sec.key === 'complex')) {
+                    if (!writeComplex && sec.key === 'complex') {
                         continue;
                     }
                     if (!isKaoConnected()) {
@@ -3946,10 +5285,21 @@
                         await writeFinalComplexModeFlags();
                         continue;
                     }
-                    if (sec.steps && sec.steps.length) {
-                        const secResult = await runWriteAllSteps(sec.steps, sec.title || sec.key || 'доп.', {
+                    let secSteps = sec.steps;
+                    if (sec.key === 'complex' && (skipComplexName || skipTelemetryName)) {
+                        secSteps = (sec.steps || []).filter(function (s) {
+                            if (!s) return false;
+                            const id = Number(s.id);
+                            if (skipComplexName && id === 200) return false;
+                            if (skipTelemetryName && id === 227) return false;
+                            return true;
+                        });
+                    }
+                    if (secSteps && secSteps.length) {
+                        const secResult = await runWriteAllSteps(secSteps, sec.title || sec.key || 'доп.', {
                             skipLockPreflight: true,
                             nested: true,
+                            accumulate: true,
                             skipAlreadyOk: skipAlreadyOk,
                         });
                         if (secResult && (secResult.lockBlocked || secResult.aborted || secResult.fail > 0)) {
@@ -3981,13 +5331,14 @@
                 );
                 return { ok: true };
             } finally {
+                stopBatchTimer();
                 batchParamRunning = false;
                 setBatchParamButtonsDisabled(false);
             }
         },
         setDatetimeNow: function (stepId) {
             const sid = stepId == null ? 20 : stepId;
-            const s = String(nowUnixForDevice());
+            const s = formatUnixMoscow(nowUnixForDevice());
             const inp = el('val_' + sid);
             if (inp && !inp.disabled) {
                 inp.value = s;
@@ -3995,6 +5346,9 @@
             }
         },
         nowUnixForDevice: nowUnixForDevice,
+        readDeviceFwVersion: readDeviceFwVersion,
+        offerFirmwareAfterConnect: offerFirmwareAfterConnect,
+        flashSelectedFirmware: flashSelectedFirmware,
         /** Точечная запись шагов (напр. п.102–104 счётчика после основной параметризации). */
         writeStepsByIds: async function (stepIds, options) {
             if (!isKaoConnected()) {
@@ -4008,6 +5362,7 @@
             await waitModbusIdle(120000);
             batchParamRunning = true;
             setBatchParamButtonsDisabled(true);
+            startBatchTimer(Math.max(1, steps.length));
             try {
                 const passport = window.__paramDevicePassport;
                 if (passport && passport.mapVersion != null) {
@@ -4041,6 +5396,7 @@
                 }
                 return result;
             } finally {
+                stopBatchTimer();
                 batchParamRunning = false;
                 setBatchParamButtonsDisabled(false);
             }

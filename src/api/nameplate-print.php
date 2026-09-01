@@ -105,6 +105,7 @@ try {
             'templateExists' => is_readable($templatePath),
             'generatedDir' => nameplate_generated_dir(),
             'pdfReady' => is_readable(dirname(__DIR__) . '/vendor/autoload.php'),
+            'gotenberg' => nameplate_gotenberg_health(),
         ]);
     }
 
@@ -152,6 +153,57 @@ try {
             nameplate_json(['ok' => false, 'error' => $e->getMessage()], 403);
         }
         nameplate_json(['ok' => false, 'error' => $e->getMessage()], 403);
+    }
+
+    if ($method === 'GET' && $action === 'print-page') {
+        $config = nameplate_load_config();
+        $pa = is_array($config['printAgent'] ?? null) ? $config['printAgent'] : [];
+        $dlg = is_array($pa['dialog'] ?? null) ? $pa['dialog'] : [];
+        $wmm = (float) ($dlg['pageWidthMm'] ?? 58);
+        $hmm = (float) ($dlg['pageHeightMm'] ?? 20);
+        $serial = trim((string) ($_GET['serial'] ?? ''));
+        $file = trim((string) ($_GET['file'] ?? ''));
+        $pngBytes = '';
+
+        if ($file !== '') {
+            $safe = nameplate_safe_generated_file($file);
+            if (!str_ends_with(strtolower($safe), '.png')) {
+                nameplate_json(['ok' => false, 'error' => 'print-page: нужен PNG шильдика'], 400);
+            }
+            $path = nameplate_generated_dir() . '/' . $safe;
+            if (!is_readable($path)) {
+                nameplate_json(['ok' => false, 'error' => 'Файл не найден'], 404);
+            }
+            $pngBytes = (string) file_get_contents($path);
+            if ($serial === '' && preg_match('/^(\d{10})-/', $safe, $m)) {
+                $serial = $m[1];
+            }
+        } else {
+            if ($serial === '') {
+                nameplate_json(['ok' => false, 'error' => 'Укажите file или serial'], 400);
+            }
+            $payload = [
+                'kind' => strtolower(trim((string) ($_GET['kind'] ?? 'corrector'))),
+                'serial' => $serial,
+                'orderNumber' => trim((string) ($_GET['orderNumber'] ?? '')),
+                'productTitle' => trim((string) ($_GET['productTitle'] ?? '')),
+                'manufactureDate' => trim((string) ($_GET['manufactureDate'] ?? '')),
+                'organizationName' => trim((string) ($_GET['organizationName'] ?? '')),
+                'configText' => trim((string) ($_GET['configText'] ?? '')),
+                'orderConfig' => trim((string) ($_GET['orderConfig'] ?? '')),
+            ];
+            $generated = nameplate_generate_png_file(
+                $payload,
+                $config,
+                nameplate_resolve_fields_override($payload, null)
+            );
+            $pngBytes = (string) file_get_contents((string) $generated['path']);
+            $serial = trim((string) ($payload['serial'] ?? $serial));
+        }
+
+        header('Content-Type: text/html; charset=utf-8');
+        echo nameplate_browser_print_html($pngBytes, $serial, $wmm, $hmm);
+        exit;
     }
 
     if ($method === 'POST' && $action === 'print-direct') {
@@ -268,6 +320,11 @@ try {
             'printFormat' => $job['printFormat'] ?? null,
             'tspl' => $job['tspl'] ?? null,
             'tsplDownloadUrl' => $job['tsplDownloadUrl'] ?? null,
+            'printPageUrl' => $job['printPageUrl'] ?? null,
+            'pdfPreviewUrl' => $job['pdfPreviewUrl'] ?? null,
+            'pdfDownloadUrl' => $job['pdfDownloadUrl'] ?? null,
+            'pdfFilename' => $job['pdfFilename'] ?? null,
+            'gotenbergError' => $job['gotenbergError'] ?? null,
             'printer' => $job['printer'] ?? null,
             'btxml' => $job['btxml'] ?? null,
             'htmlFallback' => $job['htmlFallback'] ?? null,
@@ -288,6 +345,9 @@ try {
                 'previewUrl' => $job['previewUrl'] ?? null,
                 'pngDownloadUrl' => $job['pngDownloadUrl'] ?? null,
                 'tsplDownloadUrl' => $job['tsplDownloadUrl'] ?? null,
+                'printPageUrl' => $job['printPageUrl'] ?? null,
+                'pdfPreviewUrl' => $job['pdfPreviewUrl'] ?? null,
+                'pdfDownloadUrl' => $job['pdfDownloadUrl'] ?? null,
                 'filename' => $job['filename'] ?? null,
             ], static fn ($v) => $v !== null)));
         }

@@ -110,11 +110,7 @@
         }
         highlightedEl = el;
         el.classList.add('wb-guide-highlight');
-        try {
-            el.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        } catch (_e) {
-            el.scrollIntoView(true);
-        }
+        // Без scrollIntoView — иначе страница прыгает при подсказках/кнопках.
     }
 
     function getNextSensorKey() {
@@ -290,8 +286,8 @@
                     html:
                         '<p class="mb-2">Параметры записываются в корректор. Пожалуйста, подождите.</p>' +
                         '<div class="text-center my-3 py-3 px-2 rounded-3 bg-light">' +
-                        '<div id="wbWriteTimerLeft" class="fs-3 fw-bold lh-sm text-body">⏳ расчёт…</div>' +
-                        '<div class="small text-body-secondary mt-1">прошло <span id="wbWriteTimerElapsed">—</span> · шаг <span id="wbWriteTimerStep">—</span></div>' +
+                        '<div id="wbWriteTimerLeft" class="fs-3 fw-bold lh-sm text-body">0%</div>' +
+                        '<div class="small text-body-secondary mt-1">шаг <span id="wbWriteTimerElapsed">—</span> · <span id="wbWriteTimerStep">0%</span></div>' +
                         '</div>' +
                         '<div class="d-flex align-items-center justify-content-center gap-2 text-body-secondary">' +
                         '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span>' +
@@ -307,7 +303,7 @@
                     icon: 'bi-check-circle',
                     title: 'Готово!',
                     html:
-                        '<p class="mb-2">Параметризация завершена успешно. Паспорт(а) DOCX сформированы автоматически.</p>' +
+                        '<p class="mb-2">Параметризация завершена успешно.</p>' +
                         '<div id="wbPassportLinks" class="mb-2 d-none"></div>' +
                         '<p class="mb-0 small text-body-secondary">Нажмите «Следующий прибор», чтобы начать новый цикл.</p>',
                     target: null,
@@ -332,82 +328,40 @@
     }
 
     function ensureModal() {
-        if (modalInstance) {
-            return modalInstance;
-        }
-        const el = $('wbGuideModal');
-        if (!el || !window.bootstrap) {
-            return null;
-        }
-        modalInstance = window.bootstrap.Modal.getOrCreateInstance(el, {
-            backdrop: 'static',
-            keyboard: false,
-        });
-        return modalInstance;
+        return null;
     }
 
     function renderModal(phase, extraHtml) {
-        if (isGuideDisabled() && phase !== 'writing' && phase !== 'done' && phase !== 'error') {
+        void phase;
+        void extraHtml;
+        hideGuideModal();
+    }
+
+    function hideGuideModal() {
+        clearHighlight();
+        const el = $('wbGuideModal');
+        if (!el) {
             return;
         }
-
-        const content = phaseContent(phase);
-        if (!content) {
-            return;
-        }
-
-        const badge = $('wbGuideStepBadge');
-        const titleEl = $('wbGuideTitle');
-        const bodyEl = $('wbGuideBody');
-        const iconEl = $('wbGuideIcon');
-        const actionBtn = $('wbGuideAction');
-        const skipBtn = $('wbGuideSkip');
-        const footer = $('wbGuideFooter');
-
-        if (badge) {
-            if (content.step) {
-                badge.textContent = 'Шаг ' + content.step + ' из ' + TOTAL_STEPS;
-                badge.classList.remove('d-none');
-            } else {
-                badge.classList.add('d-none');
+        try {
+            if (window.bootstrap) {
+                const inst = window.bootstrap.Modal.getInstance(el);
+                if (inst) {
+                    inst.hide();
+                }
             }
-        }
-        if (iconEl) {
-            iconEl.className = 'bi fs-3 me-2 ' + (content.icon || 'bi-info-circle');
-            iconEl.classList.toggle('text-success', !!content.success);
-            iconEl.classList.toggle('text-danger', !!content.danger);
-            iconEl.classList.toggle('text-primary', !content.success && !content.danger);
-        }
-        if (titleEl) {
-            titleEl.textContent = content.title;
-        }
-        if (bodyEl) {
-            bodyEl.innerHTML = extraHtml || content.html;
-        }
-        if (footer) {
-            footer.classList.toggle('d-none', !!content.hideFooter);
-        }
-        if (actionBtn) {
-            if (content.action) {
-                actionBtn.textContent = content.action;
-                actionBtn.classList.remove('d-none');
-                actionBtn.classList.toggle('btn-success', !!content.success);
-                actionBtn.classList.toggle('btn-warning', phase === 'parametrize');
-                actionBtn.classList.toggle('btn-primary', phase !== 'parametrize' && !content.success);
-            } else {
-                actionBtn.classList.add('d-none');
+        } catch (_e) {}
+        el.classList.remove('show');
+        el.setAttribute('aria-hidden', 'true');
+        el.style.display = 'none';
+        document.querySelectorAll('.modal-backdrop').forEach(function (bd) {
+            if (bd && bd.parentNode) {
+                bd.parentNode.removeChild(bd);
             }
-        }
-        if (skipBtn) {
-            skipBtn.classList.toggle('d-none', phase === 'writing' || phase === 'done');
-        }
-
-        highlightTarget(content.target);
-
-        const modal = ensureModal();
-        if (modal) {
-            modal.show();
-        }
+        });
+        document.body.classList.remove('modal-open');
+        document.body.style.removeProperty('overflow');
+        document.body.style.removeProperty('padding-right');
     }
 
     function scheduleRefresh(delayMs) {
@@ -421,46 +375,23 @@
     }
 
     function refreshGuide(fromAuto) {
-        if (isGuideDisabled() && !writing && !manualPhase) {
-            clearHighlight();
-            return;
-        }
-
-        const phase = resolvePhase();
-        if (phase === lastPhase && fromAuto && phase !== 'qr') {
-            return;
-        }
-
-        if (fromAuto && lastPhase && phase !== lastPhase) {
-            const prev = phaseContent(lastPhase);
-            const next = phaseContent(phase);
-            if (prev && next && prev.autoAdvance && isConnected()) {
-                renderModal(phase);
-                lastPhase = phase;
-                return;
-            }
-        }
-
-        if (phase !== lastPhase || phase === 'qr' || phase === 'meter' || phase === 'assembly' || phase === 'error') {
-            renderModal(phase);
-            lastPhase = phase;
-        } else if (phase === 'qr') {
-            renderModal('qr');
-        }
+        void fromAuto;
+        hideGuideModal();
     }
 
     function showErrors(messages) {
-        manualPhase = 'error';
-        lastPhase = '';
-        const html =
-            '<ul class="mb-0 ps-3">' +
-            messages
-                .map(function (m) {
-                    return '<li>' + m + '</li>';
-                })
-                .join('') +
-            '</ul>';
-        renderModal('error', html);
+        manualPhase = '';
+        hideGuideModal();
+        const text = (messages || []).filter(Boolean).join(' ');
+        const st = $('paramOrder1cStatus') || $('paramLog');
+        if (st && text) {
+            if (st.id === 'paramLog') {
+                st.innerHTML += '[' + new Date().toLocaleTimeString() + '] ' + text + '<br>';
+            }
+        }
+        try {
+            window.dispatchEvent(new CustomEvent('tm07-guide-error', { detail: { messages: messages } }));
+        } catch (_e) {}
     }
 
     function clearError() {
@@ -472,21 +403,17 @@
 
     function setWriting(on) {
         writing = !!on;
-        if (on) {
-            manualPhase = '';
+        if (!on) {
             lastPhase = '';
-            renderModal('writing');
-        } else {
-            lastPhase = '';
-            scheduleRefresh(300);
         }
+        hideGuideModal();
     }
 
     function showDone(passportFiles) {
         writing = false;
-        manualPhase = 'done';
+        manualPhase = '';
         lastPhase = '';
-        renderModal('done');
+        hideGuideModal();
         const Passport = window.TM07_PASSPORT;
         if (Passport && typeof Passport.renderPassportLinks === 'function') {
             Passport.renderPassportLinks(passportFiles || Passport.getLastFiles());
@@ -621,10 +548,7 @@
         });
 
         function tryOpenOnEnter() {
-            if (isGuideDisabled() || isModalVisible()) {
-                return;
-            }
-            openGuideOnEnter();
+            hideGuideModal();
         }
 
         window.addEventListener('load', function () {

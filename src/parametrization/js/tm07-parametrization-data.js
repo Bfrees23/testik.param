@@ -56,7 +56,7 @@
 
             title: 'Команда сохранение и применение настроек DEFAULT_SETTINGS (доступ 1.2.3.4 - K; 3.4 - CS)',
 
-            hint: '0x06B4; без LKG; команда 2; нужен замок производителя (AutoPass); не в автопакете PRM',
+            hint: '0x06B4; без LKG; команда 2; нужен замок производителя (AutoPass); первая в автопакете «Параметризировать»',
 
             defaultNum: 2,
 
@@ -112,9 +112,9 @@
 
         },
 
-        { id: 80, reg: 0x0024, g: 'P', type: 'dt', regCount: 2, title: 'Дата поверки корректора (Повер.1) (Меню 1.3.5) (*)', hint: 'REG_SYS_LAST_VERIF_DATE, 0x0024', defaultVal: '01.01.2000', writeLkg: true },
+        { id: 80, reg: 0x0024, g: 'P', type: 'dt', regCount: 2, title: 'Дата поверки корректора (Повер.1) (Меню 1.3.5) (*)', hint: 'REG_SYS_LAST_VERIF_DATE, 0x0024', defaultVal: '', writeLkg: true },
 
-        { id: 81, reg: 0x0026, g: 'P', type: 'dt', regCount: 2, title: 'Дата следующей поверки корректора (Повер.2) (Меню 1.3.6) (*)', hint: 'REG_SYS_NEXT_VERIF_DATE, 0x0026', defaultVal: '01.01.2000', writeLkg: true },
+        { id: 81, reg: 0x0026, g: 'P', type: 'dt', regCount: 2, title: 'Дата следующей поверки корректора (Повер.2) (Меню 1.3.6) (*)', hint: 'REG_SYS_NEXT_VERIF_DATE, 0x0026', defaultVal: '', writeLkg: true },
 
         { id: 6, reg: 0x0029, g: 'D', type: 'f', title: 'Минимальное значение диапазона измерений абсолютного давления газа корректора (Pmin) (Меню 1.3.8) (*)', hint: 'кПа', writeLkg: true },
 
@@ -222,7 +222,7 @@
 
         { id: 58, reg: 0x0207, g: 'I', type: 'q', title: 'Серийный номер чувствительного элемента преобразователя давления газа', readOnly: true, writeLkg: false },
 
-        { id: 59, reg: 0x020b, g: 'I', type: 'q', title: 'Серийный номер чувствительного элемента преобразователя давления газа в памяти корректора. (запоминается если отправить на запись)', hint: 'Команда 1 без LKG после опроса п.58; CorrReader PRM: 0x020B=1', defaultVal: '1', writeLkg: false, sensorMemoryCmd: true },
+        { id: 59, reg: 0x020b, g: 'I', type: 'q', title: 'Серийный номер чувствительного элемента преобразователя давления газа в памяти корректора. (запоминается если отправить на запись)', hint: 'Команда 1 с Access-ЛКГ после опроса п.58; PRM: 0x020B=1', defaultVal: '1', writeLkg: false, sensorMemoryCmd: true },
 
         { id: 60, reg: 0x0282, g: 'T', type: 'w', title: 'Режим измерения температуры газа (1-подстановочный; 2-измерение)', hint: '1 подстановка, 2 измерение', writeLkg: true, u8: true },
 
@@ -246,9 +246,8 @@
 
         { id: 70, reg: 0x0469, g: 'V', type: 'w', title: 'Период измерения', hint: 'Uint16; обычно 60', defaultNum: 60, writeLkg: true, hidden: true },
 
-        // Маски (п.71/72/74/75/77): при основной «Параметризовать» пишутся staging —
-        // предупр. (71/72)=0, тревоги (74/75)=3, аварии (77)=0.
-        // Реальные маски И1…И4 (исполнение комплекса) — в финальной секции (кнопка «Записать»).
+        // Маски (п.71/72/74/75/77): в основной «Параметризовать» пишутся staging 0/0/3/3/0
+        // после п.2 DEFAULT_SETTINGS (иначе сброс оставляет 0xFFFFFFFF). Реальные И1…И4 — в финале.
         { id: 71, reg: 0x04d2, g: 'A', type: 'u', title: 'Маска включенных предупреждений (поставщик)', hint: 'И1=0x3C003 · И2=0x3C003 · И3=0x3C003 · И4=0x3C003', defaultVal: '0', writeLkg: true, paramMask: true },
         { id: 72, reg: 0x04d4, g: 'A', type: 'u', title: 'Маска включенных предупреждений (производитель)', hint: 'И1=0x3C3FF · И2=0x3CFFF · И3=0x3F3FF · И4=0x3FFFF', defaultVal: '0', writeLkg: true, paramMask: true },
         { id: 74, reg: 0x0544, g: 'A', type: 'u', title: 'Маска включенных тревог (производитель)', hint: 'И1=0x43FF · И2=0x4FFF · И3=0x73FF · И4=0x7FFF', defaultVal: '3', writeLkg: true, paramMask: true },
