@@ -8,6 +8,12 @@
         { href: '/index.html', label: 'Главная', match: [/^\/index\.html$/, /^\/$/] },
         { href: '/tm07-workbench.html', label: 'Рабочее место', match: [/^\/tm07-workbench\.html$/] },
         {
+            href: '/pkd160.html',
+            label: 'ПКД-160',
+            match: [/^\/pkd160\.html$/],
+            adminOnly: true,
+        },
+        {
             href: '/test-process-m90-15c.html',
             label: 'Калибровка',
             match: [/^\/test-process-m90-15c\.html$/],
@@ -23,7 +29,7 @@
     }
 
     function isCalibrationPage() {
-        return /^\/test-process-m90-15c\.html$/.test(window.location.pathname);
+        return /^\/(test-process-m90-15c|pkd160)\.html$/.test(window.location.pathname);
     }
 
     function navLinksHtml(adminLoggedIn) {
@@ -33,12 +39,20 @@
             .map(function (item) {
                 const active = isActive(item);
                 const adminCls = item.adminOnly ? ' bench-nav-link--admin' : '';
+                let href = item.href;
+                if (
+                    href.indexOf('tm07-workbench.html') >= 0 &&
+                    window.TM07_BENCH_EVENTS &&
+                    typeof window.TM07_BENCH_EVENTS.withWorkstationQuery === 'function'
+                ) {
+                    href = window.TM07_BENCH_EVENTS.withWorkstationQuery(href);
+                }
                 return (
                     '<li><a class="bench-nav-link' +
                     adminCls +
                     (active ? ' is-active' : '') +
                     '" href="' +
-                    item.href +
+                    href +
                     '"' +
                     (active ? ' aria-current="page"' : '') +
                     (item.adminOnly ? ' title="Только администратор"' : '') +

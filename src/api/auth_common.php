@@ -51,6 +51,18 @@ function auth_hash_file(): string
 }
 
 /**
+ * Логин администратора: ADMIN_LOGIN в .env, по умолчанию «admin».
+ */
+function auth_admin_login(): string
+{
+    $login = trim((string) (getenv('ADMIN_LOGIN') ?: ''));
+    if ($login === '') {
+        return 'admin';
+    }
+    return $login;
+}
+
+/**
  * Хеш пароля админа. Fail-closed: без файла и без ADMIN_PASSWORD хеш не создаётся.
  */
 function auth_ensure_password_hash(): string
@@ -198,10 +210,55 @@ function auth_is_admin(): bool
     return !empty($_SESSION['admin']) && $_SESSION['admin'] === true;
 }
 
-function auth_login(): void
+/** Роль «настройка рабочего места» (конфигуратор). */
+const AUTH_ROLE_CONFIG = 'config';
+/** Роль «мониторинг» (привязка, логи, сессии, БД). */
+const AUTH_ROLE_MONITOR = 'monitor';
+
+/** Допустимые роли администратора. */
+function auth_admin_roles(): array
+{
+    return [AUTH_ROLE_CONFIG, AUTH_ROLE_MONITOR];
+}
+
+/** Роль текущего администратора (null, если не админ). */
+function auth_admin_role(): ?string
+{
+    if (!auth_is_admin()) {
+        return null;
+    }
+    $role = (string) ($_SESSION['admin_role'] ?? '');
+    return in_array($role, auth_admin_roles(), true) ? $role : null;
+}
+
+/** Требовать вход администратора с конкретной ролью. */
+function auth_require_admin_role(string $role): void
+{
+    if (auth_admin_role() !== $role) {
+        http_response_code(403);
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'success' => false,
+            'error' => 'Недостаточно прав для этого раздела',
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+}
+
+function auth_admin_session_login(): string
+{
+    return trim((string) ($_SESSION['admin_login'] ?? ''));
+}
+
+function auth_login(string $login, string $role = AUTH_ROLE_CONFIG): void
 {
     auth_session_start();
+    if (!in_array($role, auth_admin_roles(), true)) {
+        $role = AUTH_ROLE_CONFIG;
+    }
     $_SESSION['admin'] = true;
+    $_SESSION['admin_login'] = $login;
+    $_SESSION['admin_role'] = $role;
     $_SESSION['login_at'] = time();
     session_regenerate_id(true);
 }
@@ -210,7 +267,7 @@ function auth_logout(): void
 {
     auth_session_start();
     // Не уничтожаем всю PHP-сессию: оператор / заказ / рабочее место живут в тех же ключах.
-    unset($_SESSION['admin'], $_SESSION['login_at']);
+    unset($_SESSION['admin'], $_SESSION['admin_login'], $_SESSION['admin_role'], $_SESSION['login_at']);
 }
 
 function auth_require_admin(): void

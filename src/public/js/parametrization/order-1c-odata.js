@@ -247,6 +247,885 @@
         return entity + '?' + buildOrderYearFilterQuery(number);
     }
 
+    /** Имя элемента перечисления 1С СтатусыЗаказовНаПроизводство2_2 (регистр важен для OData). */
+    const ACTIVE_ORDER_STATUS = 'КПроизводству';
+    /** Если 1С отклонила $filter по Статус — больше не долбим 400, сразу client-side отбор. */
+    const STORAGE_STATUS_FILTER_MODE = 'tm07_odata_status_filter_mode_v2';
+    const STORAGE_KNOWN_ORDERS = 'tm07_known_active_orders_v1';
+    const STORAGE_PENDING_NOTIFY = 'tm07_pending_notify_orders_v1';
+    /** В рабочее время (МСК) опрос чаще — чтобы оператор быстрее увидел новый заказ. */
+    const ACTIVE_ORDERS_POLL_MS = 60000;
+    const ACTIVE_ORDERS_POLL_OFFHOURS_MS = 5 * 60000;
+    const WORKDAY_MSK_FROM = 8;
+    const WORKDAY_MSK_TO = 17;
+
+    /**
+     * Рабочий день стенда: 08:00–17:00 Europe/Moscow (до 17:00, в 17:00 уже не уведомляем).
+     */
+    function isMoscowWorkHours(date) {
+        const d = date || new Date();
+        try {
+            const parts = new Intl.DateTimeFormat('en-GB', {
+                timeZone: 'Europe/Moscow',
+                hour: 'numeric',
+                hour12: false,
+                weekday: 'short',
+            }).formatToParts(d);
+            let hour = null;
+            let weekday = '';
+            parts.forEach(function (p) {
+                if (p.type === 'hour') hour = parseInt(p.value, 10);
+                if (p.type === 'weekday') weekday = p.value;
+            });
+            if (hour == null || Number.isNaN(hour)) {
+                return false;
+            }
+            // Пн–Пт (английские short в en-GB: Mon…Fri)
+            const workDays = { Mon: 1, Tue: 1, Wed: 1, Thu: 1, Fri: 1 };
+            if (!workDays[weekday]) {
+                return false;
+            }
+            return hour >= WORKDAY_MSK_FROM && hour < WORKDAY_MSK_TO;
+        } catch (_e) {
+            // запасной вариант без Intl timezone
+            const utc = d.getTime() + d.getTimezoneOffset() * 60000;
+            const msk = new Date(utc + 3 * 3600000);
+            const day = msk.getDay(); // 0=вс
+            if (day === 0 || day === 6) return false;
+            const h = msk.getHours();
+            return h >= WORKDAY_MSK_FROM && h < WORKDAY_MSK_TO;
+        }
+    }
+
+    function loadPendingNotifyOrders() {
+        try {
+            const raw = localStorage.getItem(STORAGE_PENDING_NOTIFY);
+            const arr = raw ? JSON.parse(raw) : [];
+            return Array.isArray(arr) ? arr : [];
+        } catch (_e) {
+            return [];
+        }
+    }
+
+    function savePendingNotifyOrders(orders) {
+        try {
+            localStorage.setItem(STORAGE_PENDING_NOTIFY, JSON.stringify((orders || []).slice(0, 100)));
+        } catch (_e) {}
+    }
+
+    function mergePendingNotify(newOrders) {
+        const pending = loadPendingNotifyOrders();
+        const byNum = Object.create(null);
+        pending.forEach(function (o) {
+            if (o && o.number) byNum[o.number] = o;
+        });
+        (newOrders || []).forEach(function (o) {
+            if (o && o.number) byNum[o.number] = o;
+        });
+        const merged = Object.keys(byNum).map(function (k) {
+            return byNum[k];
+        });
+        savePendingNotifyOrders(merged);
+        return merged;
+    }
+
+    function isActiveProductionStatus(raw) {
+        const s = formatOrderStatus(raw)
+            .toLowerCase()
+            .replace(/\s+/g, '')
+            .replace(/ё/g, 'е');
+        return s === 'кпроизводству' || s.indexOf('кпроизводству') >= 0;
+    }
+
+    function currentYearBounds() {
+        const year = new Date().getFullYear();
+        return {
+            from: year + '-01-01T00:00:00',
+            to: year + 1 + '-01-01T00:00:00',
+            year: year,
+        };
+    }
+
+    /**
+     * Список заказов текущего года со статусом кПроизводству.
+     * $filter по Статус; при ошибке 1С — запасной запрос без статуса и отбор на клиенте.
+     */
+    function buildActiveOrdersPath(entity, opts) {
+        const ent = String(entity || DEFAULT_ENTITY).trim() || DEFAULT_ENTITY;
+        const bounds = currentYearBounds();
+        const top = (opts && opts.top) || 150;
+        const status = (opts && opts.status) || ACTIVE_ORDER_STATUS;
+        const filter =
+            "Date ge datetime'" +
+            bounds.from +
+            "' and Date lt datetime'" +
+            bounds.to +
+            "' and Статус eq '" +
+            escapeODataString(status) +
+            "'";
+        return (
+            ent +
+            '?$format=json&$filter=' +
+            filter +
+            '&$select=Ref_Key,Number,Date,Статус&$orderby=Date desc&$top=' +
+            String(top)
+        );
+    }
+
+    function buildRecentOrdersPath(entity, opts) {
+        const ent = String(entity || DEFAULT_ENTITY).trim() || DEFAULT_ENTITY;
+        const bounds = currentYearBounds();
+        const top = (opts && opts.top) || 200;
+        const filter =
+            "Date ge datetime'" +
+            bounds.from +
+            "' and Date lt datetime'" +
+            bounds.to +
+            "'";
+        return (
+            ent +
+            '?$format=json&$filter=' +
+            filter +
+            '&$select=Ref_Key,Number,Date,Статус&$orderby=Date desc&$top=' +
+            String(top)
+        );
+    }
+
+    function mapOrderListRow(row) {
+        const number = normalizeOrderNumber(row && row.Number);
+        return {
+            number: number,
+            rawNumber: row && row.Number != null ? String(row.Number) : number,
+            date: row && row.Date != null ? String(row.Date) : '',
+            status: formatOrderStatus(row && row['Статус']),
+            refKey: row && row.Ref_Key != null ? String(row.Ref_Key) : '',
+            raw: row,
+        };
+    }
+
+    /**
+     * Классификация по номенклатуре/характеристике заказа.
+     * relevant: комплекс ПК-ТМ или корректор ТМ-07; иначе — не для стенда.
+     */
+    function classifyOrderNomenclatureKind(text) {
+        const t = String(text || '');
+        if (!t.trim()) {
+            return 'other';
+        }
+        if (/ПК-ТМ-/i.test(t) || /комплекс\s+промышленного/i.test(t)) {
+            return 'complex';
+        }
+        if (/Корректор\s+объ[её]ма\s+газа\s+ТМ-07/i.test(t)) {
+            return 'corrector';
+        }
+        if (/корректор/i.test(t) && /ТМ[\s\-]?07/i.test(t) && !/комплекс\s+промышленного/i.test(t)) {
+            return 'corrector';
+        }
+        return 'other';
+    }
+
+    function isTm07RelevantNomenclature(text) {
+        const kind = classifyOrderNomenclatureKind(text);
+        return kind === 'complex' || kind === 'corrector';
+    }
+
+    const STORAGE_NOM_KIND = 'tm07_order_nom_kind_v1';
+    const nomKindMemory = Object.create(null);
+
+    function loadNomKindStore() {
+        try {
+            const raw = localStorage.getItem(STORAGE_NOM_KIND);
+            const obj = raw ? JSON.parse(raw) : {};
+            return obj && typeof obj === 'object' ? obj : {};
+        } catch (_e) {
+            return {};
+        }
+    }
+
+    function saveNomKindStore(store) {
+        try {
+            const keys = Object.keys(store || {});
+            // не раздувать localStorage
+            const keep = keys.slice(-400);
+            const slim = Object.create(null);
+            keep.forEach(function (k) {
+                slim[k] = store[k];
+            });
+            localStorage.setItem(STORAGE_NOM_KIND, JSON.stringify(slim));
+        } catch (_e) {}
+    }
+
+    function getCachedNomKind(number) {
+        const n = normalizeOrderNumber(number);
+        if (!n) return null;
+        if (nomKindMemory[n]) return nomKindMemory[n];
+        const store = loadNomKindStore();
+        const hit = store[n];
+        if (hit && hit.kind) {
+            nomKindMemory[n] = hit;
+            return hit;
+        }
+        return null;
+    }
+
+    function setCachedNomKind(number, entry) {
+        const n = normalizeOrderNumber(number);
+        if (!n || !entry) return;
+        nomKindMemory[n] = entry;
+        const store = loadNomKindStore();
+        store[n] = {
+            kind: entry.kind,
+            label: entry.label,
+            name: entry.name || '',
+            ts: Date.now(),
+        };
+        saveNomKindStore(store);
+    }
+
+    async function mapPool(items, limit, worker) {
+        const list = items || [];
+        const out = new Array(list.length);
+        let cursor = 0;
+        async function run() {
+            while (cursor < list.length) {
+                const idx = cursor;
+                cursor += 1;
+                out[idx] = await worker(list[idx], idx);
+            }
+        }
+        const n = Math.max(1, Math.min(limit || 4, list.length || 1));
+        const runners = [];
+        for (let i = 0; i < n; i += 1) {
+            runners.push(run());
+        }
+        await Promise.all(runners);
+        return out;
+    }
+
+    /**
+     * Подтянуть номенклатуру и отбросить заказы не на комплекс/корректор ТМ-07.
+     */
+    async function filterOrdersByTm07Nomenclature(orders, entity, baseOverride) {
+        const list = orders || [];
+        if (!list.length) {
+            return [];
+        }
+        const ent = String(entity || DEFAULT_ENTITY).trim() || DEFAULT_ENTITY;
+        const base = baseOverride || null;
+        const enriched = await mapPool(list, 4, async function (order) {
+            const cached = getCachedNomKind(order.number);
+            if (cached && (cached.kind === 'complex' || cached.kind === 'corrector' || cached.kind === 'other')) {
+                return Object.assign({}, order, {
+                    kind: cached.kind,
+                    kindLabel: cached.label,
+                    nomenclatureName: cached.name || '',
+                });
+            }
+            try {
+                const info = await fetchOrderProductInfoByOrderNumber(order.number, ent, base);
+                const text = [
+                    info.nomenclature && info.nomenclature.fullName,
+                    info.characteristic && info.characteristic.fullName,
+                ]
+                    .filter(Boolean)
+                    .join(' ');
+                const kind = classifyOrderNomenclatureKind(text);
+                const label =
+                    kind === 'complex' ? 'комплекс' : kind === 'corrector' ? 'корректор' : 'прочее';
+                setCachedNomKind(order.number, { kind: kind, label: label, name: text });
+                return Object.assign({}, order, {
+                    kind: kind,
+                    kindLabel: label,
+                    nomenclatureName: text,
+                });
+            } catch (e) {
+                console.warn('[order-1c] nom-filter:skip', order.number, e);
+                // без номенклатуры не показываем — иначе в список попадут чужие заказы
+                setCachedNomKind(order.number, { kind: 'other', label: 'прочее', name: '' });
+                return Object.assign({}, order, { kind: 'other', kindLabel: 'прочее', nomenclatureName: '' });
+            }
+        });
+        const kept = enriched.filter(function (o) {
+            return o && (o.kind === 'complex' || o.kind === 'corrector');
+        });
+        console.log('[order-1c] nom-filter:done', {
+            before: list.length,
+            after: kept.length,
+            dropped: list.length - kept.length,
+        });
+        return kept;
+    }
+
+    async function listActiveOrders(entity, baseOverride, opts) {
+        const ent = String(entity || DEFAULT_ENTITY).trim() || DEFAULT_ENTITY;
+        const base = baseOverride || null;
+        let rows = [];
+        let usedFallback = false;
+        let filterMode = 'unknown';
+        try {
+            filterMode = sessionStorage.getItem(STORAGE_STATUS_FILTER_MODE) || 'unknown';
+        } catch (_e) {}
+
+        const tryStatusFilter = filterMode !== 'off';
+        if (tryStatusFilter) {
+            try {
+                const path = buildActiveOrdersPath(ent, opts);
+                console.log('[order-1c] listActiveOrders:path', { path: path });
+                const data = await fetchViaProxy(path, base);
+                rows = data && Array.isArray(data.value) ? data.value : [];
+                try {
+                    sessionStorage.setItem(STORAGE_STATUS_FILTER_MODE, 'on');
+                } catch (_e) {}
+            } catch (e) {
+                console.warn('[order-1c] listActiveOrders:status-filter-failed', e);
+                try {
+                    sessionStorage.setItem(STORAGE_STATUS_FILTER_MODE, 'off');
+                } catch (_e2) {}
+                usedFallback = true;
+            }
+        } else {
+            usedFallback = true;
+        }
+
+        if (usedFallback) {
+            const path = buildRecentOrdersPath(ent, opts);
+            console.log('[order-1c] listActiveOrders:fallback-path', { path: path });
+            const data = await fetchViaProxy(path, base);
+            const all = data && Array.isArray(data.value) ? data.value : [];
+            rows = all.filter(function (r) {
+                return isActiveProductionStatus(r && r['Статус']);
+            });
+        }
+        const mapped = rows
+            .map(mapOrderListRow)
+            .filter(function (r) {
+                return !!r.number;
+            });
+        // Уникальные номера (на всякий случай)
+        const seen = Object.create(null);
+        const unique = [];
+        mapped.forEach(function (r) {
+            if (seen[r.number]) {
+                return;
+            }
+            seen[r.number] = true;
+            unique.push(r);
+        });
+        const skipNom = opts && opts.skipNomenclatureFilter;
+        const filtered = skipNom
+            ? unique
+            : await filterOrdersByTm07Nomenclature(unique, ent, base);
+        console.log('[order-1c] listActiveOrders:done', {
+            count: filtered.length,
+            usedFallback: usedFallback,
+            beforeNomFilter: unique.length,
+        });
+        return filtered;
+    }
+
+    function loadKnownOrderNumbers() {
+        try {
+            const raw = localStorage.getItem(STORAGE_KNOWN_ORDERS);
+            const arr = raw ? JSON.parse(raw) : [];
+            return Array.isArray(arr) ? arr.map(String) : [];
+        } catch (_e) {
+            return [];
+        }
+    }
+
+    function saveKnownOrderNumbers(numbers) {
+        try {
+            localStorage.setItem(STORAGE_KNOWN_ORDERS, JSON.stringify(numbers.slice(0, 500)));
+        } catch (_e) {}
+    }
+
+    function ensureNotificationPermission() {
+        if (typeof Notification === 'undefined') {
+            return Promise.resolve('unsupported');
+        }
+        if (Notification.permission === 'granted' || Notification.permission === 'denied') {
+            return Promise.resolve(Notification.permission);
+        }
+        return Notification.requestPermission().catch(function () {
+            return 'denied';
+        });
+    }
+
+    function showNewOrdersBrowserNotification(newOrders) {
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') {
+            return;
+        }
+        if (!newOrders || !newOrders.length) {
+            return;
+        }
+        // Отдельный toast на каждый заказ: одинаковый tag затирает предыдущее уведомление ОС
+        newOrders.forEach(function (o, idx) {
+            const test = !!o.test;
+            const number = o.number || '';
+            const title = (test ? 'ТЕСТ: заказ ' : 'Новый заказ в 1С: ') + (number || '—');
+            const body =
+                (o.message || 'Статус: ' + (o.status || ACTIVE_ORDER_STATUS)) +
+                (o.kindLabel ? ' · ' + o.kindLabel : '');
+            const tag =
+                'tm07-order-' +
+                (number || 'x') +
+                '-' +
+                Date.now() +
+                '-' +
+                idx +
+                '-' +
+                Math.random().toString(36).slice(2, 7);
+            try {
+                const n = new Notification(title, {
+                    body: body,
+                    tag: tag,
+                    renotify: true,
+                });
+                n.onclick = function () {
+                    try {
+                        window.focus();
+                        if (
+                            !/\/index\.html\/?$/.test(window.location.pathname) &&
+                            window.location.pathname !== '/'
+                        ) {
+                            window.location.href = number
+                                ? (window.TM07_BENCH_EVENTS &&
+                                  typeof window.TM07_BENCH_EVENTS.withWorkstationQuery === 'function'
+                                      ? window.TM07_BENCH_EVENTS.withWorkstationQuery(
+                                            '/tm07-workbench.html?order=' + encodeURIComponent(number)
+                                        )
+                                      : '/tm07-workbench.html?order=' + encodeURIComponent(number))
+                                : '/index.html';
+                        }
+                    } catch (_e) {}
+                    n.close();
+                };
+            } catch (_e2) {}
+        });
+    }
+
+    const STORAGE_NOTIFY_SINCE = 'tm07_bench_notify_since_v1';
+    const SERVER_NOTIFY_POLL_MS = 5000;
+
+    function readNotifySince() {
+        try {
+            return parseInt(localStorage.getItem(STORAGE_NOTIFY_SINCE) || '0', 10) || 0;
+        } catch (_e) {
+            return 0;
+        }
+    }
+
+    function ackServerOperatorNotifications(latestId) {
+        if (latestId == null) {
+            return;
+        }
+        try {
+            localStorage.setItem(STORAGE_NOTIFY_SINCE, String(latestId));
+        } catch (_e) {}
+    }
+
+    /**
+     * Опрос очереди bench-notify. Курсор since обновляет только вызывающий код
+     * через ackServerOperatorNotifications после успешной доставки в UI.
+     * @returns {Promise<{items:Array, latestId:number|null, error:string|null, status:number}>}
+     */
+    async function pollServerOperatorNotifications() {
+        const since = readNotifySince();
+        let res;
+        try {
+            res = await fetch(
+                '/api/bench-notify.php?action=poll&since=' + encodeURIComponent(String(since)),
+                {
+                    credentials: 'same-origin',
+                    headers: { Accept: 'application/json' },
+                }
+            );
+        } catch (e) {
+            return {
+                items: [],
+                latestId: null,
+                error: e && e.message ? e.message : 'network',
+                status: 0,
+            };
+        }
+        let data = null;
+        try {
+            data = await res.json();
+        } catch (_e) {
+            return { items: [], latestId: null, error: 'bad_json', status: res.status };
+        }
+        if (!res.ok || !data || !data.ok) {
+            return {
+                items: [],
+                latestId: null,
+                error: (data && (data.error || data.message)) || 'poll_failed',
+                status: res.status,
+            };
+        }
+        const items = (Array.isArray(data.items) ? data.items : []).map(function (it) {
+            const num = normalizeOrderNumber(it.orderNumber) || String(it.orderNumber || '');
+            return {
+                number: num,
+                rawNumber: String(it.orderNumber || num),
+                status: ACTIVE_ORDER_STATUS,
+                kind: it.kind === 'complex' ? 'complex' : 'corrector',
+                kindLabel: it.kindLabel || (it.kind === 'complex' ? 'комплекс' : 'корректор'),
+                test: !!it.test,
+                message: it.message || 'Тестовое уведомление администратора',
+                date: it.ts || '',
+            };
+        });
+        return {
+            items: items,
+            latestId: data.latestId != null ? Number(data.latestId) : null,
+            error: null,
+            status: res.status,
+        };
+    }
+
+    /**
+     * Отдельный poller серверных push (тест из админки и будущие события).
+     * Не зависит от OData / списка заказов.
+     */
+    function startOperatorNotifyPoller(opts) {
+        const o = opts || {};
+        let stopped = false;
+        let timer = null;
+        const intervalMs =
+            typeof o.intervalMs === 'number' && o.intervalMs > 0
+                ? o.intervalMs
+                : SERVER_NOTIFY_POLL_MS;
+
+        function emitNew(newOrders) {
+            if (!newOrders || !newOrders.length) {
+                return;
+            }
+            void ensureNotificationPermission().then(function () {
+                showNewOrdersBrowserNotification(newOrders);
+            });
+            if (typeof o.onNew === 'function') {
+                o.onNew(newOrders);
+            }
+        }
+
+        async function tick() {
+            if (stopped) {
+                return;
+            }
+            try {
+                const result = await pollServerOperatorNotifications();
+                if (result.error) {
+                    if (typeof o.onError === 'function') {
+                        o.onError(new Error(result.error), result);
+                    } else {
+                        console.warn('[order-1c] server notify poll', result.error, result.status);
+                    }
+                    // Не двигаем since при ошибке — иначе «съедим» уведомление без показа
+                    return;
+                }
+                if (result.items.length) {
+                    emitNew(result.items);
+                }
+                // Курсор двигаем после попытки доставки (в т.ч. пустой ответ)
+                if (result.latestId != null) {
+                    ackServerOperatorNotifications(result.latestId);
+                }
+            } catch (e) {
+                console.warn('[order-1c] server notify poll', e);
+                if (typeof o.onError === 'function') {
+                    o.onError(e);
+                }
+            }
+        }
+
+        function onVisibility() {
+            if (!stopped && document.visibilityState === 'visible') {
+                void tick();
+            }
+        }
+
+        void ensureNotificationPermission();
+        void tick();
+        timer = setInterval(function () {
+            void tick();
+        }, intervalMs);
+        document.addEventListener('visibilitychange', onVisibility);
+
+        return {
+            stop: function () {
+                stopped = true;
+                if (timer) {
+                    clearInterval(timer);
+                    timer = null;
+                }
+                document.removeEventListener('visibilitychange', onVisibility);
+            },
+            refresh: function () {
+                return tick();
+            },
+        };
+    }
+
+    /**
+     * Заполняет <select> списком активных заказов.
+     * @returns {Promise<Array>}
+     */
+    async function fillActiveOrdersSelect(selectEl, opts) {
+        const sel = typeof selectEl === 'string' ? $(selectEl) : selectEl;
+        if (!sel) {
+            return [];
+        }
+        const o = opts || {};
+        const prev = sel.value;
+        const keepManual = o.keepManualOption !== false;
+        sel.disabled = true;
+        const loading = document.createElement('option');
+        loading.value = '';
+        loading.textContent = '— Загрузка заказов кПроизводству… —';
+        sel.innerHTML = '';
+        sel.appendChild(loading);
+        try {
+            const list = await listActiveOrders(o.entity, o.baseOverride, o);
+            sel.innerHTML = '';
+            const empty = document.createElement('option');
+            empty.value = '';
+                empty.textContent =
+                    list.length > 0
+                        ? '— Выберите заказ ТМ-07 / ПК-ТМ (' + list.length + ') —'
+                        : '— Нет заказов кПроизводству на корректор/комплекс —';
+            sel.appendChild(empty);
+            list.forEach(function (item) {
+                const opt = document.createElement('option');
+                opt.value = item.number;
+                const dateShort = item.date ? String(item.date).slice(0, 10) : '';
+                const kindBit = item.kindLabel ? ' · ' + item.kindLabel : '';
+                opt.textContent =
+                    item.number + kindBit + (dateShort ? ' · ' + dateShort : '');
+                opt.title =
+                    (item.nomenclatureName || item.status || ACTIVE_ORDER_STATUS) +
+                    (item.kindLabel ? ' (' + item.kindLabel + ')' : '');
+                sel.appendChild(opt);
+            });
+            if (keepManual) {
+                const man = document.createElement('option');
+                man.value = '__manual__';
+                man.textContent = '— Ввести номер вручную —';
+                sel.appendChild(man);
+            }
+            if (prev && prev !== '__manual__') {
+                const found = list.some(function (x) {
+                    return x.number === prev;
+                });
+                if (found) {
+                    sel.value = prev;
+                }
+            }
+            if (typeof o.onLoaded === 'function') {
+                o.onLoaded(list);
+            }
+            return list;
+        } catch (e) {
+            sel.innerHTML = '';
+            const err = document.createElement('option');
+            err.value = '';
+            err.textContent = '— Ошибка загрузки списка —';
+            sel.appendChild(err);
+            if (keepManual) {
+                const man = document.createElement('option');
+                man.value = '__manual__';
+                man.textContent = '— Ввести номер вручную —';
+                sel.appendChild(man);
+            }
+            throw e;
+        } finally {
+            sel.disabled = false;
+        }
+    }
+
+    /**
+     * Периодический опрос активных заказов + уведомление о новых.
+     * Уведомления только в рабочее время 08:00–17:00 МСК (Пн–Пт).
+     * Вне часов новые заказы копятся и показываются при первом опросе в рабочее время.
+     * Первый проход только запоминает номера (без notify).
+     */
+    function startActiveOrdersWatcher(opts) {
+        const o = opts || {};
+        let timer = null;
+        let stopped = false;
+        let primed = false;
+        // Серверные push — отдельным poller’ом (не ждём OData)
+        const pushPoller =
+            o.skipServerPush === true
+                ? null
+                : startOperatorNotifyPoller({
+                      intervalMs: o.pushIntervalMs,
+                      onNew: function (items) {
+                          // Browser notify уже в poller; здесь только UI-колбэк (без окна 8–17 МСК)
+                          if (typeof o.onNew === 'function') {
+                              o.onNew(items, null);
+                          }
+                      },
+                      onError: function (e, result) {
+                          if (typeof o.onPushError === 'function') {
+                              o.onPushError(e, result);
+                          } else {
+                              console.warn('[order-1c] server notify poll', e);
+                          }
+                      },
+                  });
+
+        function currentIntervalMs() {
+            if (typeof o.intervalMs === 'number' && o.intervalMs > 0) {
+                return o.intervalMs;
+            }
+            return isMoscowWorkHours() ? ACTIVE_ORDERS_POLL_MS : ACTIVE_ORDERS_POLL_OFFHOURS_MS;
+        }
+
+        function scheduleNext() {
+            if (stopped) return;
+            if (timer) {
+                clearTimeout(timer);
+                timer = null;
+            }
+            timer = setTimeout(function () {
+                void tick();
+            }, currentIntervalMs());
+        }
+
+        function emitNew(newOrders, list) {
+            if (!newOrders || !newOrders.length) {
+                return;
+            }
+            void ensureNotificationPermission().then(function () {
+                showNewOrdersBrowserNotification(newOrders);
+            });
+            if (typeof o.onNew === 'function') {
+                o.onNew(newOrders, list);
+            }
+        }
+
+        async function tick() {
+            if (stopped) {
+                return;
+            }
+            try {
+                const list = await listActiveOrders(o.entity, o.baseOverride, o);
+                const numbers = list.map(function (x) {
+                    return x.number;
+                });
+                const known = loadKnownOrderNumbers();
+                const knownSet = Object.create(null);
+                known.forEach(function (n) {
+                    knownSet[n] = true;
+                });
+                if (!primed) {
+                    primed = true;
+                    numbers.forEach(function (n) {
+                        knownSet[n] = true;
+                    });
+                    saveKnownOrderNumbers(Object.keys(knownSet));
+                    // Если страница открыта в рабочее время и есть отложенные — показать сразу
+                    if (isMoscowWorkHours()) {
+                        const pending = loadPendingNotifyOrders().filter(function (p) {
+                            return p && p.number && numbers.indexOf(p.number) >= 0;
+                        });
+                        if (pending.length) {
+                            savePendingNotifyOrders([]);
+                            emitNew(pending, list);
+                        }
+                    }
+                    if (typeof o.onList === 'function') {
+                        o.onList(list, {
+                            primed: true,
+                            newOrders: [],
+                            workHours: isMoscowWorkHours(),
+                        });
+                    }
+                    scheduleNext();
+                    return;
+                }
+
+                const fresh = list.filter(function (item) {
+                    return !knownSet[item.number];
+                });
+                fresh.forEach(function (item) {
+                    knownSet[item.number] = true;
+                });
+                const activeSet = Object.create(null);
+                numbers.forEach(function (n) {
+                    activeSet[n] = true;
+                });
+                saveKnownOrderNumbers(
+                    Object.keys(Object.assign(Object.create(null), knownSet, activeSet))
+                );
+
+                let notified = [];
+                if (fresh.length) {
+                    if (isMoscowWorkHours()) {
+                        const pending = mergePendingNotify(fresh);
+                        savePendingNotifyOrders([]);
+                        notified = pending;
+                        emitNew(notified, list);
+                    } else {
+                        // Вне 9–17 МСК только запоминаем — покажем с 9:00
+                        mergePendingNotify(fresh);
+                        console.log(
+                            '[order-1c] новый заказ вне рабочего времени МСК, уведомление отложено',
+                            fresh.map(function (x) {
+                                return x.number;
+                            })
+                        );
+                    }
+                } else if (isMoscowWorkHours()) {
+                    const pending = loadPendingNotifyOrders().filter(function (p) {
+                        return p && p.number && activeSet[p.number];
+                    });
+                    if (pending.length) {
+                        savePendingNotifyOrders([]);
+                        notified = pending;
+                        emitNew(notified, list);
+                    }
+                }
+
+                if (typeof o.onList === 'function') {
+                    o.onList(list, {
+                        primed: false,
+                        newOrders: notified,
+                        workHours: isMoscowWorkHours(),
+                    });
+                }
+            } catch (e) {
+                console.warn('[order-1c] activeOrdersWatcher', e);
+                if (typeof o.onError === 'function') {
+                    o.onError(e);
+                }
+            }
+            scheduleNext();
+        }
+
+        void ensureNotificationPermission();
+        void tick();
+        return {
+            stop: function () {
+                stopped = true;
+                if (timer) {
+                    clearTimeout(timer);
+                    timer = null;
+                }
+                if (pushPoller && typeof pushPoller.stop === 'function') {
+                    pushPoller.stop();
+                }
+            },
+            refresh: function () {
+                if (pushPoller && typeof pushPoller.refresh === 'function') {
+                    void pushPoller.refresh();
+                }
+                return tick();
+            },
+            isWorkHours: isMoscowWorkHours,
+        };
+    }
+
     /** Запрос только поля Статус заказа на производство. */
     function buildOdataStatusPath(number, entity) {
         return entity + '?' + buildOrderYearFilterQuery(number) + '&$select=Статус';
@@ -603,7 +1482,12 @@
         }
         const wbBtn = $('orderGoWorkbenchBtn');
         if (wbBtn && n) {
-            wbBtn.href = '/tm07-workbench.html?order=' + encodeURIComponent(String(n));
+            const raw = '/tm07-workbench.html?order=' + encodeURIComponent(String(n));
+            wbBtn.href =
+                window.TM07_BENCH_EVENTS &&
+                typeof window.TM07_BENCH_EVENTS.withWorkstationQuery === 'function'
+                    ? window.TM07_BENCH_EVENTS.withWorkstationQuery(raw)
+                    : raw;
             wbBtn.classList.remove('d-none');
         }
         setStatus('Загружено: ' + keys.length + ' полей (Ref_Key … Ответственный).', false);
@@ -1195,6 +2079,65 @@
                 }
             });
         }
+
+        const activeSelect = $('orderActiveSelect');
+        const newAlert = $('orderNewAlert');
+        async function refreshOrderPageList() {
+            if (!activeSelect || typeof fillActiveOrdersSelect !== 'function') {
+                return;
+            }
+            try {
+                await fillActiveOrdersSelect(activeSelect, { keepManualOption: true });
+            } catch (e) {
+                setStatus('Список заказов: ' + (e.message || String(e)), true);
+            }
+        }
+        if (activeSelect) {
+            activeSelect.addEventListener('change', function () {
+                const v = activeSelect.value;
+                if (!v || v === '__manual__') {
+                    return;
+                }
+                if (numInput) {
+                    numInput.value = v;
+                    updateLinkField();
+                }
+            });
+            $('orderRefreshListBtn')?.addEventListener('click', function () {
+                void refreshOrderPageList();
+            });
+            void bootstrapOdataConfig().then(function () {
+                return refreshOrderPageList();
+            }).then(function () {
+                window.__order1cActiveWatcher = startActiveOrdersWatcher({
+                    intervalMs: 60000,
+                    onNew: function (newOrders) {
+                        if (newAlert && newOrders && newOrders.length) {
+                            newAlert.classList.remove('d-none');
+                            const prev = newAlert.getAttribute('data-stack') || '';
+                            const lines = prev ? prev.split('\n').filter(Boolean) : [];
+                            newOrders.forEach(function (o) {
+                                const bit = (o.test ? '[ТЕСТ] ' : '') + (o.number || '');
+                                if (bit && lines.indexOf(bit) < 0) {
+                                    lines.push(bit);
+                                } else if (bit) {
+                                    lines.push(bit);
+                                }
+                            });
+                            newAlert.setAttribute('data-stack', lines.join('\n'));
+                            newAlert.innerHTML =
+                                '<i class="bi bi-bell me-1"></i>Новые заказы:<br>' +
+                                lines
+                                    .map(function (n) {
+                                        return '<strong>' + n + '</strong>';
+                                    })
+                                    .join('<br>');
+                        }
+                        void refreshOrderPageList();
+                    },
+                });
+            });
+        }
     }
 
     window.Order1cOdata = {
@@ -1204,9 +2147,22 @@
         normalizeOdataBase: normalizeOdataBase,
         buildOdataPath: buildOdataPath,
         buildOdataStatusPath: buildOdataStatusPath,
+        buildActiveOrdersPath: buildActiveOrdersPath,
         buildOrderCharacteristicLookupPath: buildOrderCharacteristicLookupPath,
         formatOrderStatus: formatOrderStatus,
+        isActiveProductionStatus: isActiveProductionStatus,
         fetchOrderStatus: fetchOrderStatus,
+        listActiveOrders: listActiveOrders,
+        filterOrdersByTm07Nomenclature: filterOrdersByTm07Nomenclature,
+        classifyOrderNomenclatureKind: classifyOrderNomenclatureKind,
+        isTm07RelevantNomenclature: isTm07RelevantNomenclature,
+        fillActiveOrdersSelect: fillActiveOrdersSelect,
+        startActiveOrdersWatcher: startActiveOrdersWatcher,
+        startOperatorNotifyPoller: startOperatorNotifyPoller,
+        pollServerOperatorNotifications: pollServerOperatorNotifications,
+        ackServerOperatorNotifications: ackServerOperatorNotifications,
+        ensureNotificationPermission: ensureNotificationPermission,
+        isMoscowWorkHours: isMoscowWorkHours,
         buildNomenclaturePath: buildNomenclaturePath,
         buildCharacteristicPath: buildCharacteristicPath,
         extractNomenclatureKey: extractNomenclatureKey,
@@ -1219,6 +2175,7 @@
         fetchServerOdataConfig: fetchServerOdataConfig,
         bootstrapOdataConfig: bootstrapOdataConfig,
         DEFAULT_ENTITY: DEFAULT_ENTITY,
+        ACTIVE_ORDER_STATUS: ACTIVE_ORDER_STATUS,
         STORAGE_BASE: STORAGE_BASE
     };
 

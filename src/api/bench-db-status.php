@@ -15,6 +15,7 @@ try {
         if ($action === 'status') {
             $body = [
                 'fingerprint' => (string) ($_GET['fingerprint'] ?? ''),
+                'workstationCode' => (string) ($_GET['workstationCode'] ?? $_GET['code'] ?? $_GET['ws'] ?? ''),
                 'clientConfig' => null,
             ];
             if (!empty($_GET['clientConfig']) && is_string($_GET['clientConfig'])) {
@@ -24,7 +25,12 @@ try {
                 }
             }
             $fp = trim($body['fingerprint']);
-            $row = bench_find_workstation($pdo, $fp !== '' ? $fp : null, $fp !== '' ? $fp : null);
+            $wsCode = bench_normalize_workstation_code((string) $body['workstationCode']);
+            $row = bench_find_workstation(
+                $pdo,
+                $wsCode !== '' ? $wsCode : ($fp !== '' ? $fp : null),
+                $fp !== '' ? $fp : null
+            );
             if ($row) {
                 $_SESSION[BENCH_SESSION_WORKSTATION] = (int) $row['ID'];
                 $ws = bench_workstation_row_to_api($row);
@@ -39,6 +45,8 @@ try {
             bench_json_response([
                 'ok' => true,
                 'driver' => $driver,
+                'postgresConfigured' => function_exists('bench_pgsql_dsn') && bench_pgsql_dsn() !== null,
+                'postgresReachable' => function_exists('bench_try_pgsql') && bench_try_pgsql(),
                 'firebirdConfigured' => bench_firebird_dsn() !== null,
                 'firebirdReachable' => bench_try_firebird(),
                 'sqlitePath' => $driver === 'sqlite' ? bench_sqlite_path() : null,
@@ -52,10 +60,15 @@ try {
         }
 
         if ($action === 'sessions') {
-            try {
-                bench_require_operator_session();
-            } catch (RuntimeException $e) {
-                bench_json_response(['ok' => false, 'error' => $e->getMessage()], 403);
+            auth_session_start();
+            $ok = auth_is_admin();
+            if (!$ok) {
+                try {
+                    bench_require_operator_session();
+                    $ok = true;
+                } catch (RuntimeException $e) {
+                    bench_json_response(['ok' => false, 'error' => $e->getMessage()], 403);
+                }
             }
             $limit = min(100, max(1, (int) ($_GET['limit'] ?? 50)));
             $state = isset($_GET['state']) ? trim((string) $_GET['state']) : '';
@@ -93,48 +106,36 @@ try {
                     'retryAfter' => (int) ($rl['retryAfter'] ?? 300),
                 ], 429);
             }
-            $lastName = trim((string) ($body['lastName'] ?? ''));
-            if ($lastName === '') {
-                bench_json_response(['ok' => false, 'error' => 'lastName (фамилия) обязательна'], 400);
-            }
-            $firstName = trim((string) ($body['firstName'] ?? ''));
             $login = trim((string) ($body['login'] ?? ''));
             if ($login === '') {
-                $existing = bench_find_operator_by_names(
-                    $pdo,
-                    $lastName,
-                    $firstName !== '' ? $firstName : null
-                );
-                $login = $existing ? (string) $existing['LOGIN'] : bench_operator_auto_login(
-                    $lastName,
-                    $firstName !== '' ? $firstName : null
-                );
-            }
-            $display = trim((string) ($body['displayName'] ?? ''));
-            if ($display === '') {
-                $display = bench_operator_display_name($lastName, $firstName !== '' ? $firstName : null, $login);
+                bench_json_response(['ok' => false, 'error' => 'Укажите логин оператора'], 400);
             }
             $pin = isset($body['pin']) ? (string) $body['pin'] : '';
-            $existingForPin = bench_find_operator_by_names(
-                $pdo,
-                $lastName,
-                $firstName !== '' ? $firstName : null
-            );
+            $cols = bench_operator_select_cols();
+            $sel = $pdo->prepare("SELECT {$cols} FROM TM07_OPERATOR WHERE LOGIN = ?");
+            $sel->execute([$login]);
+            $existing = $sel->fetch(PDO::FETCH_ASSOC) ?: null;
+            if (!$existing) {
+                bench_json_response(['ok' => false, 'error' => 'Оператор с таким логином не найден'], 404);
+            }
+            $lastName = trim((string) ($existing['LAST_NAME'] ?? ''));
+            $firstName = isset($existing['FIRST_NAME']) ? trim((string) $existing['FIRST_NAME']) : '';
+            $display = (string) ($existing['DISPLAY_NAME'] ?? '');
             $pinConfigured =
                 bench_shared_operator_pin() !== ''
                 || bench_parse_operator_pins_env() !== []
-                || ($existingForPin && !empty($existingForPin['PIN_HASH']));
+                || !empty($existing['PIN_HASH']);
             if (bench_operator_pin_enforced() && !$pinConfigured) {
                 bench_json_response([
                     'ok' => false,
-                    'error' => 'BENCH_REQUIRE_OPERATOR_PIN=1, но не заданы BENCH_OPERATOR_PINS / BENCH_OPERATOR_PIN и нет PIN в БД',
+                    'error' => 'BENCH_REQUIRE_OPERATOR_PIN=1,, но не заданы BENCH_OPERATOR_PINS / BENCH_OPERATOR_PIN и нет PIN в БД',
                 ], 503);
             }
             if (!bench_verify_operator_pin_for(
                 $pin,
                 $lastName,
                 $firstName !== '' ? $firstName : null,
-                $existingForPin
+                $existing
             )) {
                 auth_rate_limit_fail('operator_pin', 10, 300);
                 bench_json_response(['ok' => false, 'error' => 'Неверный PIN оператора'], 403);
@@ -146,7 +147,7 @@ try {
                 $pdo,
                 $login,
                 $display,
-                $lastName,
+                $lastName !== '' ? $lastName : null,
                 $firstName !== '' ? $firstName : null,
                 true
             );
@@ -204,6 +205,42 @@ try {
             ]);
         }
 
+        if ($action === 'adminSelectOperator') {
+            auth_require_admin_role(AUTH_ROLE_MONITOR);
+            $login = trim((string) ($body['login'] ?? ''));
+            if ($login === '') {
+                bench_json_response(['ok' => false, 'error' => 'Укажите логин оператора'], 400);
+            }
+            $cols = bench_operator_select_cols();
+            $sel = $pdo->prepare("SELECT {$cols} FROM TM07_OPERATOR WHERE LOGIN = ?");
+            $sel->execute([$login]);
+            $op = $sel->fetch(PDO::FETCH_ASSOC) ?: null;
+            if (!$op) {
+                bench_json_response(['ok' => false, 'error' => 'Оператор с таким логином не найден'], 404);
+            }
+            $ws = bench_register_client_workstation($pdo, $body);
+            $op = bench_resolve_operator(
+                $pdo,
+                $login,
+                (string) ($op['DISPLAY_NAME'] ?? ''),
+                isset($op['LAST_NAME']) ? trim((string) $op['LAST_NAME']) : null,
+                isset($op['FIRST_NAME']) ? trim((string) $op['FIRST_NAME']) : null,
+                true
+            );
+            try {
+                bench_close_foreign_order_sessions($pdo, (int) $ws['ID'], (int) $op['ID'], 'operator_switch');
+            } catch (Throwable) {
+                // не блокируем вход
+            }
+            $activeSession = bench_get_active_order_session($pdo, (int) $ws['ID'], (int) $op['ID']);
+            bench_json_response([
+                'ok' => true,
+                'operator' => bench_operator_row_to_api($op),
+                'workstation' => bench_workstation_row_to_api($ws),
+                'activeSession' => $activeSession ? bench_session_row_to_api_enriched($pdo, $activeSession) : null,
+            ]);
+        }
+
         if ($action === 'clearOperator') {
             bench_close_order_session($pdo, 'operator_logout');
             unset($_SESSION[BENCH_SESSION_OPERATOR], $_SESSION[BENCH_SESSION_ORDER]);
@@ -211,7 +248,7 @@ try {
         }
 
         if ($action === 'listOperators') {
-            auth_require_admin();
+            auth_require_admin_role(AUTH_ROLE_MONITOR);
             $rows = bench_list_operators($pdo, (int) ($body['limit'] ?? 100));
             $list = [];
             foreach ($rows as $row) {
@@ -221,7 +258,7 @@ try {
         }
 
         if ($action === 'setOperatorPin') {
-            auth_require_admin();
+            auth_require_admin_role(AUTH_ROLE_MONITOR);
             $pin = trim((string) ($body['pin'] ?? ''));
             if ($pin === '' || strlen($pin) < 3) {
                 bench_json_response(['ok' => false, 'error' => 'PIN не короче 3 символов'], 400);
@@ -288,9 +325,13 @@ try {
             } catch (RuntimeException $e) {
                 bench_json_response(['ok' => false, 'error' => $e->getMessage()], 403);
             }
+            $reused = !empty($session['__reused']);
+            unset($session['__reused']);
             $op = bench_resolve_operator($pdo);
             bench_json_response([
                 'ok' => true,
+                'reused' => $reused,
+                'reopened' => $reused,
                 'session' => bench_session_row_to_api_enriched($pdo, $session),
                 'operator' => $op ? bench_operator_row_to_api($op) : null,
                 'workstation' => bench_workstation_row_to_api($ws),
@@ -304,7 +345,7 @@ try {
         }
 
         if ($action === 'deleteSession') {
-            auth_require_admin();
+            auth_require_admin_role(AUTH_ROLE_MONITOR);
             $sessionId = (int) ($body['sessionId'] ?? 0);
             if ($sessionId <= 0) {
                 bench_json_response(['ok' => false, 'error' => 'sessionId обязателен'], 400);
@@ -320,7 +361,7 @@ try {
         }
 
         if ($action === 'deleteAllSessions') {
-            auth_require_admin();
+            auth_require_admin_role(AUTH_ROLE_MONITOR);
             try {
                 $deleted = bench_admin_delete_all_sessions($pdo);
             } catch (RuntimeException $e) {
@@ -329,8 +370,33 @@ try {
             bench_json_response(['ok' => true, 'deleted' => $deleted]);
         }
 
+        if ($action === 'listSerials') {
+            auth_require_admin_role(AUTH_ROLE_MONITOR);
+            $limit = (int) ($body['limit'] ?? 50);
+            $q = isset($body['q']) ? trim((string) $body['q']) : '';
+            try {
+                $list = bench_admin_list_serials($pdo, $limit, $q !== '' ? $q : null);
+            } catch (RuntimeException $e) {
+                bench_json_response(['ok' => false, 'error' => $e->getMessage()], 403);
+            }
+            bench_json_response(['ok' => true, 'serials' => $list]);
+        }
+
+        if ($action === 'deleteSerial') {
+            auth_require_admin_role(AUTH_ROLE_MONITOR);
+            $serial = trim((string) ($body['serial'] ?? $body['serialNumber'] ?? ''));
+            try {
+                $info = bench_admin_delete_serial($pdo, $serial);
+            } catch (InvalidArgumentException $e) {
+                bench_json_response(['ok' => false, 'error' => $e->getMessage()], 404);
+            } catch (RuntimeException $e) {
+                bench_json_response(['ok' => false, 'error' => $e->getMessage()], 403);
+            }
+            bench_json_response(['ok' => true] + $info);
+        }
+
         if ($action === 'deleteOperator') {
-            auth_require_admin();
+            auth_require_admin_role(AUTH_ROLE_MONITOR);
             $operatorId = (int) ($body['operatorId'] ?? $body['id'] ?? 0);
             try {
                 $info = bench_admin_delete_operator($pdo, $operatorId);
@@ -343,7 +409,7 @@ try {
         }
 
         if ($action === 'closeStaleSessions') {
-            auth_require_admin();
+            auth_require_admin_role(AUTH_ROLE_MONITOR);
             $hours = (int) ($body['olderThanHours'] ?? 1);
             $closed = bench_close_stale_active_sessions($pdo, $hours);
             bench_json_response(['ok' => true, 'closed' => $closed, 'olderThanHours' => max(1, min(720, $hours))]);
@@ -364,7 +430,29 @@ try {
             ]);
         }
 
-        bench_json_response(['ok' => false, 'error' => 'action: registerWorkstation | selectOperator | selectOrder | clearOrder | deleteSession | deleteAllSessions | deleteOperator | closeStaleSessions | clearOperator | confirmAssembly | listOperators | setOperatorPin'], 400);
+        if ($action === 'listWorkstations') {
+            auth_require_admin_role(AUTH_ROLE_CONFIG);
+            try {
+                $list = bench_admin_list_workstations($pdo);
+            } catch (RuntimeException $e) {
+                bench_json_response(['ok' => false, 'error' => $e->getMessage()], 403);
+            }
+            bench_json_response(['ok' => true, 'workstations' => $list]);
+        }
+
+        if ($action === 'updateWorkstation') {
+            auth_require_admin_role(AUTH_ROLE_CONFIG);
+            try {
+                $ws = bench_admin_update_workstation($pdo, $body);
+            } catch (InvalidArgumentException $e) {
+                bench_json_response(['ok' => false, 'error' => $e->getMessage()], 400);
+            } catch (RuntimeException $e) {
+                bench_json_response(['ok' => false, 'error' => $e->getMessage()], 403);
+            }
+            bench_json_response(['ok' => true, 'workstation' => $ws]);
+        }
+
+        bench_json_response(['ok' => false, 'error' => 'action: registerWorkstation | selectOperator | adminSelectOperator | selectOrder | clearOrder | deleteSession | deleteAllSessions | listSerials | deleteSerial | deleteOperator | closeStaleSessions | clearOperator | confirmAssembly | listOperators | setOperatorPin | listWorkstations | updateWorkstation'], 400);
     }
 
     bench_json_response(['ok' => false, 'error' => 'GET или POST'], 405);

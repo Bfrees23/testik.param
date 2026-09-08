@@ -20,7 +20,9 @@ try {
             echo json_encode([
                 'success' => true,
                 'loggedIn' => $ok,
+                'login' => $ok ? auth_admin_session_login() : null,
                 'loginAt' => $ok ? ($_SESSION['login_at'] ?? null) : null,
+                'role' => $ok ? auth_admin_role() : null,
             ], JSON_UNESCAPED_UNICODE);
             break;
 
@@ -42,21 +44,32 @@ try {
             }
             $raw = file_get_contents('php://input');
             $data = is_string($raw) ? json_decode($raw, true) : [];
+            $login = isset($data['login']) ? trim((string) $data['login']) : '';
             $password = isset($data['password']) ? (string) $data['password'] : '';
+            if ($login === '') {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => 'Укажите логин'], JSON_UNESCAPED_UNICODE);
+                break;
+            }
             if ($password === '') {
                 http_response_code(400);
                 echo json_encode(['success' => false, 'error' => 'Укажите пароль'], JSON_UNESCAPED_UNICODE);
                 break;
             }
-            if (!auth_verify_password($password)) {
+            if (!hash_equals(auth_admin_login(), $login) || !auth_verify_password($password)) {
                 auth_rate_limit_fail('admin_login', 8, 300);
                 http_response_code(403);
-                echo json_encode(['success' => false, 'error' => 'Неверный пароль'], JSON_UNESCAPED_UNICODE);
+                echo json_encode(['success' => false, 'error' => 'Неверный логин или пароль'], JSON_UNESCAPED_UNICODE);
                 break;
             }
             auth_rate_limit_clear('admin_login');
-            auth_login();
-            echo json_encode(['success' => true, 'message' => 'Вход выполнен'], JSON_UNESCAPED_UNICODE);
+            $role = isset($data['role']) ? (string) $data['role'] : AUTH_ROLE_CONFIG;
+            auth_login($login, $role);
+            echo json_encode([
+                'success' => true,
+                'message' => 'Вход выполнен',
+                'role' => auth_admin_role(),
+            ], JSON_UNESCAPED_UNICODE);
             break;
 
         case 'logout':

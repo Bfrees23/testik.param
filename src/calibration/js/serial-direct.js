@@ -15,14 +15,56 @@ class SerialDevice {
     }
 
     async openPort(port, baudRate = 9600) {
+        // Свой предыдущий сеанс
+        if (this.isConnected || this.port) {
+            try {
+                await this.disconnect();
+            } catch (_e) {}
+        }
+
         this.port = port;
-        await this.port.open({
-            baudRate: baudRate,
-            dataBits: 8,
-            stopBits: 1,
-            parity: 'none',
-            flowControl: 'none'
-        });
+
+        // Порт уже открыт другим инстансом (автоподключение) — закрыть и открыть заново
+        if (port.readable || port.writable) {
+            try {
+                await port.close();
+            } catch (_e) {}
+            // дать CDC отпустить handle
+            await new Promise((r) => setTimeout(r, 150));
+        }
+
+        try {
+            await this.port.open({
+                baudRate: baudRate,
+                dataBits: 8,
+                stopBits: 1,
+                parity: 'none',
+                flowControl: 'none'
+            });
+        } catch (e) {
+            if (e && e.name === 'InvalidStateError') {
+                try {
+                    await port.close();
+                } catch (_e2) {}
+                await new Promise((r) => setTimeout(r, 200));
+                await this.port.open({
+                    baudRate: baudRate,
+                    dataBits: 8,
+                    stopBits: 1,
+                    parity: 'none',
+                    flowControl: 'none'
+                });
+            } else {
+                throw e;
+            }
+        }
+
+        // USB CDC часто молчит без DTR/RTS
+        if (typeof this.port.setSignals === 'function') {
+            try {
+                await this.port.setSignals({ dataTerminalReady: true, requestToSend: true });
+            } catch (_e) {}
+        }
 
         this.isConnected = true;
         console.log(`Порт открыт с скоростью ${baudRate}`);
@@ -141,13 +183,20 @@ class SerialDevice {
             try {
                 const { value, done } = await this.reader.read();
                 if (done) {
+                    console.log('Чтение порта: поток закрыт (done)');
                     break;
                 }
-                if (value && this.onDataReceived) {
-                    this.onDataReceived(value);
+                if (value) {
+                    // Симметрично «Отправлено:» — чтобы в консоли было видно RX
+                    console.log('Получено:', JSON.stringify(value));
+                    if (this.onDataReceived) {
+                        this.onDataReceived(value);
+                    }
                 }
             } catch (error) {
-                console.error("Ошибка чтения:", error);
+                if (this.keepReading) {
+                    console.error('Ошибка чтения:', error);
+                }
                 break;
             }
         }
@@ -155,10 +204,10 @@ class SerialDevice {
 
     async write(data) {
         if (!this.writer || !this.isConnected) {
-            throw new Error("Порт не открыт");
+            throw new Error('Порт не открыт');
         }
         await this.writer.write(data);
-        console.log("Отправлено:", data);
+        console.log('Отправлено:', JSON.stringify(data));
     }
 
     async disconnect() {

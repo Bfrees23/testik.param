@@ -249,7 +249,7 @@
                         listHtml +
                         scanHint +
                         '<p class="mb-0 small text-body-secondary">' + qrProgressText() + '</p>',
-                    target: '#paramQrSensor',
+                    target: nextKey ? '#paramQrSensor_' + nextKey : '#wbSensorCardsHost',
                     action: 'Понятно',
                     autoAdvance: true,
                 };

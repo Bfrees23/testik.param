@@ -121,6 +121,23 @@ function tm07_firmware_list(): array
     return $files;
 }
 
+function tm07_firmware_writable_dir(): string
+{
+    $preferred = auth_data_dir() . '/firmware';
+    if (!is_dir($preferred)) {
+        @mkdir($preferred, 0775, true);
+    }
+    if (is_dir($preferred) && is_writable($preferred)) {
+        return $preferred;
+    }
+    foreach (tm07_firmware_dirs() as $dir) {
+        if (is_writable($dir)) {
+            return $dir;
+        }
+    }
+    throw new RuntimeException('Нет доступной папки для записи прошивок (data/firmware)');
+}
+
 $action = (string) ($_GET['action'] ?? 'list');
 
 try {
@@ -148,15 +165,79 @@ try {
         exit;
     }
 
+    if ($action === 'upload' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+        auth_require_admin_role(AUTH_ROLE_CONFIG);
+        header('Content-Type: application/json; charset=utf-8');
+        if (!isset($_FILES['file']) || !is_array($_FILES['file'])) {
+            throw new InvalidArgumentException('Ожидается multipart field file (.bin)');
+        }
+        $f = $_FILES['file'];
+        if ((int) ($f['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+            throw new RuntimeException('Ошибка загрузки файла (code ' . (int) ($f['error'] ?? -1) . ')');
+        }
+        $orig = (string) ($f['name'] ?? 'firmware.bin');
+        $safe = tm07_firmware_safe_name($orig);
+        if (!preg_match('/\.bin$/i', $safe)) {
+            $safe .= '.bin';
+        }
+        $tmp = (string) ($f['tmp_name'] ?? '');
+        if ($tmp === '' || !is_uploaded_file($tmp)) {
+            throw new RuntimeException('Временный файл загрузки недоступен');
+        }
+        $size = (int) ($f['size'] ?? 0);
+        if ($size <= 0 || $size > 32 * 1024 * 1024) {
+            throw new InvalidArgumentException('Размер .bin должен быть от 1 байта до 32 МБ');
+        }
+        $dir = tm07_firmware_writable_dir();
+        $dest = $dir . DIRECTORY_SEPARATOR . $safe;
+        if (!move_uploaded_file($tmp, $dest)) {
+            throw new RuntimeException('Не удалось сохранить файл в ' . $dir);
+        }
+        @chmod($dest, 0664);
+        echo json_encode([
+            'ok' => true,
+            'file' => [
+                'name' => $safe,
+                'version' => tm07_firmware_parse_version($safe),
+                'size' => filesize($dest) ?: $size,
+                'mtime' => filemtime($dest) ?: time(),
+            ],
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
+    if ($action === 'delete' && ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+        auth_require_admin_role(AUTH_ROLE_CONFIG);
+        header('Content-Type: application/json; charset=utf-8');
+        $raw = file_get_contents('php://input');
+        $body = is_string($raw) ? json_decode($raw, true) : null;
+        $name = is_array($body) ? (string) ($body['name'] ?? '') : '';
+        if ($name === '') {
+            $name = (string) ($_GET['name'] ?? '');
+        }
+        $path = tm07_firmware_find($name);
+        $writableRoot = realpath(tm07_firmware_writable_dir());
+        $real = realpath($path);
+        if (!$real || !$writableRoot || !str_starts_with($real, $writableRoot)) {
+            throw new RuntimeException('Удалять можно только файлы из data/firmware (загруженные админом)');
+        }
+        if (!@unlink($real)) {
+            throw new RuntimeException('Не удалось удалить файл');
+        }
+        echo json_encode(['ok' => true, 'deleted' => basename($real)], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+
     header('Content-Type: application/json; charset=utf-8');
     http_response_code(400);
-    echo json_encode(['ok' => false, 'error' => 'action: list | file'], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['ok' => false, 'error' => 'action: list | file | upload | delete'], JSON_UNESCAPED_UNICODE);
 } catch (InvalidArgumentException $e) {
     header('Content-Type: application/json; charset=utf-8');
     http_response_code(400);
     echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
 } catch (Throwable $e) {
     header('Content-Type: application/json; charset=utf-8');
-    http_response_code(500);
+    $code = str_contains($e->getMessage(), 'администратор') || str_contains($e->getMessage(), 'Unauthorized') ? 401 : 500;
+    http_response_code($code);
     echo json_encode(['ok' => false, 'error' => $e->getMessage()], JSON_UNESCAPED_UNICODE);
 }

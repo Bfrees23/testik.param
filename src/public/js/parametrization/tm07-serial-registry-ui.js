@@ -253,7 +253,7 @@
             return '';
         }
         if (result.reused) {
-            const src = result.source === 'xlsx' ? 'таблица Excel' : 'реестр';
+            const src = result.source === 'db' || result.source === 'db-next' ? 'БД' : 'реестр';
             return label + ': ' + result.serial + ' — уже выдан (' + src + '), новый не создавался';
         }
         return (

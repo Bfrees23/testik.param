@@ -2645,6 +2645,104 @@
         return false;
     }
 
+    function hexUsbId(n) {
+        if (n == null || n === '') {
+            return '';
+        }
+        return '0x' + (Number(n) & 0xffff).toString(16).toUpperCase().padStart(4, '0');
+    }
+
+    /** Дополнить S/N из WebUSB, если устройство уже разрешено сайту. */
+    async function tryWebUsbSerialNumber(vid, pid) {
+        if (!navigator.usb || typeof navigator.usb.getDevices !== 'function') {
+            return '';
+        }
+        if (vid == null || pid == null) {
+            return '';
+        }
+        try {
+            const devices = await navigator.usb.getDevices();
+            const match = (devices || []).find(function (d) {
+                return d.vendorId === vid && d.productId === pid;
+            });
+            if (match && match.serialNumber) {
+                return String(match.serialNumber).trim();
+            }
+        } catch (_e) {}
+        return '';
+    }
+
+    async function readAndReportKaoUsb(connectedDev) {
+        const info =
+            connectedDev && typeof connectedDev.getUsbInfo === 'function'
+                ? connectedDev.getUsbInfo()
+                : null;
+        if (!info) {
+            log('КАО USB: getInfo() недоступен');
+            return null;
+        }
+        let serial = info.serialNumber || '';
+        if (!serial) {
+            serial = await tryWebUsbSerialNumber(info.usbVendorId, info.usbProductId);
+        }
+        const payload = {
+            usbVendorId: info.usbVendorId,
+            usbProductId: info.usbProductId,
+            vendorIdHex: hexUsbId(info.usbVendorId),
+            productIdHex: hexUsbId(info.usbProductId),
+            tm07ProductIdHex: hexUsbId(info.usbProductId),
+            serialNumber: serial,
+            keys: info.keys || [],
+        };
+        window.__tm07KaoUsbInfo = payload;
+
+        const vidPid =
+            (payload.vendorIdHex || '—') + ' / ' + (payload.productIdHex || '—');
+        if (serial) {
+            log('КАО USB: VID/PID ' + vidPid + ', S/N адаптера: ' + serial);
+        } else {
+            log(
+                'КАО USB: VID/PID ' +
+                    vidPid +
+                    ', S/N адаптера: браузер не отдал (Web Serial обычно только VID/PID; keys=[' +
+                    (payload.keys || []).join(',') +
+                    '])'
+            );
+        }
+
+        const hint = el('paramUsbFilterHint');
+        if (hint) {
+            hint.textContent = serial
+                ? 'Адаптер КАО: ' + vidPid + ' · S/N ' + serial
+                : 'Адаптер КАО: ' + vidPid + ' · S/N недоступен из браузера (только VID/PID)';
+        }
+
+        const events = window.TM07_BENCH_EVENTS;
+        if (events && typeof events.reportKaoUsb === 'function') {
+            try {
+                const bound =
+                    events.getContext &&
+                    events.getContext() &&
+                    events.getContext().workstationConfig &&
+                    events.getContext().workstationConfig.deviceUsb;
+                const expectedSn = bound && bound.kaoSerialNumber ? String(bound.kaoSerialNumber) : '';
+                if (expectedSn && serial && expectedSn !== serial) {
+                    log(
+                        'Внимание: S/N адаптера (' +
+                            serial +
+                            ') ≠ привязанному к месту (' +
+                            expectedSn +
+                            ')'
+                    );
+                }
+                await events.reportKaoUsb(payload);
+            } catch (e) {
+                log('Не удалось сохранить USB адаптера в место: ' + (e.message || e));
+            }
+        }
+        return payload;
+    }
+
     async function doConnect(filterKao) {
         if (connectBusy) {
             log('Подключение уже выполняется…');
@@ -2704,6 +2802,9 @@
             dev = connectedDev;
             window.__paramKorrektor = dev;
             window.__tm07KaoWasConnected = true;
+            try {
+                await readAndReportKaoUsb(connectedDev);
+            } catch (_e) {}
             if (window.TM07_WORKBENCH_STATE && typeof window.TM07_WORKBENCH_STATE.save === 'function') {
                 window.TM07_WORKBENCH_STATE.save();
             }
@@ -2743,6 +2844,7 @@
                                 linked: !!(window.__paramDevicePassport && window.__paramDevicePassport.mapVersion != null),
                                 passport: window.__paramDevicePassport,
                                 lock: window.__paramLockStatus,
+                                kaoUsb: window.__tm07KaoUsbInfo || null,
                             },
                         })
                     );
@@ -4658,6 +4760,10 @@
         if (dv) {
             dv.textContent = deviceVer ? 'v' + deviceVer : '—';
         }
+        const lkgWrap = el('paramFwLkgWrap');
+        if (lkgWrap) {
+            lkgWrap.classList.add('d-none');
+        }
         const lkgEl = el('paramFwLkg');
         if (lkgEl) {
             lkgEl.textContent = (file && file.lkgHex) || '—';
@@ -4676,23 +4782,32 @@
                 badge.textContent = 'нет связи';
             } else if (!folderVer) {
                 badge.className += 'text-bg-warning text-dark';
-                badge.textContent = 'нет файла — выберите вручную';
+                badge.textContent = 'нет файла в firmware/';
             } else if (!deviceVer) {
                 badge.className += 'text-bg-warning text-dark';
                 badge.textContent = connected ? 'версия не считана' : 'ожидание версии';
             } else if (match) {
                 badge.className += 'text-bg-success';
-                badge.textContent = 'сходится';
+                badge.textContent = 'актуальная прошивка';
             } else {
                 badge.className += 'text-bg-danger';
-                badge.textContent = 'не сходится';
+                badge.textContent = 'нужна перепрошивка';
             }
         }
+        const pickLbl = el('paramFwFileLabel');
+        if (pickLbl) {
+            pickLbl.classList.add('d-none');
+        }
         if (btn) {
-            btn.disabled = !connected || !file || !!o.busy;
-            btn.title = file
-                ? 'Залить ' + (file.versionTag || file.name) + (file.local ? ' (выбранный файл)' : ' из папки firmware')
-                : 'Нет файла — выберите .bin вручную или положите в firmware/';
+            // При совпадении версий перепрошивка недоступна
+            btn.disabled = !connected || !file || !!o.busy || match;
+            if (match) {
+                btn.title = 'Версия ПО уже актуальна (v' + deviceVer + ')';
+            } else {
+                btn.title = file
+                    ? 'Залить ' + (file.versionTag || file.name) + ' из папки firmware'
+                    : 'Нет файла в firmware/ — загрузите .bin в админке';
+            }
         }
         if (st && o.status != null) {
             st.textContent = o.status;
@@ -5166,9 +5281,7 @@
                     nested: true,
                     accumulate: true,
                     skipAlreadyOk: skipAlreadyOk,
-                    // Порядок как в карте: п.2 DEFAULT_SETTINGS → … → маски 71/72/74/75/77 из полей
-                    // (staging 0/0/3/3/0). Не пишем staging ДО п.2 — DEFAULT_SETTINGS сбрасывает маски.
-                    // Реальные И1…И4 — только в финале (другие поля).
+                    // Порядок как в карте: п.2 DEFAULT_SETTINGS → … → маски 71/72/74/75/77 и очистки 318–320.
                     preserveStepOrder: true,
                     stagingMasks: false,
                 };

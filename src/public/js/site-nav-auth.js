@@ -17,12 +17,17 @@
         try {
             const st = await window.TM07_BENCH_EVENTS.refreshContext(true);
             const label = operatorLabel(st);
+            const agent =
+                typeof window.TM07_BENCH_EVENTS.getSenselockAgentStatus === 'function'
+                    ? window.TM07_BENCH_EVENTS.getSenselockAgentStatus()
+                    : null;
             const ws =
-                st && st.workstationName
-                    ? st.workstationName
-                    : st && st.workstationCode
-                      ? st.workstationCode
-                      : '';
+                (agent && agent.present && agent.workstationCode) ||
+                (typeof window.TM07_BENCH_EVENTS.workstationCode === 'function' &&
+                    window.TM07_BENCH_EVENTS.workstationCode()) ||
+                (st && st.workstationName) ||
+                (st && st.workstationCode) ||
+                '';
             const order =
                 st && st.activeSession && st.activeSession.orderNumber
                     ? st.activeSession.orderNumber
@@ -74,14 +79,13 @@
             const r = await fetch('/api/auth.php?action=status', { credentials: 'same-origin' });
             const j = await r.json();
             const opHtml = await renderOperatorBlock();
+            // Админка — отдельный контур: /login.html → /admin.html (кнопка скрыта у оператора).
             if (j.success && j.loggedIn) {
                 slot.innerHTML =
                     opHtml +
-                    '<a class="nav-link py-1 d-inline" href="/admin.html">Админ</a>' +
-                    '<button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2 ms-1" id="navLogoutBtn">Выход</button>';
+                    '<button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2 ms-1" id="navLogoutBtn" title="Выйти из сессии администратора">Выход</button>';
             } else {
-                slot.innerHTML =
-                    opHtml + '<a class="nav-link py-1 d-inline" href="/login.html">Админ</a>';
+                slot.innerHTML = opHtml;
             }
 
             if (window.TM07_SITE_SHELL && typeof window.TM07_SITE_SHELL.refreshAdminNav === 'function') {
@@ -128,8 +132,7 @@
                 });
             }
         } catch (_e) {
-            slot.innerHTML =
-                '<a class="nav-link py-1" href="/login.html" title="API недоступен">Админ</a>';
+            slot.innerHTML = '';
         }
     }
 
@@ -146,6 +149,7 @@
     window.addEventListener('tm07-header-ready', start);
     window.addEventListener('tm07-operator-changed', start);
     window.addEventListener('tm07-order-session-changed', start);
+    window.addEventListener('tm07-senselock-agent', start);
 
     window.TM07_SITE_NAV_AUTH = { refresh: refresh };
 })();

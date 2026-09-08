@@ -1318,7 +1318,7 @@ function nameplate_fetch_order_payload_by_number(PDO $pdo, string $orderNumber):
     if (bench_is_firebird($pdo)) {
         $sql = 'SELECT FIRST 1 ORDER_PAYLOAD FROM TM07_BENCH_SESSION WHERE ORDER_NUMBER = ? ORDER BY ID DESC';
     } else {
-        $sql = "SELECT ORDER_PAYLOAD FROM TM07_BENCH_SESSION WHERE ORDER_NUMBER = ? ORDER BY ID DESC LIMIT 1";
+        $sql = 'SELECT ORDER_PAYLOAD FROM TM07_BENCH_SESSION WHERE ORDER_NUMBER = ? ORDER BY ID DESC LIMIT 1';
     }
     $st = $pdo->prepare($sql);
     $st->execute([$orderNumber]);

@@ -47,11 +47,21 @@
                             <p class="mb-0 small" id="homeWorkstationLabel">—</p>
                         </div>
                         <div class="ms-auto d-flex flex-wrap gap-2">
-                            <a class="btn btn-outline-primary" href="/tm07-workbench.html" title="Открыть рабочее место без сброса"><i class="bi bi-tools me-1"></i>Рабочее место</a>
-                            <a class="btn btn-primary" href="/tm07-workbench.html?newSession=1" title="Закрыть текущую сессию и начать нового корректора"><i class="bi bi-plus-lg me-1"></i>Новая сессия</a>
+                            <a class="btn btn-primary" href="/tm07-workbench.html" title="Открыть рабочее место"><i class="bi bi-tools me-1"></i>Рабочее место</a>
+                            <a class="btn btn-outline-primary" href="/tm07-workbench.html?newSession=1" title="Сбросить стенд и закрыть текущую сессию. Уже заведённый заказ при входе откроется снова, а не создаст дубликат."><i class="bi bi-plus-lg me-1"></i>Сбросить стенд</a>
                             <button type="button" class="btn btn-outline-secondary" id="homeRefreshBtn"><i class="bi bi-arrow-clockwise me-1"></i>Обновить</button>
                             <button type="button" class="btn btn-outline-secondary btn-sm" id="homeLogoutBtn">Выйти</button>
                         </div>
+                    </div>
+                </div>
+
+                <div id="homeNewOrdersAlert" class="mb-4 d-none" role="status">
+                    <div id="homeNewOrdersList" class="d-flex flex-column gap-2"></div>
+                    <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+                        <p class="small mb-0 text-body-secondary flex-grow-1">
+                            Новые заказы кПроизводству на корректор ТМ-07 / комплекс ПК-ТМ — уведомления в 8:00–17:00 МСК (Пн–Пт). Тест из админки приходит сразу (~5 с).
+                        </p>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="homeNewOrdersDismissBtn" title="Скрыть все">Скрыть все</button>
                     </div>
                 </div>
 
@@ -152,6 +162,7 @@
     <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
     <script src="/js/tm07-bench-events.js" defer></script>
     <script src="/js/site-operator-auth.js" defer></script>
+    <script src="/js/parametrization/order-1c-odata.js" defer></script>
     <script src="/js/site-home-dashboard.js" defer></script>
     <script src="/js/site-nav-auth.js" defer></script>
 </body>

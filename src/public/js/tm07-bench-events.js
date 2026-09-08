@@ -23,6 +23,13 @@
     };
 
     const FP_KEY = 'tm07_workstation_fp_v1';
+    const WS_CODE_KEY = 'tm07_workstation_code_v1'; // legacy
+    const SENSELOCK_AGENT_URLS = [
+        'http://127.0.0.1:18779',
+        'http://localhost:18779',
+        '/senselock-agent',
+    ];
+    const SENSELOCK_BIND_KEY = 'tm07_senselock_bind_v1';
     const REGISTER_INTERVAL_MS = 5 * 60 * 1000;
     const REFRESH_MIN_INTERVAL_MS = 3000;
 
@@ -30,6 +37,11 @@
     let lastRefreshAt = 0;
     let registerPromise = null;
     let lastStatusData = null;
+    let lastRegisteredCode = '';
+    /** @type {object|null} */
+    let lastSenselockAgent = null;
+    let senselockBound = false;
+    let senselockBindPromise = null;
 
     /** @type {{ login?: string, displayName?: string, lastName?: string, firstName?: string, workstationCode?: string, workstationName?: string, activeSession?: object|null, orderNumber?: string|null }|null} */
     let cachedContext = null;
@@ -49,6 +61,166 @@
         return data;
     }
 
+    function normalizeWorkstationCode(raw) {
+        return String(raw || '')
+            .trim()
+            .replace(/\s+/g, '-')
+            .replace(/[^A-Za-z0-9_-]/g, '')
+            .toUpperCase()
+            .slice(0, 64);
+    }
+
+    /** Legacy no-op: ?ws= больше не прокидываем в ссылки. */
+    function withWorkstationQuery(url) {
+        return url;
+    }
+
+    function emitSenselockAgentEvent() {
+        try {
+            window.dispatchEvent(
+                new CustomEvent('tm07-senselock-agent', { detail: lastSenselockAgent })
+            );
+        } catch (_e) {}
+    }
+
+    function getSenselockAgentStatus() {
+        return lastSenselockAgent;
+    }
+
+    function loadSenselockBind() {
+        try {
+            const raw = sessionStorage.getItem(SENSELOCK_BIND_KEY);
+            if (!raw) return null;
+            const data = JSON.parse(raw);
+            if (!data || !data.present || !data.workstationCode) return null;
+            return data;
+        } catch (_e) {
+            return null;
+        }
+    }
+
+    function saveSenselockBind(status) {
+        if (!status || !status.present || !status.workstationCode) return;
+        try {
+            sessionStorage.setItem(
+                SENSELOCK_BIND_KEY,
+                JSON.stringify({
+                    ok: true,
+                    offline: false,
+                    present: true,
+                    workstationCode: status.workstationCode,
+                    source: status.source || null,
+                    hostname: status.hostname || null,
+                    note: status.note || '',
+                    boundAt: status.boundAt || new Date().toISOString(),
+                    via: status.via || null,
+                    version: status.version || null,
+                })
+            );
+        } catch (_e) {}
+        senselockBound = true;
+    }
+
+    function clearSenselockBind() {
+        senselockBound = false;
+        try {
+            sessionStorage.removeItem(SENSELOCK_BIND_KEY);
+        } catch (_e) {}
+    }
+
+    async function refreshSenselockAgent(opts) {
+        const forceRefresh = !!(opts && opts.forceRefresh);
+        const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+        const timer = ctrl
+            ? setTimeout(function () {
+                  try {
+                      ctrl.abort();
+                  } catch (_e) {}
+              }, 3500)
+            : null;
+        let lastErr = null;
+        try {
+            for (let i = 0; i < SENSELOCK_AGENT_URLS.length; i += 1) {
+                const base = SENSELOCK_AGENT_URLS[i];
+                try {
+                    const statusPath = forceRefresh ? '/status?refresh=1' : '/status';
+                    const res = await fetch(base + statusPath, {
+                        method: 'GET',
+                        mode: base.charAt(0) === '/' ? 'same-origin' : 'cors',
+                        cache: 'no-store',
+                        signal: ctrl ? ctrl.signal : undefined,
+                    });
+                    const data = await res.json();
+                    if (!res.ok || !data || data.ok === false) {
+                        throw new Error((data && data.error) || 'HTTP ' + res.status);
+                    }
+                    lastSenselockAgent = Object.assign({ offline: false, via: base }, data);
+                    try {
+                        localStorage.removeItem(WS_CODE_KEY);
+                    } catch (_e) {}
+                    return lastSenselockAgent;
+                } catch (e) {
+                    lastErr = e;
+                }
+            }
+            throw lastErr || new Error('agent offline');
+        } catch (_e) {
+            if (senselockBound && lastSenselockAgent && lastSenselockAgent.present) {
+                return lastSenselockAgent;
+            }
+            lastSenselockAgent = {
+                ok: false,
+                offline: true,
+                present: false,
+                workstationCode: null,
+                note: 'Агент Senselock не отвечает (127.0.0.1:18779). Запустите TM07-Senselock-Agent.cmd',
+            };
+            return lastSenselockAgent;
+        } finally {
+            if (timer) clearTimeout(timer);
+        }
+    }
+
+    /**
+     * Одно считывание свистка + регистрация места.
+     * Без force повторно использует sessionStorage / кэш.
+     */
+    async function bindWorkstationOnce(opts) {
+        const force = !!(opts && opts.force);
+        if (senselockBindPromise) return senselockBindPromise;
+        senselockBindPromise = (async function () {
+            if (!force && senselockBound && lastSenselockAgent && lastSenselockAgent.present) {
+                emitSenselockAgentEvent();
+                return lastSenselockAgent;
+            }
+            if (!force) {
+                const restored = loadSenselockBind();
+                if (restored) {
+                    lastSenselockAgent = Object.assign({ offline: false }, restored);
+                    senselockBound = true;
+                    emitSenselockAgentEvent();
+                    return lastSenselockAgent;
+                }
+            }
+            await refreshSenselockAgent({ forceRefresh: force });
+            if (lastSenselockAgent && lastSenselockAgent.present && lastSenselockAgent.workstationCode) {
+                lastSenselockAgent = Object.assign({}, lastSenselockAgent, {
+                    boundAt: new Date().toISOString(),
+                });
+                saveSenselockBind(lastSenselockAgent);
+                lastRegisterAt = 0;
+                try {
+                    await registerWorkstation();
+                } catch (_e) {}
+            }
+            emitSenselockAgentEvent();
+            return lastSenselockAgent;
+        })().finally(function () {
+            senselockBindPromise = null;
+        });
+        return senselockBindPromise;
+    }
+
     function collectClientConfig() {
         return {
             userAgent: navigator.userAgent,
@@ -65,6 +237,16 @@
             deviceMemory: navigator.deviceMemory || null,
             pageUrl: String(location.href.split('#')[0]),
             collectedAt: new Date().toISOString(),
+            senselockAgent: lastSenselockAgent
+                ? {
+                      present: !!lastSenselockAgent.present,
+                      workstationCode: lastSenselockAgent.workstationCode || null,
+                      source: lastSenselockAgent.source || null,
+                      hostname: lastSenselockAgent.hostname || null,
+                      offline: !!lastSenselockAgent.offline,
+                      version: lastSenselockAgent.version || null,
+                  }
+                : null,
         };
     }
 
@@ -87,6 +269,15 @@
         }
     }
 
+    /** Код места: SL-… из агента Senselock, иначе fingerprint. */
+    function workstationCode() {
+        if (lastSenselockAgent && lastSenselockAgent.present && lastSenselockAgent.workstationCode) {
+            return normalizeWorkstationCode(lastSenselockAgent.workstationCode);
+        }
+        return normalizeWorkstationCode(workstationFingerprint());
+    }
+
+
     function applyContextFromStatus(data) {
         cachedContext = {
             login: data.operator && data.operator.login,
@@ -106,22 +297,48 @@
     }
 
     function workstationPayload(extra) {
-        return Object.assign(
-            {
-                fingerprint: workstationFingerprint(),
-                clientConfig: collectClientConfig(),
-            },
-            extra || {}
-        );
+        const code = workstationCode();
+        const base = {
+            fingerprint: workstationFingerprint(),
+            clientConfig: collectClientConfig(),
+        };
+        if (code) {
+            base.workstationCode = code;
+            base.code = code;
+        }
+        return Object.assign(base, extra || {});
+    }
+
+    function statusQueryParams() {
+        const q = {
+            action: 'status',
+            fingerprint: workstationFingerprint(),
+        };
+        const code = workstationCode();
+        if (code) {
+            q.workstationCode = code;
+            q.ws = code.toLowerCase();
+        }
+        return q;
     }
 
     async function registerWorkstation() {
         const now = Date.now();
+        const code = workstationCode();
         if (registerPromise) {
             return registerPromise;
         }
+        if (
+            code &&
+            lastRegisteredCode &&
+            code !== lastRegisteredCode
+        ) {
+            lastRegisterAt = 0;
+        }
         if (now - lastRegisterAt < REGISTER_INTERVAL_MS && cachedContext && cachedContext.workstationId) {
-            return { ok: true, skipped: true };
+            if (!code || cachedContext.workstationCode === code) {
+                return { ok: true, skipped: true };
+            }
         }
         registerPromise = fetchJson('/api/bench-db-status.php', {
             method: 'POST',
@@ -129,11 +346,38 @@
             body: JSON.stringify(
                 Object.assign({ action: 'registerWorkstation' }, workstationPayload())
             ),
-        }).finally(function () {
-            registerPromise = null;
-            lastRegisterAt = Date.now();
-        });
+        })
+            .then(function (data) {
+                if (data && data.workstation) {
+                    applyContextFromStatus(data);
+                    lastRegisteredCode = code || (data.workstation.code || '');
+                }
+                return data;
+            })
+            .finally(function () {
+                registerPromise = null;
+                lastRegisterAt = Date.now();
+            });
         return registerPromise;
+    }
+
+    /** Сохранить VID/PID/S/N адаптера КАО в карточку текущего рабочего места. */
+    async function reportKaoUsb(kaoUsb) {
+        if (!kaoUsb || typeof kaoUsb !== 'object') {
+            return null;
+        }
+        const data = await fetchJson('/api/bench-db-status.php', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(
+                Object.assign({ action: 'registerWorkstation', kaoUsb: kaoUsb }, workstationPayload())
+            ),
+        });
+        if (data && data.workstation) {
+            applyContextFromStatus(data);
+            lastRegisterAt = Date.now();
+        }
+        return data;
     }
 
     async function refreshContext(force) {
@@ -142,10 +386,7 @@
             return cachedContext;
         }
         try {
-            const q = new URLSearchParams({
-                action: 'status',
-                fingerprint: workstationFingerprint(),
-            });
+            const q = new URLSearchParams(statusQueryParams());
             const data = await fetchJson('/api/bench-db-status.php?' + q.toString());
             lastRefreshAt = Date.now();
             lastStatusData = data;
@@ -158,16 +399,20 @@
 
     function contextPayload(extra) {
         const c = cachedContext || {};
+        const code = workstationCode() || c.workstationCode || '';
         const base = {
             userLogin: c.login || null,
             userDisplayName: c.displayName || null,
             userLastName: c.lastName || null,
             userFirstName: c.firstName || null,
-            workstationCode: c.workstationCode || workstationFingerprint(),
+            workstationCode: code || workstationFingerprint(),
             fingerprint: workstationFingerprint(),
             clientConfig: collectClientConfig(),
             orderNumber: c.orderNumber || (c.activeSession && c.activeSession.orderNumber) || null,
         };
+        if (code) {
+            base.code = code;
+        }
         // sessionId в кэше НЕ подмешиваем автоматически — иначе selectOrder
         // всегда реактивирует старую сессию вместо создания новой / смены заказа.
         return Object.assign(base, extra || {});
@@ -202,6 +447,12 @@
         // Всегда берём актуальный status с сервера (сессия заказа могла закрыться при смене оператора).
         lastStatusData = null;
         lastRefreshAt = 0;
+        try {
+            await bindWorkstationOnce({ force: true });
+        } catch (_e) {}
+        try {
+            await registerWorkstation();
+        } catch (_e) {}
         await refreshContext(true);
         if (!hasOperator() && data && data.operator) {
             applyContextFromStatus({
@@ -227,6 +478,9 @@
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ action: 'clearOperator' }),
         });
+        clearSenselockBind();
+        lastSenselockAgent = null;
+        emitSenselockAgentEvent();
         const wsKeep = cachedContext
             ? {
                   workstationId: cachedContext.workstationId,
@@ -538,6 +792,15 @@
     }
 
     async function initBackend() {
+        const restored = loadSenselockBind();
+        if (restored) {
+            lastSenselockAgent = Object.assign({ offline: false }, restored);
+            senselockBound = true;
+            emitSenselockAgentEvent();
+        }
+        try {
+            await bindWorkstationOnce({ force: !senselockBound });
+        } catch (_e) {}
         try {
             await registerWorkstation();
         } catch (_e) {}
@@ -605,6 +868,13 @@
         getContext: getContext,
         collectClientConfig: collectClientConfig,
         workstationFingerprint: workstationFingerprint,
+        workstationCode: workstationCode,
+        withWorkstationQuery: withWorkstationQuery,
+        statusQueryParams: statusQueryParams,
+        reportKaoUsb: reportKaoUsb,
+        refreshSenselockAgent: refreshSenselockAgent,
+        bindWorkstationOnce: bindWorkstationOnce,
+        getSenselockAgentStatus: getSenselockAgentStatus,
         logEvent: logEvent,
         logStage: logStage,
         getLastEvents: getLastEvents,

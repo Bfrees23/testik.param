@@ -4,45 +4,39 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заказ на производство — OData 1С</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
     <link href="/css/bench-pages.css" rel="stylesheet">
+    <script src="/js/site-shell.js" defer></script>
+    <script src="/js/site-settings-cache.js" defer></script>
 </head>
-<body class="bench-page bg-body-tertiary">
+<body class="bench-page">
 
-    <header class="navbar navbar-expand-lg navbar-dark bg-primary shadow-sm">
-        <div class="container-xl py-2">
-            <div class="d-flex align-items-center gap-2 me-4">
-                <span class="bench-brand-mark text-white" aria-hidden="true"><i class="bi bi-cpu"></i></span>
-                <div>
-                    <div class="text-white-50 small text-uppercase" style="letter-spacing:0.06em;">Приборы</div>
-                    <span class="navbar-brand text-white fw-semibold mb-0">Web Serial</span>
-                </div>
-            </div>
-            <button class="navbar-toggler border border-white" type="button" data-bs-toggle="collapse" data-bs-target="#siteNav" aria-controls="siteNav" aria-expanded="false" aria-label="Меню">
-                <span class="navbar-toggler-icon"></span>
-            </button>
-            <div class="collapse navbar-collapse" id="siteNav">
-                <ul class="navbar-nav ms-auto bench-nav flex-wrap gap-lg-1 mt-3 mt-lg-0">
-                    <li class="nav-item"><a class="nav-link" href="/index.html"><i class="bi bi-house me-1"></i>Главная</a></li>
-                    <li class="nav-item"><a class="nav-link active" href="/order-1c.html" aria-current="page"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Заказ 1С</a></li>
-                    <li class="nav-item ms-lg-2 border-start border-white border-opacity-25 ps-lg-2 mt-2 mt-lg-0 d-flex flex-wrap align-items-center gap-1" id="navAuthSlot"></li>
-                </ul>
-            </div>
+    <header class="bench-header" data-bench-header></header>
+
+    <main class="bench-main">
+    <div class="container-xl">
+        <div class="bench-page-head">
+            <h1 class="bench-hero-title">Заказ на производство</h1>
+            <p class="bench-page-lead">Введите номер заказа или выберите из списка активных (кПроизводству) — страница выполнит OData-запросы через <code>/api/odata-1c.php</code>.</p>
         </div>
-    </header>
-
-    <div class="container-xl py-4 py-lg-5">
-        <h1 class="display-6 fw-semibold bench-hero-title mb-2">Заказ на производство (1С, OData)</h1>
-        <p class="text-body-secondary mb-4">
-            Введите номер заказа и нажмите <strong>«Получить заказ»</strong>. Дальше страница сама выполнит все нужные OData-запросы через <code>/api/odata-1c.php</code>.
-        </p>
 
         <div class="card bench-card shadow-sm mb-4">
             <div class="card-body">
                 <div class="row g-3 align-items-end">
-                    <div class="col-md-6 col-lg-4">
-                        <label for="orderNumberInput" class="form-label mb-0">Номер заказа</label>
+                    <div class="col-md-6 col-lg-5">
+                        <label for="orderActiveSelect" class="form-label mb-0">Заказы к производству</label>
+                        <div class="input-group">
+                            <select id="orderActiveSelect" class="form-select">
+                                <option value="">— Загрузка… —</option>
+                            </select>
+                            <button type="button" id="orderRefreshListBtn" class="btn btn-outline-secondary" title="Обновить список">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-6 col-lg-4" id="orderManualNumberWrap">
+                        <label for="orderNumberInput" class="form-label mb-0">Номер (или вручную)</label>
                         <input type="text" id="orderNumberInput" class="form-control" placeholder="539 или ТМ00-000539" autocomplete="off">
                     </div>
                     <div class="col-md-auto">
@@ -58,6 +52,8 @@
                         </button>
                     </div>
                 </div>
+                <p class="small text-body-secondary mt-2 mb-0">В списке — заказы <strong>кПроизводству</strong> на корректор ТМ-07 или комплекс ПК-ТМ (остальная номенклатура скрыта). Уведомления — <strong>8:00–17:00 МСК</strong> (Пн–Пт).</p>
+                <div id="orderNewAlert" class="alert alert-success py-2 small mt-2 mb-0 d-none" role="status"></div>
                 <div class="mt-3 d-none">
                     <button type="button" id="orderParseFullUrlBtn" class="btn btn-outline-secondary">Разобрать</button>
                     <input type="text" id="orderOdataLink" class="form-control font-monospace small" readonly placeholder="">
@@ -75,7 +71,8 @@
                 <span class="fw-semibold"><i class="bi bi-table me-1"></i>Реквизиты заказа (Ref_Key … Ответственный)</span>
                 <div class="d-flex flex-wrap gap-2">
                     <button type="button" id="orderExportExcelBtn" class="btn btn-sm btn-outline-success">EXP</button>
-                    <a class="btn btn-sm btn-outline-primary" href="/tm07-parametrization-kao.html?fromOrder1c=1" title="Требуется загрузка заказа в этой же сессии браузера">Параметризация ТМ-07</a>
+                    <a class="btn btn-sm btn-primary" id="orderGoWorkbenchBtn" href="/tm07-workbench.html" title="Открыть заказ на рабочем месте (сессия оператора)">Рабочее место</a>
+                    <a class="btn btn-sm btn-outline-primary" href="/tm07-parametrization-kao.html?fromOrder1c=1" title="Расширенная параметризация КАО">КАО напрямую</a>
                 </div>
             </div>
             <div class="card-body p-0">
@@ -105,14 +102,32 @@
             </details>
         </div>
 
-        <div class="alert alert-light border shadow-sm small mb-0" role="note">
-            Прокси <code>/api/odata-1c.php</code>, переменные <code>ODATA_1C_BASE</code>, при необходимости <code>ODATA_1C_USER</code> / <code>ODATA_1C_PASSWORD</code>.
+        <div class="alert alert-light border shadow-sm small mb-0" role="note" id="orderOdataConfigNote">
+            Прокси <code>/api/odata-1c.php</code> · база по умолчанию <code>http://srv-1c/erp/odata/standard.odata</code> · IP и Host из <code>.env</code> (<code>ODATA_1C_HOST_IP</code>, <code>ODATA_1C_HTTP_HOST</code>).
         </div>
     </div>
+    </main>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/gh/linways/table-to-excel@v1.0.4/dist/tableToExcel.js"></script>
+    <script src="/js/tm07-bench-events.js"></script>
+    <script src="/js/site-operator-auth.js"></script>
     <script src="/js/parametrization/order-1c-odata.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            var O = window.Order1cOdata;
+            if (!O || typeof O.bootstrapOdataConfig !== 'function') return;
+            O.bootstrapOdataConfig().then(function (cfg) {
+                var note = document.getElementById('orderOdataConfigNote');
+                if (!note || !cfg) return;
+                var parts = ['База: ' + (cfg.defaultBase || '—')];
+                if (cfg.hostIp) parts.push('IP: ' + cfg.hostIp);
+                if (cfg.httpHost) parts.push('Host: ' + cfg.httpHost);
+                if (cfg.authConfigured) parts.push('Auth: .env');
+                note.innerHTML = parts.join(' · ') + ' · запросы через <code>/api/odata-1c.php</code>';
+            });
+        });
+    </script>
     <script src="/js/site-nav-auth.js" defer></script>
 </body>
 </html>

@@ -286,7 +286,7 @@
                 }
                 if (
                     t.classList.contains('param-val') ||
-                    /^(paramOrder1cNumber|paramMeterSerial|paramAddr|paramQrSensor)$/.test(t.id)
+                    /^(paramOrder1cNumber|paramMeterSerial|paramAddr|paramQrSensor(_[A-Z]{2})?)$/.test(t.id)
                 ) {
                     scheduleSave();
                 }

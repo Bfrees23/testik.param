@@ -5,9 +5,189 @@
     'use strict';
 
     let isAdmin = false;
+    let homeOrdersWatcher = null;
+    let sessionsPollTimer = null;
+    const SESSIONS_POLL_MS = 12000;
 
     function $(id) {
         return document.getElementById(id);
+    }
+
+    function wbUrl(url) {
+        const ev = window.TM07_BENCH_EVENTS;
+        if (ev && typeof ev.withWorkstationQuery === 'function') {
+            return ev.withWorkstationQuery(url || '/tm07-workbench.html');
+        }
+        return url || '/tm07-workbench.html';
+    }
+
+    function patchHomeWorkbenchLinks() {
+        document.querySelectorAll('a[href*="tm07-workbench.html"]').forEach(function (a) {
+            const href = a.getAttribute('href');
+            if (!href) {
+                return;
+            }
+            a.setAttribute('href', wbUrl(href));
+        });
+    }
+
+    function stopHomeOrdersWatcher() {
+        if (homeOrdersWatcher && typeof homeOrdersWatcher.stop === 'function') {
+            homeOrdersWatcher.stop();
+        }
+        homeOrdersWatcher = null;
+    }
+
+    function stopSessionsAutoRefresh() {
+        if (sessionsPollTimer) {
+            clearInterval(sessionsPollTimer);
+            sessionsPollTimer = null;
+        }
+    }
+
+    function startSessionsAutoRefresh() {
+        stopSessionsAutoRefresh();
+        sessionsPollTimer = setInterval(function () {
+            const events = window.TM07_BENCH_EVENTS;
+            if ((events && events.hasOperator && events.hasOperator()) || isAdmin) {
+                void loadSessions({ quiet: true });
+            }
+        }, SESSIONS_POLL_MS);
+    }
+
+    let homeNotifyItems = [];
+    let homeNotifySeq = 0;
+
+    function clearHomeNewOrders() {
+        homeNotifyItems = [];
+        const listEl = $('homeNewOrdersList');
+        if (listEl) {
+            listEl.innerHTML = '';
+        }
+        $('homeNewOrdersAlert')?.classList.add('d-none');
+    }
+
+    function renderHomeNotifyList() {
+        const alertEl = $('homeNewOrdersAlert');
+        const listEl = $('homeNewOrdersList');
+        if (!alertEl || !listEl) {
+            return;
+        }
+        if (!homeNotifyItems.length) {
+            listEl.innerHTML = '';
+            alertEl.classList.add('d-none');
+            return;
+        }
+        listEl.innerHTML = homeNotifyItems
+            .map(function (item) {
+                const prefix = item.test
+                    ? '<span class="badge text-bg-warning text-dark me-1">ТЕСТ</span> '
+                    : '';
+                const body =
+                    item.test && item.message
+                        ? item.message + ' · заказ <strong>' + item.number + '</strong>'
+                        : 'Новый заказ в 1С: <strong>' +
+                          item.number +
+                          '</strong>' +
+                          (item.kindLabel ? ' · ' + item.kindLabel : '') +
+                          ' (кПроизводству).';
+                const href = wbUrl(
+                    item.number
+                        ? '/tm07-workbench.html?order=' + encodeURIComponent(item.number)
+                        : '/tm07-workbench.html'
+                );
+                return (
+                    '<div class="alert alert-success border-0 shadow-sm mb-0 py-2" data-notify-id="' +
+                    item.id +
+                    '">' +
+                    '<div class="d-flex flex-wrap align-items-center gap-2">' +
+                    '<i class="bi bi-bell-fill"></i>' +
+                    '<div class="flex-grow-1">' +
+                    prefix +
+                    body +
+                    '</div>' +
+                    '<a class="btn btn-success btn-sm" href="' +
+                    href +
+                    '"><i class="bi bi-box-arrow-in-right me-1"></i>К заказу</a>' +
+                    '<button type="button" class="btn btn-outline-secondary btn-sm" data-dismiss-notify="' +
+                    item.id +
+                    '" title="Скрыть">Скрыть</button>' +
+                    '</div></div>'
+                );
+            })
+            .join('');
+        alertEl.classList.remove('d-none');
+    }
+
+    function showHomeNewOrders(newOrders) {
+        if (!newOrders || !newOrders.length) {
+            return;
+        }
+        newOrders.forEach(function (o) {
+            homeNotifySeq += 1;
+            homeNotifyItems.push({
+                id: 'hn-' + homeNotifySeq + '-' + Date.now(),
+                number: o.number || '',
+                test: !!o.test,
+                message: o.message || '',
+                kindLabel: o.kindLabel || '',
+            });
+        });
+        renderHomeNotifyList();
+        try {
+            $('homeNewOrdersAlert')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } catch (_e) {}
+        try {
+            if (typeof document !== 'undefined' && document.hidden) {
+                const prev = document.title;
+                const first = newOrders[0] && newOrders[0].number;
+                document.title = '🔔 Новый заказ — ' + (first || 'ТМ-07');
+                setTimeout(function () {
+                    document.title = prev;
+                }, 8000);
+            }
+        } catch (_e2) {}
+    }
+
+    function startHomeOrdersWatcher() {
+        const O = window.Order1cOdata;
+        if (!O || typeof O.startActiveOrdersWatcher !== 'function') {
+            // Скрипт ещё не готов — повтор через секунду
+            setTimeout(function () {
+                const events = window.TM07_BENCH_EVENTS;
+                if (events && events.hasOperator && events.hasOperator()) {
+                    startHomeOrdersWatcher();
+                }
+            }, 1000);
+            return;
+        }
+        if (homeOrdersWatcher) {
+            return;
+        }
+        if (typeof O.bootstrapOdataConfig === 'function') {
+            void O.bootstrapOdataConfig();
+        }
+        if (typeof O.ensureNotificationPermission === 'function') {
+            void O.ensureNotificationPermission();
+        }
+        homeOrdersWatcher = O.startActiveOrdersWatcher({
+            onNew: function (newOrders) {
+                showHomeNewOrders(newOrders);
+            },
+            onError: function (e) {
+                console.warn('[home] active orders watch', e);
+            },
+            onPushError: function (e, result) {
+                if (result && (result.status === 401 || result.status === 403)) {
+                    console.warn(
+                        '[home] уведомления: нет сессии оператора на сервере — войдите заново',
+                        e
+                    );
+                } else {
+                    console.warn('[home] server notify', e);
+                }
+            },
+        });
     }
 
     function operatorLabel(ctx) {
@@ -69,7 +249,7 @@
 
     function resumeAction(s) {
         const stage = s.sessionStage || '';
-        const url = s.resumeUrl || '/tm07-workbench.html';
+        const url = wbUrl(s.resumeUrl || '/tm07-workbench.html');
         const verify = stage === 'completed' || s.verifyMode;
         if (verify) {
             return (
@@ -303,13 +483,16 @@
         }
     }
 
-    async function loadSessions() {
+    async function loadSessions(opts) {
         const events = window.TM07_BENCH_EVENTS;
         if (!events || typeof events.listOrderSessions !== 'function') {
             return;
         }
-        setLoading(true);
-        setError('');
+        const quiet = !!(opts && opts.quiet);
+        if (!quiet) {
+            setLoading(true);
+            setError('');
+        }
         try {
             const filter = ($('homeSessionsFilter') || {}).value || 'all';
             const query = { limit: 50 };
@@ -318,12 +501,18 @@
             }
             const sessions = await events.listOrderSessions(query);
             renderSessionsTable(sessions);
-            await loadOpsAlerts();
+            if (!quiet) {
+                await loadOpsAlerts();
+            }
         } catch (e) {
-            setError(e.message || String(e));
-            renderSessionsTable([]);
+            if (!quiet) {
+                setError(e.message || String(e));
+                renderSessionsTable([]);
+            }
         } finally {
-            setLoading(false);
+            if (!quiet) {
+                setLoading(false);
+            }
         }
     }
 
@@ -340,6 +529,7 @@
             showAuthGate(!isAdmin);
             if (isAdmin) {
                 await loadSessions();
+                startSessionsAutoRefresh();
             }
             return;
         }
@@ -360,14 +550,40 @@
             labelEl.textContent = '— (вход не выполнен)';
         }
         if (operatorLoggedIn && wsEl) {
-            wsEl.textContent =
-                (ctx && ctx.workstationName) || (ctx && ctx.workstationCode) || 'Рабочее место';
+            const agent =
+                typeof events.getSenselockAgentStatus === 'function'
+                    ? events.getSenselockAgentStatus()
+                    : null;
+            const code =
+                (typeof events.workstationCode === 'function' && events.workstationCode()) ||
+                (ctx && ctx.workstationCode) ||
+                '';
+            if (agent && agent.present && agent.workstationCode) {
+                wsEl.textContent = agent.workstationCode;
+            } else if (agent && agent.offline) {
+                wsEl.textContent = 'агент Senselock офлайн';
+            } else if (agent && !agent.present) {
+                wsEl.textContent = 'нет ключа Senselock';
+            } else {
+                wsEl.textContent = code || (ctx && ctx.workstationName) || 'Рабочее место';
+            }
         } else if (wsEl && isAdmin) {
             wsEl.textContent = '—';
         }
 
+        patchHomeWorkbenchLinks();
+
         if (operatorLoggedIn || isAdmin) {
             await loadSessions();
+            startSessionsAutoRefresh();
+        } else {
+            stopSessionsAutoRefresh();
+        }
+        if (operatorLoggedIn) {
+            startHomeOrdersWatcher();
+        } else {
+            stopHomeOrdersWatcher();
+            clearHomeNewOrders();
         }
     }
 
@@ -409,11 +625,16 @@
             return;
         }
 
+        patchHomeWorkbenchLinks();
+
         $('homeLoginBtn')?.addEventListener('click', function () {
             void openLogin();
         });
         $('homeRefreshBtn')?.addEventListener('click', function () {
             void loadSessions();
+            if (homeOrdersWatcher && typeof homeOrdersWatcher.refresh === 'function') {
+                void homeOrdersWatcher.refresh();
+            }
         });
         $('homeSessionsFilter')?.addEventListener('change', function () {
             void loadSessions();
@@ -423,9 +644,25 @@
             if (!events || typeof events.clearOperator !== 'function') {
                 return;
             }
+            stopHomeOrdersWatcher();
+            stopSessionsAutoRefresh();
             void events.clearOperator().then(function () {
                 void refreshHome();
             });
+        });
+        $('homeNewOrdersDismissBtn')?.addEventListener('click', function () {
+            clearHomeNewOrders();
+        });
+        $('homeNewOrdersList')?.addEventListener('click', function (e) {
+            const btn = e.target.closest('[data-dismiss-notify]');
+            if (!btn) {
+                return;
+            }
+            const id = btn.getAttribute('data-dismiss-notify');
+            homeNotifyItems = homeNotifyItems.filter(function (it) {
+                return it.id !== id;
+            });
+            renderHomeNotifyList();
         });
 
         $('homeSessionsBody')?.addEventListener('click', function (e) {
@@ -472,10 +709,25 @@
         window.addEventListener('tm07-operator-changed', function () {
             void refreshHome();
         });
+        window.addEventListener('tm07-senselock-agent', function () {
+            void refreshHome();
+        });
         window.addEventListener('tm07-order-session-changed', function () {
             const events = window.TM07_BENCH_EVENTS;
             if ((events && events.hasOperator()) || isAdmin) {
-                void loadSessions();
+                void loadSessions({ quiet: true });
+            }
+        });
+        document.addEventListener('visibilitychange', function () {
+            if (document.visibilityState !== 'visible') {
+                return;
+            }
+            const events = window.TM07_BENCH_EVENTS;
+            if ((events && events.hasOperator && events.hasOperator()) || isAdmin) {
+                void loadSessions({ quiet: true });
+            }
+            if (homeOrdersWatcher && typeof homeOrdersWatcher.refresh === 'function') {
+                void homeOrdersWatcher.refresh();
             }
         });
 

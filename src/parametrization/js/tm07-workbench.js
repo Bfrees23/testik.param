@@ -8,7 +8,11 @@
     let lastPreparedOrder = '';
     /** sessionId из URL (?sessionId=) — открыть существующую закрытую сессию, не создавать новую. */
     let pendingResumeSessionId = null;
-    /** После «Новая сессия» — следующий вход в заказ создаёт новую строку (другой корректор). */
+    /**
+     * «Новая сессия» только сбрасывает стенд (закрывает текущую active).
+     * Повторный вход в уже известный номер заказа снова откроет существующую сессию.
+     * Доп. сессия на тот же заказ — только через явное подтверждение (forceNewSession).
+     */
     let pendingForceNewSession = false;
     /** После открытия существующей сессии — запустить полный опрос для сверки. */
     let pendingVerifyAfterOpen = false;
@@ -124,7 +128,7 @@
                 banner.className = 'alert alert-success py-2 px-3 mb-3 wb-param-lock-banner';
             } else if (locked) {
                 banner.innerHTML =
-                    '<i class="bi bi-lock me-1"></i>Параметризация будет доступна после подтверждения сборки корректора.';
+                    '<i class="bi bi-lock me-1"></i>Откроется после подтверждения сборки в пункте 2.';
                 banner.className = 'alert alert-info py-2 px-3 mb-3 wb-param-lock-banner';
             }
         }
@@ -162,6 +166,7 @@
         const confirmBtn = $('wbAssemblyConfirm');
         const statusEl = $('wbAssemblyStatus');
         const card = $('wbCorrectorCard');
+        const step2 = $('wbStep2Card');
         const serial = correctorSerialValue();
 
         syncCorrectorSerialDisplay();
@@ -177,8 +182,12 @@
             }
         }
 
+        const assemblyDone = stage === 'parametrization' || stage === 'completed';
         if (card) {
-            card.classList.toggle('wb-assembly-done', stage === 'parametrization' || stage === 'completed');
+            card.classList.toggle('wb-assembly-done', assemblyDone);
+        }
+        if (step2) {
+            step2.classList.toggle('wb-assembly-done', assemblyDone);
         }
 
         const assemblyPhase = stage === 'assembly';
@@ -383,6 +392,10 @@
         if (Ops && typeof Ops.paintWorkflowSteps === 'function') {
             Ops.paintWorkflowSteps();
         }
+        // Если QR уже отсканированы до сборки — дописать привязку теперь, когда есть 300…
+        if (Ops && typeof Ops.persistSensorBindingsToServer === 'function') {
+            void Ops.persistSensorBindingsToServer();
+        }
     }
 
     function $(id) {
@@ -564,19 +577,100 @@
         const wsHint = $('wbWorkstationHint');
         if (wsHint && events && typeof events.getContext === 'function') {
             const ctx = events.getContext();
-            const wsName =
-                (ctx && ctx.workstationName) ||
-                (ctx && ctx.workstationFingerprint) ||
+            const agent =
+                typeof events.getSenselockAgentStatus === 'function'
+                    ? events.getSenselockAgentStatus()
+                    : null;
+            const code =
+                (typeof events.workstationCode === 'function' && events.workstationCode()) ||
                 (ctx && ctx.workstationCode) ||
                 '';
-            if (wsName) {
-                wsHint.textContent = 'Рабочее место: ' + wsName;
+            if (agent && agent.offline && !agent.present) {
+                wsHint.textContent =
+                    'Рабочее место: агент Senselock офлайн (запустите .cmd на этом ПК)';
+                wsHint.classList.remove('d-none');
+            } else if (agent && !agent.present) {
+                wsHint.textContent = 'Рабочее место: вставьте ключ Senselock (свисток)';
+                wsHint.classList.remove('d-none');
+            } else if (code) {
+                wsHint.textContent = 'Рабочее место: ' + code;
                 wsHint.classList.remove('d-none');
             } else {
-                wsHint.classList.add('d-none');
+                const wsName =
+                    (ctx && ctx.workstationName) ||
+                    (ctx && ctx.workstationFingerprint) ||
+                    '';
+                if (wsName) {
+                    wsHint.textContent = 'Рабочее место: ' + wsName;
+                    wsHint.classList.remove('d-none');
+                } else {
+                    wsHint.classList.add('d-none');
+                }
             }
         }
+        paintSenselockAgentBadge();
         paintAssemblyCard();
+        paintOrderSelectLock();
+    }
+
+    function paintSenselockAgentBadge() {
+        const badge = $('wbSenselockAgentStatus');
+        if (!badge) {
+            return;
+        }
+        const events = window.TM07_BENCH_EVENTS;
+        const st =
+            events && typeof events.getSenselockAgentStatus === 'function'
+                ? events.getSenselockAgentStatus()
+                : null;
+        if (!st) {
+            badge.textContent = 'агент —';
+            badge.className = 'badge rounded-pill text-bg-secondary';
+            return;
+        }
+        if (st.present && st.workstationCode) {
+            badge.textContent = st.workstationCode;
+            badge.className = 'badge rounded-pill text-bg-success';
+            badge.title = st.note || '';
+            return;
+        }
+        if (st.offline) {
+            badge.textContent = 'офлайн';
+            badge.className = 'badge rounded-pill text-bg-danger';
+            badge.title = st.note || '';
+            return;
+        }
+        badge.textContent = 'нет ключа';
+        badge.className = 'badge rounded-pill text-bg-warning text-dark';
+        badge.title = st.note || '';
+    }
+
+    /** Блокировка выбора заказа, пока открыта сессия. */
+    function paintOrderSelectLock() {
+        const events = window.TM07_BENCH_EVENTS;
+        const active = !!(events && events.hasActiveOrder && events.hasActiveOrder());
+        const orderSelect = $('paramOrder1cSelect');
+        const refreshBtn = $('paramOrder1cRefreshList');
+        const orderInput = $('paramOrder1cNumber');
+        const openBtn = $('wbOrderSessionOpen');
+        const tip = active ? 'Сначала завершите текущую сессию' : '';
+        if (orderSelect) {
+            orderSelect.disabled = active;
+            orderSelect.title = tip;
+        }
+        if (refreshBtn) {
+            refreshBtn.disabled = active;
+            refreshBtn.title = active ? tip : 'Обновить список из 1С';
+        }
+        if (orderInput) {
+            orderInput.disabled = active;
+            orderInput.title = tip;
+        }
+        if (openBtn && active) {
+            openBtn.disabled = true;
+        } else if (openBtn) {
+            openBtn.disabled = false;
+        }
     }
 
     function isNewSessionUrl() {
@@ -626,10 +720,6 @@
         if (n === 59 || n === 66) {
             return false;
         }
-        // Маски основной таблицы — staging; финальные И1…И4 сверяются в финале.
-        if (n === 71 || n === 72 || n === 74 || n === 75 || n === 77) {
-            return false;
-        }
         const c = ctx || getVerifyEquipmentContext();
         if (VERIFY_PPD_STEPS[sid] && !c.hasPpd) {
             return false;
@@ -661,6 +751,111 @@
             out[m[1]] = v;
         });
         return out;
+    }
+
+    function getParamStepTitle(stepId) {
+        const sid = String(stepId || '');
+        const docs = [
+            window.TM07_PARAMETRIZATION_DOC,
+            window.TM07_PARAM_DOC,
+            typeof window.TM07_param_getDocForMap === 'function' ? window.TM07_param_getDocForMap() : null,
+        ];
+        const extra = window.TM07_PARAMETRIZATION_EXTRA;
+        if (extra && Array.isArray(extra.sections)) {
+            extra.sections.forEach(function (sec) {
+                docs.push(sec);
+            });
+        }
+        for (let d = 0; d < docs.length; d++) {
+            const Doc = docs[d];
+            const steps = Doc && Array.isArray(Doc.steps) ? Doc.steps : [];
+            for (let i = 0; i < steps.length; i++) {
+                if (String(steps[i].id) === sid) {
+                    const t = String(steps[i].title || steps[i].name || steps[i].hint || '').trim();
+                    return t || 'п.' + sid;
+                }
+            }
+        }
+        return 'п.' + sid;
+    }
+
+    /** Полный снимок значений из корректора после опроса (все out_*). */
+    function collectDeviceFieldSnapshot() {
+        const out = {};
+        document.querySelectorAll('[id^="out_"]').forEach(function (node) {
+            const id = String(node.id || '');
+            let sid = '';
+            if (/^out_final_(\d+)$/.test(id)) {
+                sid = 'final_' + RegExp.$1;
+            } else if (/^out_(\d+)$/.test(id)) {
+                sid = RegExp.$1;
+            } else {
+                return;
+            }
+            const t = String(node.textContent || '').trim();
+            if (!t || t === '—' || t === '…' || t === 'ошибка') {
+                return;
+            }
+            out[sid] = t;
+        });
+        return out;
+    }
+
+    /** Снимок для журнала/админки: все опрошенные параметры + значения из заказа. */
+    function buildParamCompareSnapshot(expected, cmp, deviceSnap) {
+        const orderMap = expected || {};
+        const deviceMap = deviceSnap || {};
+        const ids = {};
+        Object.keys(orderMap).forEach(function (sid) {
+            ids[sid] = true;
+        });
+        Object.keys(deviceMap).forEach(function (sid) {
+            ids[sid] = true;
+        });
+        (cmp && cmp.mismatches ? cmp.mismatches : []).forEach(function (m) {
+            if (m && m.stepId != null) {
+                ids[String(m.stepId)] = true;
+            }
+        });
+
+        const rows = [];
+        Object.keys(ids).forEach(function (sid) {
+            const exp =
+                orderMap[sid] != null && String(orderMap[sid]).trim() !== ''
+                    ? String(orderMap[sid]).trim()
+                    : '';
+            let act =
+                deviceMap[sid] != null && String(deviceMap[sid]).trim() !== ''
+                    ? String(deviceMap[sid]).trim()
+                    : '';
+            if (!act) {
+                act = getDeviceReadValue(sid);
+                if (!act || act === 'ошибка') {
+                    act = '';
+                }
+            }
+            if (!exp && !act) {
+                return;
+            }
+            let ok = null;
+            if (exp && act) {
+                ok = valuesMatchForVerify(sid, exp, act);
+            }
+            rows.push({
+                stepId: sid,
+                title: getParamStepTitle(sid).slice(0, 160),
+                order: exp,
+                device: act,
+                ok: ok === null ? true : !!ok,
+                compared: ok !== null,
+            });
+        });
+        rows.sort(function (a, b) {
+            const na = String(a.stepId).replace(/^final_/, '9000');
+            const nb = String(b.stepId).replace(/^final_/, '9000');
+            return Number(na) - Number(nb);
+        });
+        return rows;
     }
 
     function normalizeCompareValue(val) {
@@ -1234,7 +1429,8 @@
     async function startNewSessionPage() {
         const events = window.TM07_BENCH_EVENTS;
         pendingResumeSessionId = null;
-        pendingForceNewSession = true;
+        // Не форсируем INSERT: сброс стенда ≠ «всегда новая строка по заказу».
+        pendingForceNewSession = false;
         if (events && typeof events.clearOrder === 'function') {
             try {
                 await events.clearOrder('new_session');
@@ -1246,7 +1442,10 @@
             disconnectKao: true,
         });
         cleanWorkbenchUrlQuery();
-        plog('Новая сессия — введите номер заказа и нажмите «Войти в заказ» (будет создана новая запись).');
+        plog(
+            'Стенд сброшен. Введите номер заказа: если сессия уже была — откроется она; ' +
+                'новая запись создастся только для заказа, которого ещё не было.'
+        );
         paintSessionBadge();
     }
 
@@ -1384,7 +1583,10 @@
             }
             const data = await events.selectOrder(number, selectOpts);
             const sid = data && data.session && data.session.id ? data.session.id : null;
-            const usedExisting = !!(selectOpts.sessionId || (wantSid && sid)) && !selectOpts.forceNewSession;
+            const reused = !!(data && (data.reused || data.reopened));
+            const usedExisting =
+                reused ||
+                (!!selectOpts.sessionId && !selectOpts.forceNewSession);
             if (selectOpts.forceNewSession) {
                 pendingForceNewSession = false;
             }
@@ -1466,40 +1668,19 @@
         }
     }
 
-    function showOrderRetryBar(message, number) {
+    function sleepMs(ms) {
+        return new Promise(function (resolve) {
+            setTimeout(resolve, ms);
+        });
+    }
+
+    function showOrderRetryStatus(message) {
         const bar = $('paramOrder1cRetryBar');
         if (!bar) {
             return;
         }
-        const ToParam = window.TM07Order1cToParam;
-        const canCache =
-            ToParam && typeof ToParam.hasCachedOrder === 'function' && ToParam.hasCachedOrder(number);
         bar.classList.remove('d-none');
-        bar.innerHTML =
-            '<div class="d-flex flex-wrap align-items-center gap-2">' +
-            '<span>' +
-            (message || 'Не удалось загрузить заказ из 1С.') +
-            '</span>' +
-            '<button type="button" class="btn btn-sm btn-warning" id="paramOrder1cRetryNow">Повторить 1С</button>' +
-            (canCache
-                ? '<button type="button" class="btn btn-sm btn-outline-dark" id="paramOrder1cUseCacheNow">Работать из кэша</button>'
-                : '') +
-            '</div>';
-        $('paramOrder1cRetryNow')?.addEventListener('click', function () {
-            hideOrderRetryBar();
-            prepareOrderFromInput(true).catch(function (e) {
-                plog(e.message || String(e));
-                showOrderRetryBar(e.message || String(e), number);
-            });
-        });
-        $('paramOrder1cUseCacheNow')?.addEventListener('click', function () {
-            hideOrderRetryBar();
-            applyOrderFromCacheAndOpen(number).catch(function (e) {
-                plog(e.message || String(e));
-                setWbStatus(e.message || String(e), true);
-                showOrderRetryBar(e.message || String(e), number);
-            });
-        });
+        bar.innerHTML = '<span>' + (message || 'Повтор загрузки заказа из 1С…') + '</span>';
     }
 
     function hideOrderRetryBar() {
@@ -1509,6 +1690,47 @@
         }
         bar.classList.add('d-none');
         bar.innerHTML = '';
+    }
+
+    /**
+     * Загрузка заказа из 1С с автоповтором, пока OData не отдаст данные.
+     * @returns {Promise<*>}
+     */
+    async function loadOrderFrom1cWithRetry(number) {
+        const ToParam = window.TM07Order1cToParam;
+        if (!ToParam || typeof ToParam.loadAndApplyOrder !== 'function') {
+            throw new Error('Модуль загрузки заказа 1С недоступен.');
+        }
+        let attempt = 0;
+        let lastErr = null;
+        while (true) {
+            attempt += 1;
+            try {
+                if (attempt === 1) {
+                    plog('Загрузка заказа ' + number + ' из 1С…');
+                    setWbStatus('Загрузка заказа ' + number + '…', false);
+                    hideOrderRetryBar();
+                } else {
+                    const msg =
+                        '1С не отдала заказ ' +
+                        number +
+                        ' — повтор #' +
+                        attempt +
+                        '…';
+                    plog(msg + (lastErr ? ' (' + (lastErr.message || lastErr) + ')' : ''));
+                    setWbStatus(msg, false);
+                    showOrderRetryStatus(msg);
+                }
+                const result = await ToParam.loadAndApplyOrder(number);
+                hideOrderRetryBar();
+                return result;
+            } catch (e) {
+                lastErr = e;
+                // Пауза перед следующим запросом: 2с, 3с, … до 8с
+                const waitMs = Math.min(8000, 1500 + attempt * 500);
+                await sleepMs(waitMs);
+            }
+        }
     }
 
     async function applyOrderFromCacheAndOpen(preferredNumber) {
@@ -1557,6 +1779,7 @@
             throw new Error('Нет функции опроса для сверки.');
         }
         const cmp = compareReadbackWithExpected(expected);
+        const device = collectDeviceFieldSnapshot();
         paintVerifyMismatches(cmp);
         if (cmp.mismatches.length) {
             cmp.mismatches.slice(0, 8).forEach(function (m) {
@@ -1572,9 +1795,12 @@
         return {
             ok: ok,
             cmp: cmp,
+            expected: expected,
+            device: device,
+            params: buildParamCompareSnapshot(expected, cmp, device),
             message: ok
                 ? 'Сверка OK: совпадений ' + cmp.match + ' из ' + cmp.checked +
-                  ' (ключевых ' + critical.checked + ').'
+                  ' (ключевых ' + critical.checked + '). Опрос: ' + Object.keys(device).length + ' параметров.'
                 : critical.checked === 0
                   ? 'Сверка не выполнена: нет ключевых значений для сравнения.'
                   : 'Сверка не прошла: ключевых расхождений ' + critical.mismatch + '.',
@@ -1630,19 +1856,7 @@
         if (!ToParam || typeof ToParam.loadAndApplyOrder !== 'function') {
             throw new Error('Модуль загрузки заказа 1С недоступен.');
         }
-        plog('Загрузка заказа ' + number + ' из 1С…');
-        setWbStatus('Загрузка заказа ' + number + '…', false);
-        hideOrderRetryBar();
-        let result;
-        try {
-            result = await ToParam.loadAndApplyOrder(number);
-        } catch (loadErr) {
-            const msg = loadErr.message || String(loadErr);
-            plog('1С: ' + msg);
-            setWbStatus(msg, true);
-            showOrderRetryBar(msg, number);
-            throw loadErr;
-        }
+        const result = await loadOrderFrom1cWithRetry(number);
         lastPreparedOrder = number;
         window.__tm07PreparedOrder = number;
         plog('Заказ подставлен: ' + result.apply.filled + ' полей.');
@@ -2042,6 +2256,15 @@
                             match: verify.cmp.match,
                             mismatch: verify.cmp.mismatch,
                             criticalMismatch: (verify.cmp.critical && verify.cmp.critical.mismatch) || 0,
+                            criticalChecked: (verify.cmp.critical && verify.cmp.critical.checked) || 0,
+                            polled: Object.keys(verify.device || {}).length,
+                            params: Array.isArray(verify.params)
+                                ? verify.params
+                                : buildParamCompareSnapshot(
+                                      verify.expected || null,
+                                      verify.cmp,
+                                      verify.device || null
+                                  ),
                         },
                     }
                 );
@@ -2187,6 +2410,17 @@
     }
 
     async function manualOpenOrderSession() {
+        const events = window.TM07_BENCH_EVENTS;
+        if (events && events.hasActiveOrder && events.hasActiveOrder()) {
+            setWbStatus(
+                'Сессия уже открыта (' +
+                    (events.getActiveOrderNumber ? events.getActiveOrderNumber() : '') +
+                    '). Сначала завершите её.',
+                true
+            );
+            paintOrderSelectLock();
+            return;
+        }
         const raw = ($('paramOrder1cNumber') || {}).value || '';
         if (!isOrderInputReady(raw)) {
             setWbStatus('Введите номер заказа.', true);
@@ -2382,10 +2616,646 @@
         }
     }
 
+    /**
+     * «Настройка датчиков» (п.2): Modbus RTU через Web Serial (KorrektorDevice).
+     * Сканирование адресов 1–16 (чтение 0x000A) + живой опрос измерений (0x04, регистр 0x0002).
+     * Датчик — отдельное устройство на своей шине, поэтому используем собственный экземпляр KorrektorDevice.
+     */
+    function initSensorConfig() {
+        const status = $('wbSensorConfigStatus');
+        const comStatus = $('wbSensorComStatus');
+        const scanResults = $('wbSensorScanResults');
+        const scanBadges = $('wbSensorScanBadges');
+        const pollPanel = $('wbSensorPollPanel');
+        const pollAbs = $('wbSensorPollAbs');
+        const pollAbsState = $('wbSensorPollAbsState');
+        const pollDiff = $('wbSensorPollDiff');
+        const pollDiffState = $('wbSensorPollDiffState');
+        const setPanel = $('wbSensorSetPanel');
+        const setLabel = $('wbSensorSetLabel');
+        const setValue = $('wbSensorSetValue');
+        const setApply = $('wbSensorSetApply');
+        const cfgTarget = $('wbSensorCfgTarget');
+        const cfgApply = $('wbSensorCfgApply');
+        const cfgRangeUp = $('wbSensorRangeUp');
+        const cfgRangeDown = $('wbSensorRangeDown');
+        const cfgDFOrder = $('wbSensorDFOrder');
+        const cfgFilter = $('wbSensorFilter');
+        const chartCanvas = $('wbSensorChart');
+        const vizTab = $('wbSensorVizTab');
+        /** Параметры датчиков: addr -> {k, zero, unit, rangeUp, rangeDown, dfOrder, filter} */
+        const sensorCfg = {};
+        /** История для графика: [{t, abs, diff}] */
+        const chartHistory = [];
+        const CHART_MAX_POINTS = 120;
+        let chart = null;
+
+        const SENSOR_TYPE_REG = 0x000a; // тип/версия карты датчика
+        const SENSOR_MEAS_REG = 0x0002; // входной регистр измерений
+        const SCAN_ADDR_MIN = 1;
+        const SCAN_ADDR_MAX = 16;
+        const SCAN_TIMEOUT_MS = 400;
+        const POLL_INTERVAL_MS = 1000;
+        const SENSOR_USB_VID = 0x0403; // FTDI (как у КАО)
+        const SENSOR_USB_PID = 0x7523; // адаптер датчика
+
+        /** @type {KorrektorDevice|null} */
+        let sensorDev = null;
+        let pollTimer = null;
+        let pollBusy = false;
+        let scanBusy = false;
+        let autoBusy = false;
+        /** Найденные адреса: addr -> { type:number, typeHex:string } */
+        const found = new Map();
+
+        function setMsg(msg, isError) {
+            if (!status) return;
+            status.textContent = msg || '';
+            status.className = 'small mb-0 ' + (isError ? 'text-danger' : msg ? 'text-success' : 'text-body-secondary');
+        }
+
+        function setComStatus(text, ok) {
+            if (!comStatus) return;
+            comStatus.textContent = text || 'нет связи';
+            comStatus.className =
+                'badge rounded-pill align-self-center ' + (ok ? 'text-bg-success' : 'text-bg-secondary');
+        }
+
+        function stopPoll() {
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
+            pollBusy = false;
+            if (pollPanel) pollPanel.classList.add('d-none');
+            if (pollAbs) pollAbs.textContent = '—';
+            if (pollAbsState) {
+                pollAbsState.textContent = 'нет данных';
+                pollAbsState.className = 'badge rounded-pill text-bg-secondary mt-1';
+            }
+            if (pollDiff) pollDiff.textContent = '—';
+            if (pollDiffState) {
+                pollDiffState.textContent = 'нет данных';
+                pollDiffState.className = 'badge rounded-pill text-bg-secondary mt-1';
+            }
+        }
+
+        function isConnected() {
+            return !!(sensorDev && sensorDev.port);
+        }
+
+        function hex2(n) {
+            return '0x' + (n & 0xffff).toString(16).toUpperCase().padStart(4, '0');
+        }
+
+        /** Множители пересчёта давления в кПа (как в Mida15Tool). */
+        const PRESSURE_UNITS = {
+            kPa: { label: 'кПа', factor: 1 },
+            MPa: { label: 'МПа', factor: 0.001 },
+            Pa: { label: 'Па', factor: 1000 },
+            bar: { label: 'бар', factor: 0.01 },
+            mmHg: { label: 'мм рт. ст.', factor: 7.5006157583 },
+            kgfcm2: { label: 'кгс/см²', factor: 0.01019716213 }
+        };
+
+        /** Параметры датчика по адресу (с дефолтами). */
+        function getSensorCfg(addr) {
+            const d = {
+                k: 1,
+                zero: 0,
+                unit: 'kPa',
+                rangeUp: 0,
+                rangeDown: 0,
+                dfOrder: 3,
+                filter: 1
+            };
+            const c = sensorCfg[addr];
+            if (c) {
+                Object.assign(d, c);
+            }
+            d.unit = 'kPa'; // единицы давления всегда кПа (как при настройке датчика)
+            return d;
+        }
+
+        /** Заполнить поля конфигуратора из сохранённых параметров выбранного датчика. */
+        function loadCfgIntoForm() {
+            const addr = parseInt((cfgTarget && cfgTarget.value) || '1', 10);
+            const c = getSensorCfg(addr);
+            if ($('wbSensorK')) $('wbSensorK').value = c.k;
+            if ($('wbSensorZero')) $('wbSensorZero').value = c.zero;
+            if (cfgRangeUp) cfgRangeUp.value = c.rangeUp;
+            if (cfgRangeDown) cfgRangeDown.value = c.rangeDown;
+            if (cfgDFOrder) cfgDFOrder.value = c.dfOrder;
+            if (cfgFilter) cfgFilter.value = c.filter;
+        }
+
+        /** Сохранить параметры выбранного датчика из формы. */
+        function saveCfgFromForm() {
+            const addr = parseInt((cfgTarget && cfgTarget.value) || '1', 10);
+            const c = getSensorCfg(addr);
+            c.k = parseFloat(($('wbSensorK') && $('wbSensorK').value) || '1');
+            c.zero = parseFloat(($('wbSensorZero') && $('wbSensorZero').value) || '0');
+            c.unit = 'kPa'; // единицы давления всегда кПа
+            c.rangeUp = parseFloat((cfgRangeUp && cfgRangeUp.value) || '0');
+            c.rangeDown = parseFloat((cfgRangeDown && cfgRangeDown.value) || '0');
+            c.dfOrder = parseInt((cfgDFOrder && cfgDFOrder.value) || '3', 10);
+            c.filter = parseInt((cfgFilter && cfgFilter.value) || '1', 10);
+            sensorCfg[addr] = c;
+            try {
+                localStorage.setItem('wb_sensor_cfg', JSON.stringify(sensorCfg));
+            } catch (_e) {}
+            return c;
+        }
+
+        /** Инициализировать график (canvas). */
+        function initChart() {
+            if (!chartCanvas || typeof window.Chart === 'undefined') {
+                return;
+            }
+            if (chart) {
+                chart.destroy();
+            }
+            chart = new window.Chart(chartCanvas, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [
+                        {
+                            label: 'Абсолютное давление',
+                            data: [],
+                            borderColor: '#0d6efd',
+                            backgroundColor: 'rgba(13,110,253,0.1)',
+                            fill: true,
+                            tension: 0.2,
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'Датчик перепада',
+                            data: [],
+                            borderColor: '#198754',
+                            backgroundColor: 'rgba(25,135,84,0.1)',
+                            fill: true,
+                            tension: 0.2,
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: {
+                        x: { display: true, title: { display: true, text: 'время' } },
+                        y: { display: true, title: { display: true, text: 'давление' } }
+                    }
+                }
+            });
+        }
+
+        /** Добавить точку в историю и обновить график. */
+        function pushChartPoint(absVal, diffVal) {
+            if (!chartCanvas || typeof window.Chart === 'undefined') {
+                return;
+            }
+            const now = new Date();
+            const t = now.toLocaleTimeString('ru-RU', { hour12: false });
+            chartHistory.push({ t: t, abs: absVal, diff: diffVal });
+            if (chartHistory.length > CHART_MAX_POINTS) {
+                chartHistory.shift();
+            }
+            if (!chart) {
+                initChart();
+            }
+            if (!chart) {
+                return;
+            }
+            const unitKey = 'kPa';
+            const absCfg = getSensorCfg(1);
+            const diffCfg = getSensorCfg(2);
+            chart.data.labels = chartHistory.map(function (h) {
+                return h.t;
+            });
+            chart.data.datasets[0].data = chartHistory.map(function (h) {
+                return h.abs == null ? null : (h.abs - absCfg.zero) * absCfg.k * (PRESSURE_UNITS[unitKey] || PRESSURE_UNITS.kPa).factor;
+            });
+            chart.data.datasets[1].data = chartHistory.map(function (h) {
+                return h.diff == null ? null : (h.diff - diffCfg.zero) * diffCfg.k * (PRESSURE_UNITS[unitKey] || PRESSURE_UNITS.kPa).factor;
+            });
+            chart.update();
+        }
+
+        function paintScanBadges() {
+            if (!scanBadges) return;
+            scanBadges.innerHTML = '';
+            if (found.size === 0) {
+                const span = document.createElement('span');
+                span.className = 'badge rounded-pill text-bg-secondary';
+                span.textContent = 'устройства не найдены';
+                scanBadges.appendChild(span);
+                return;
+            }
+            const sorted = Array.from(found.keys()).sort(function (a, b) {
+                return a - b;
+            });
+            sorted.forEach(function (addr) {
+                const info = found.get(addr);
+                const span = document.createElement('span');
+                span.className = 'badge rounded-pill text-bg-success';
+                span.textContent = 'адрес ' + addr + ' · тип ' + info.typeHex;
+                span.title = 'Тип/версия карты датчика (0x000A) = ' + info.type;
+                scanBadges.appendChild(span);
+            });
+        }
+
+        /** Прочитать регистр 0x000A на конкретном адресе. */
+        async function probeAddress(addr) {
+            if (!sensorDev) return null;
+            sensorDev.address = addr;
+            try {
+                const resp = await sensorDev.readHolding(SENSOR_TYPE_REG, 1, SCAN_TIMEOUT_MS);
+                const b = KorrektorDevice.modbusDataBytes(resp);
+                if (b.length < 2) return null;
+                const type = b[0] | (b[1] << 8);
+                return { addr: addr, type: type, typeHex: hex2(type) };
+            } catch (_e) {
+                return null;
+            }
+        }
+
+        async function doScan() {
+            if (scanBusy) return;
+            if (!isConnected()) {
+                setMsg('Сначала подключите COM-порт.', true);
+                return;
+            }
+            scanBusy = true;
+            found.clear();
+            setMsg('Сканирование адресов 1–16…');
+            try {
+                for (let addr = SCAN_ADDR_MIN; addr <= SCAN_ADDR_MAX; addr += 1) {
+                    const r = await probeAddress(addr);
+                    if (r) {
+                        found.set(addr, r);
+                        plog('Датчик: адрес ' + addr + ' ответил, тип ' + r.typeHex + ' (0x000A).');
+                    }
+                }
+                if (scanResults) scanResults.classList.remove('d-none');
+                paintScanBadges();
+                if (found.size === 0) {
+                    setMsg('Сканирование завершено: устройства не найдены (адреса 1–16).', true);
+                } else {
+                    setMsg('Сканирование завершено: найдено устройств — ' + found.size + '.');
+                }
+            } finally {
+                scanBusy = false;
+            }
+        }
+
+        /** Автоматическая настройка датчиков: подключение → сканирование → настройка адресов 1 и 2 → ответ. */
+        /** Автоматическая настройка одного датчика: подключение → сканирование → настройка адреса → ответ. */
+        async function autoConfigure(addr) {
+            if (autoBusy) return;
+            autoBusy = true;
+            const name = addr === 1 ? 'датчик абсолютного давления' : 'датчик перепада';
+            try {
+                // 1. Подключение USB-адаптера датчика
+                if (!isConnected()) {
+                    setMsg('Шаг 1/4: подключение USB-адаптера датчика…');
+                    await connectSensorUsb(true);
+                    if (!isConnected()) {
+                        setMsg('Не удалось подключить датчик. Проверьте USB-адаптер.', true);
+                        return;
+                    }
+                }
+                // 2. Сканирование адресов 1–16
+                setMsg('Шаг 2/4: сканирование адресов 1–16…');
+                await doScan();
+                if (found.size === 0) {
+                    setMsg('Датчики не найдены (адреса 1–16).', true);
+                    return;
+                }
+                // 3. Настройка выбранного адреса
+                setMsg('Шаг 3/4: настройка ' + name + ' (адрес ' + addr + ')…');
+                if (!found.has(addr)) {
+                    setMsg(name + ' (адрес ' + addr + ') не найден при сканировании.', true);
+                    return;
+                }
+                const c = getSensorCfg(addr);
+                c.unit = 'kPa'; // единицы всегда кПа
+                sensorCfg[addr] = c;
+                let raw = null;
+                sensorDev.address = addr;
+                try {
+                    const resp = await sensorDev.readInputRegisters(SENSOR_MEAS_REG, 2);
+                    const b = KorrektorDevice.modbusDataBytes(resp);
+                    if (b.length >= 4) raw = KorrektorDevice.parseFloat32LE(b.subarray(0, 4));
+                } catch (_e) {}
+                const kPa = raw == null ? null : (raw - c.zero) * c.k;
+                try {
+                    localStorage.setItem('wb_sensor_cfg', JSON.stringify(sensorCfg));
+                } catch (_e) {}
+                // 4. Ответ по нашей логике
+                const v = kPa == null ? 'нет данных' : kPa.toFixed(3) + ' кПа';
+                setMsg('Настройка завершена: ' + name + ' (адрес ' + addr + ') = ' + v + '.');
+                plog('Датчик: автонастройка ' + name + ' (адрес ' + addr + ') завершена — ' + v + '.');
+                // Обновить индикатор визуализатора, если он есть
+                if (addr === 1 && pollAbs) pollAbs.textContent = v;
+                if (addr === 2 && pollDiff) pollDiff.textContent = v;
+            } finally {
+                autoBusy = false;
+            }
+        }
+
+        /** Один опрос измерений (0x04, регистр 0x0002) на всех найденных адресах. */
+        async function pollOnce() {
+            if (pollBusy || !isConnected()) return;
+            pollBusy = true;
+            try {
+                const ABS_ADDR = 1; // датчик абсолютного давления
+                const DIFF_ADDR = 2; // датчик перепада
+                const readVal = async function (addr) {
+                    sensorDev.address = addr;
+                    try {
+                        const resp = await sensorDev.readInputRegisters(SENSOR_MEAS_REG, 2);
+                        const b = KorrektorDevice.modbusDataBytes(resp);
+                        if (b.length >= 4) return KorrektorDevice.parseFloat32LE(b.subarray(0, 4));
+                    } catch (_e) {}
+                    return null;
+                };
+                const absVal = await readVal(ABS_ADDR);
+                const diffVal = await readVal(DIFF_ADDR);
+                const unitKey = 'kPa';
+                const absCfg = getSensorCfg(1);
+                const diffCfg = getSensorCfg(2);
+                const fmt = function (p, cfg) {
+                    if (p == null) return '—';
+                    const kPa = (p - cfg.zero) * cfg.k;
+                    const u = PRESSURE_UNITS[unitKey] || PRESSURE_UNITS.kPa;
+                    return (kPa * u.factor).toFixed(cfg.dfOrder) + ' ' + u.label;
+                };
+                if (pollAbs) pollAbs.textContent = fmt(absVal, absCfg);
+                if (pollAbsState) {
+                    pollAbsState.textContent = absVal == null ? 'нет данных' : 'норма';
+                    pollAbsState.className =
+                        'badge rounded-pill mt-1 ' + (absVal == null ? 'text-bg-secondary' : 'text-bg-success');
+                }
+                if (pollDiff) pollDiff.textContent = fmt(diffVal, diffCfg);
+                if (pollDiffState) {
+                    pollDiffState.textContent = diffVal == null ? 'нет данных' : 'норма';
+                    pollDiffState.className =
+                        'badge rounded-pill mt-1 ' + (diffVal == null ? 'text-bg-secondary' : 'text-bg-success');
+                }
+                pushChartPoint(absVal, diffVal);
+            } finally {
+                pollBusy = false;
+            }
+        }
+
+        function startPoll() {
+            if (!isConnected()) {
+                setMsg('Сначала подключите COM-порт.', true);
+                return;
+            }
+            if (pollPanel) pollPanel.classList.remove('d-none');
+            setMsg('Живой опрос измерений (0x04, регистр 0x0002)…');
+            void pollOnce();
+            if (pollTimer) clearInterval(pollTimer);
+            pollTimer = setInterval(function () {
+                void pollOnce();
+            }, POLL_INTERVAL_MS);
+        }
+
+        /** Записать значение датчика в регистр 0x0002 на указанном адресе. */
+        async function applySensorValue(addr, name) {
+            if (!isConnected()) {
+                setMsg('Сначала подключите USB-адаптер датчика.', true);
+                return;
+            }
+            if (!setValue) return;
+            const raw = parseFloat(setValue.value);
+            if (!Number.isFinite(raw)) {
+                setMsg('Введите число (кПа).', true);
+                return;
+            }
+            sensorDev.address = addr;
+            const bytes = Array.from(KorrektorDevice.floatBytesLE(raw));
+            try {
+                setMsg('Запись значения ' + raw + ' в ' + name + ' (адрес ' + addr + ')…');
+                await sensorDev.writeMultiple(SENSOR_MEAS_REG, bytes);
+                setMsg('Значение ' + raw + ' записано в ' + name + ' (адрес ' + addr + ').');
+                plog('Датчик: ' + name + ' (адрес ' + addr + '): записано ' + raw + ' (float32) в 0x0002.');
+            } catch (e) {
+                setMsg('Ошибка записи: ' + (e.message || String(e)), true);
+                plog('Датчик: ошибка записи — ' + (e.message || String(e)));
+            }
+        }
+
+        /** Калибровка нуля: текущее значение (кПа) выбранного датчика становится сдвигом нуля. */
+        async function setZero() {
+            if (!isConnected()) {
+                setMsg('Сначала подключите USB-адаптер датчика.', true);
+                return;
+            }
+            const addr = parseInt((cfgTarget && cfgTarget.value) || '1', 10);
+            const name = addr === 1 ? 'датчик абсолютного давления' : 'датчик перепада';
+            sensorDev.address = addr;
+            try {
+                const resp = await sensorDev.readInputRegisters(SENSOR_MEAS_REG, 2);
+                const b = KorrektorDevice.modbusDataBytes(resp);
+                if (b.length < 4) {
+                    setMsg('Не удалось прочитать текущее значение ' + name + ' (адрес ' + addr + ').', true);
+                    return;
+                }
+                const raw = KorrektorDevice.parseFloat32LE(b.subarray(0, 4));
+                const c = getSensorCfg(addr);
+                c.zero = raw;
+                sensorCfg[addr] = c;
+                try {
+                    localStorage.setItem('wb_sensor_cfg', JSON.stringify(sensorCfg));
+                } catch (_e) {}
+                setMsg('Ноль ' + name + ' (адрес ' + addr + ') установлен: сдвиг = ' + raw + ' кПа. Давление теперь ≈ 0.');
+                plog('Датчик: калибровка нуля ' + name + ' (адрес ' + addr + '): сдвиг = ' + raw + ' кПа.');
+            } catch (e) {
+                setMsg('Ошибка калибровки нуля: ' + (e.message || String(e)), true);
+                plog('Датчик: ошибка калибровки нуля — ' + (e.message || String(e)));
+            }
+        }
+
+        /** Открыть панель настройки для конкретного датчика. */
+        function openSetPanel(addr, name) {
+            if (!isConnected()) {
+                setMsg('Сначала подключите USB-адаптер датчика.', true);
+                return;
+            }
+            if (setLabel) setLabel.textContent = 'Значение — ' + name + ' (адрес ' + addr + ')';
+            if (setValue) setValue.value = '';
+            if (setPanel) setPanel.classList.remove('d-none');
+            window.__sensorSetTarget = { addr: addr, name: name };
+        }
+
+        const setAbsBtn = $('wbSensorSetAbs');
+        if (setAbsBtn) {
+            setAbsBtn.addEventListener('click', function () {
+                openSetPanel(1, 'датчик абсолютного давления');
+            });
+        }
+        const setDiffBtn = $('wbSensorSetDiff');
+        if (setDiffBtn) {
+            setDiffBtn.addEventListener('click', function () {
+                openSetPanel(2, 'датчик перепада');
+            });
+        }
+        if (setApply) {
+            setApply.addEventListener('click', function () {
+                const t = window.__sensorSetTarget || { addr: 1, name: 'датчик' };
+                void applySensorValue(t.addr, t.name);
+            });
+        }
+
+        // Конфигуратор: загрузка параметров при смене датчика
+        if (cfgTarget) {
+            cfgTarget.addEventListener('change', function () {
+                loadCfgIntoForm();
+            });
+        }
+        // Конфигуратор: применить параметры
+        if (cfgApply) {
+            cfgApply.addEventListener('click', function () {
+                const c = saveCfgFromForm();
+                const addr = parseInt((cfgTarget && cfgTarget.value) || '1', 10);
+                const name = addr === 1 ? 'датчик абсолютного давления' : 'датчик перепада';
+                setMsg('Параметры ' + name + ' (адрес ' + addr + ') сохранены: K=' + c.k + ', сдвиг=' + c.zero + ', ед.=' + PRESSURE_UNITS[c.unit].label + '.');
+                plog('Датчик: сохранены параметры ' + name + ' (адрес ' + addr + '): K=' + c.k + ', сдвиг=' + c.zero + ', ед.=' + c.unit + ', диапазон ' + c.rangeDown + '…' + c.rangeUp + ', разрядность=' + c.dfOrder + ', фильтр=' + c.filter + '.');
+            });
+        }
+        // Визуализатор: инициализация графика при открытии вкладки
+        if (vizTab) {
+            vizTab.addEventListener('shown.bs.tab', function () {
+                initChart();
+            });
+        }
+        // Загрузить сохранённые параметры при старте
+        try {
+            const saved = localStorage.getItem('wb_sensor_cfg');
+            if (saved) {
+                const parsed = JSON.parse(saved);
+                Object.keys(parsed).forEach(function (k) {
+                    sensorCfg[parseInt(k, 10)] = parsed[k];
+                });
+            }
+        } catch (_e) {}
+        loadCfgIntoForm();
+
+        const connectBtn = $('wbSensorComConnect');
+        const disconnectBtn = $('wbSensorComDisconnect');
+        const scanBtn = $('wbSensorScan');
+        const pollBtn = $('wbSensorPoll');
+
+        /** Подключить USB-адаптер датчика. filterKao=true — только PID 0x7523, иначе любой USB. */
+        async function connectSensorUsb(filterKao) {
+            if (isConnected()) {
+                setMsg('USB-адаптер уже подключён.');
+                return;
+            }
+            const K = window.KorrektorDevice;
+            if (!K) {
+                setMsg('Модуль KorrektorDevice не загружен.', true);
+                return;
+            }
+            const baud = parseInt(($('wbSensorComBaud') && $('wbSensorComBaud').value) || '19200', 10);
+            const opts = { baudRate: baud, rs485Rts: true };
+            if (filterKao) {
+                opts.filters = [{ usbVendorId: SENSOR_USB_VID, usbProductId: SENSOR_USB_PID }];
+            }
+            const d = new K(1);
+            try {
+                setMsg('Подключение USB-адаптера датчика (' + baud + ' бод)…');
+                const reopened = await d.reconnectGranted(opts);
+                if (!reopened) {
+                    await d.connect(opts);
+                }
+                sensorDev = d;
+                setComStatus('подключено', true);
+                setMsg('USB-адаптер датчика подключён. Нажмите «Сканировать адреса».');
+                plog('Датчик: USB-адаптер подключён (' + baud + ' бод).');
+            } catch (e) {
+                setComStatus('нет связи', false);
+                let msg = e.message || String(e);
+                if (filterKao && (e.name === 'NotFoundError' || /cancel|отмен/i.test(msg))) {
+                    msg += '. Адаптер не найден? Нажмите «Любой USB».';
+                }
+                setMsg('Ошибка подключения: ' + msg, true);
+                plog('Датчик: ошибка подключения — ' + msg);
+            }
+        }
+
+        if (connectBtn) {
+            connectBtn.addEventListener('click', function () {
+                void connectSensorUsb(true);
+            });
+        }
+
+        const connectAnyBtn = $('wbSensorComConnectAny');
+        if (connectAnyBtn) {
+            connectAnyBtn.addEventListener('click', function () {
+                void connectSensorUsb(false);
+            });
+        }
+
+        if (disconnectBtn) {
+            disconnectBtn.addEventListener('click', async function () {
+                stopPoll();
+                if (sensorDev) {
+                    try {
+                        await sensorDev.disconnect();
+                    } catch (_e) {}
+                    sensorDev = null;
+                }
+                found.clear();
+                if (scanResults) scanResults.classList.add('d-none');
+                if (scanBadges) scanBadges.innerHTML = '';
+                setComStatus('нет связи', false);
+                setMsg('COM-порт датчика закрыт.');
+            });
+        }
+
+        const autoBtn1 = $('wbSensorAuto1');
+        if (autoBtn1) {
+            autoBtn1.addEventListener('click', function () {
+                void autoConfigure(1);
+            });
+        }
+        const autoBtn2 = $('wbSensorAuto2');
+        if (autoBtn2) {
+            autoBtn2.addEventListener('click', function () {
+                void autoConfigure(2);
+            });
+        }
+        if (scanBtn) {
+            scanBtn.addEventListener('click', function () {
+                void doScan();
+            });
+        }
+        if (pollBtn) {
+            pollBtn.addEventListener('click', function () {
+                startPoll();
+            });
+        }
+
+        const setZeroBtn = $('wbSensorSetZero');
+        if (setZeroBtn) {
+            setZeroBtn.addEventListener('click', function () {
+                void setZero();
+            });
+        }
+    }
+
     function initWorkbench() {
         if (!document.body.classList.contains('wb-page')) {
             return;
         }
+
+        initSensorConfig();
 
         try {
             const saved = localStorage.getItem('order1c_odataBase');
@@ -2396,7 +3266,157 @@
         } catch (_e) {}
 
         const orderInput = $('paramOrder1cNumber');
-        // Загрузка только по «Войти в заказ» / Enter / «Повторить» — без автоприёма при наборе номера.
+        const orderSelect = $('paramOrder1cSelect');
+        const manualWrap = $('paramOrder1cManualWrap');
+        const newAlert = $('paramOrder1cNewAlert');
+        const newBadge = $('paramOrder1cNewBadge');
+
+        function setManualVisible(on) {
+            if (manualWrap) {
+                manualWrap.classList.toggle('d-none', !on);
+            }
+        }
+
+        function syncNumberFromSelect() {
+            if (!orderSelect || !orderInput) {
+                return;
+            }
+            const v = orderSelect.value;
+            if (!v) {
+                setManualVisible(false);
+                return;
+            }
+            if (v === '__manual__') {
+                setManualVisible(true);
+                orderInput.focus();
+                return;
+            }
+            setManualVisible(false);
+            orderInput.value = v;
+        }
+
+        let wbNotifyItems = [];
+        let wbNotifySeq = 0;
+
+        function renderWbNotifyList() {
+            if (!newAlert) {
+                return;
+            }
+            if (!wbNotifyItems.length) {
+                newAlert.innerHTML = '';
+                newAlert.classList.add('d-none');
+                if (newBadge) {
+                    newBadge.classList.add('d-none');
+                }
+                return;
+            }
+            if (newBadge) {
+                newBadge.classList.remove('d-none');
+                newBadge.textContent =
+                    wbNotifyItems.length === 1 ? 'новый заказ' : 'новых: ' + wbNotifyItems.length;
+            }
+            newAlert.classList.remove('d-none');
+            newAlert.innerHTML = wbNotifyItems
+                .map(function (item) {
+                    const testBit = item.test
+                        ? '<span class="badge text-bg-warning text-dark me-1">ТЕСТ</span> '
+                        : '';
+                    const text =
+                        item.test && item.message
+                            ? item.message + ' · <strong>' + item.number + '</strong>'
+                            : '<strong>' + item.number + '</strong>';
+                    return (
+                        '<div class="d-flex flex-wrap align-items-center gap-2 py-1 border-bottom border-success border-opacity-25" data-wb-notify="' +
+                        item.id +
+                        '">' +
+                        '<span class="flex-grow-1">' +
+                        testBit +
+                        '<i class="bi bi-bell-fill me-1"></i>' +
+                        text +
+                        '</span>' +
+                        '<button type="button" class="btn btn-outline-secondary btn-sm py-0" data-wb-dismiss="' +
+                        item.id +
+                        '">Скрыть</button>' +
+                        '</div>'
+                    );
+                })
+                .join('');
+        }
+
+        function showNewOrdersUi(newOrders) {
+            if (!newOrders || !newOrders.length) {
+                return;
+            }
+            newOrders.forEach(function (o) {
+                wbNotifySeq += 1;
+                wbNotifyItems.push({
+                    id: 'wb-' + wbNotifySeq + '-' + Date.now(),
+                    number: o.number || '',
+                    test: !!o.test,
+                    message: o.message || '',
+                });
+            });
+            renderWbNotifyList();
+            try {
+                if (newAlert && typeof newAlert.scrollIntoView === 'function') {
+                    newAlert.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                }
+            } catch (_e) {}
+        }
+
+        newAlert?.addEventListener('click', function (e) {
+            const btn = e.target.closest('[data-wb-dismiss]');
+            if (!btn) {
+                return;
+            }
+            const id = btn.getAttribute('data-wb-dismiss');
+            wbNotifyItems = wbNotifyItems.filter(function (it) {
+                return it.id !== id;
+            });
+            renderWbNotifyList();
+        });
+
+        async function refreshActiveOrderList() {
+            const O = window.Order1cOdata;
+            if (!O || typeof O.fillActiveOrdersSelect !== 'function' || !orderSelect) {
+                return;
+            }
+            const prev = normalizeOrder((orderInput && orderInput.value) || '');
+            try {
+                await O.fillActiveOrdersSelect(orderSelect, {
+                    keepManualOption: true,
+                });
+                if (prev) {
+                    const has = Array.prototype.some.call(orderSelect.options, function (opt) {
+                        return opt.value === prev;
+                    });
+                    if (has) {
+                        orderSelect.value = prev;
+                        setManualVisible(false);
+                    } else {
+                        orderSelect.value = '__manual__';
+                        setManualVisible(true);
+                        orderInput.value = prev;
+                    }
+                }
+                if (newBadge) {
+                    newBadge.classList.add('d-none');
+                }
+            } catch (e) {
+                plog('Список заказов 1С: ' + (e.message || String(e)));
+                setManualVisible(true);
+            }
+        }
+
+        orderSelect?.addEventListener('change', function () {
+            syncNumberFromSelect();
+        });
+
+        $('paramOrder1cRefreshList')?.addEventListener('click', function () {
+            void refreshActiveOrderList();
+        });
+
+        // Загрузка только по «Войти в заказ» / Enter — без автоприёма при наборе номера.
         orderInput?.addEventListener('keydown', function (e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
@@ -2404,30 +3424,34 @@
             }
         });
 
-        $('paramOrder1cLoad')?.addEventListener('click', function () {
-            hideOrderRetryBar();
-            prepareOrderFromInput(true).catch(function (e) {
-                plog(e.message || String(e));
-                showOrderRetryBar(e.message || String(e), normalizeOrder(($('paramOrder1cNumber') || {}).value || ''));
-            });
-        });
-
-        $('paramOrder1cFromCache')?.addEventListener('click', function () {
-            hideOrderRetryBar();
-            applyOrderFromCacheAndOpen(($('paramOrder1cNumber') || {}).value || '')
-                .then(function () {
-                    setWbStatus('Заказ подставлен из кэша.', false);
-                })
-                .catch(function (e) {
-                    plog(e.message || String(e));
-                    setWbStatus(e.message || String(e), true);
-                    showOrderRetryBar(e.message || String(e), normalizeOrder(($('paramOrder1cNumber') || {}).value || ''));
-                });
-        });
-
         $('wbOrderSessionOpen')?.addEventListener('click', function () {
+            syncNumberFromSelect();
             void manualOpenOrderSession();
         });
+
+        void refreshActiveOrderList();
+
+        // Уведомления (в т.ч. тест из админки) сразу — не ждём загрузки списка 1С
+        (function startWbOrdersWatcher() {
+            const O = window.Order1cOdata;
+            if (!O || typeof O.startActiveOrdersWatcher !== 'function') {
+                setTimeout(startWbOrdersWatcher, 1000);
+                return;
+            }
+            if (window.__wbActiveOrdersWatcher) {
+                return;
+            }
+            window.__wbActiveOrdersWatcher = O.startActiveOrdersWatcher({
+                intervalMs: 60000,
+                onNew: function (newOrders) {
+                    showNewOrdersUi(newOrders);
+                    void refreshActiveOrderList();
+                },
+                onError: function (e) {
+                    console.warn('[workbench] active orders watch', e);
+                },
+            });
+        })();
 
         $('wbOrderSessionClose')?.addEventListener('click', function () {
             const events = window.TM07_BENCH_EVENTS;
@@ -2442,7 +3466,7 @@
                     disconnectKao: true,
                 }).then(function () {
                     cleanWorkbenchUrlQuery();
-                    plog('Сессия заказа завершена. Повторный ввод того же номера вернёт в эту сессию; для нового корректора — «Новая сессия».');
+                    plog('Сессия заказа завершена. Повторный ввод того же номера вернёт в эту сессию.');
                     setWbStatus('Сессия закрыта. Введите номер заказа или откройте сессию с главной.', false);
                 });
             });
@@ -2455,24 +3479,28 @@
             });
         });
 
-        // Печать шильда временно отключена
-        // $('wbCorrectorNameplatePrint')?.addEventListener('click', function () {
-        //     void printCorrectorNameplate()
-        //         .then(function () {
-        //             void refreshPrintAgentStatus();
-        //         })
-        //         .catch(function (e) {
-        //             plog('Шильдик: ' + (e.message || String(e)));
-        //             setWbStatus(e.message || String(e), true);
-        //             void refreshPrintAgentStatus();
-        //         });
-        // });
+        $('wbCorrectorNameplatePrint')?.addEventListener('click', function () {
+            void printCorrectorNameplate()
+                .then(function () {
+                    void refreshPrintAgentStatus();
+                })
+                .catch(function (e) {
+                    plog('Шильдик: ' + (e.message || String(e)));
+                    setWbStatus(e.message || String(e), true);
+                    void refreshPrintAgentStatus();
+                });
+        });
 
         window.addEventListener('tm07-write-abort', function () {
             paintWriteResumeButton();
         });
         paintWriteResumeButton();
         startPrintAgentPolling();
+        paintSenselockAgentBadge();
+        window.addEventListener('tm07-senselock-agent', function () {
+            paintSenselockAgentBadge();
+            paintSessionBadge();
+        });
 
         $('wbAssemblyConfirm')?.addEventListener('click', function () {
             void confirmAssemblyStep().catch(function (e) {
@@ -2487,6 +3515,8 @@
         });
         window.addEventListener('tm07-operator-changed', function () {
             void refreshSessionFromServer();
+            paintSenselockAgentBadge();
+            paintSessionBadge();
         });
 
         const writeBtn = $('paramWriteAll');

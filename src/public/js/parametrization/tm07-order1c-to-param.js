@@ -348,17 +348,9 @@
         return setMeterStepInput(stepId, value, lines, note);
     }
 
-    /** Реальные маски И1…И4 — в поля финальной секции (val_final_*). */
+    /** Реальные маски И1…И4 — в основные поля параметризации (val_*). */
     function setFinalMaskInput(stepId, value, lines, note) {
-        const inp = document.getElementById('val_final_' + stepId);
-        if (!inp || inp.disabled || value == null || value === '') {
-            return false;
-        }
-        inp.value = window.TM07_param_formatStepValue
-            ? window.TM07_param_formatStepValue(stepId, value)
-            : String(value);
-        lines.push('п.' + stepId + ' (финал) ← ' + note);
-        return true;
+        return setMeterStepInput(stepId, value, lines, note || 'маска И1…И4');
     }
 
     function resolveMeterPassport(profile, row, primaryFullName) {
@@ -693,8 +685,7 @@
     }
 
     /** Полное автозаполнение по «Параметризация (1)» + зеркало комплекса. */
-    // Маски в параметризации всегда staging 0/0/3/3/0; реальные И1…И4 — в финальную секцию.
-    const MASK_STAGING_AUTOFILL = { 71: '0', 72: '0', 74: '3', 75: '3', 77: '0' };
+    const MASK_STEP_IDS = { 71: 1, 72: 1, 74: 1, 75: 1, 77: 1 };
 
     function applyParamAutoFillToInputs(row, primaryFullName, complexDesignation, lines) {
         const A = window.TM07_PARAM_AUTO_FILL;
@@ -783,13 +774,9 @@
             const sid = parseInt(sidStr, 10);
             const note = resolved.notes[sid] || 'автозаполнение';
             const val = resolved.steps[sidStr];
-            if (MASK_STAGING_AUTOFILL[sid] != null) {
-                // Маски: в полях параметризации — staging 0/0/3/3/0,
-                // реальные И1…И4 (из исполнения) — в финальную секцию (val_final_*).
-                if (setMeterStepInput(sid, MASK_STAGING_AUTOFILL[sid], lines, 'staging 0/0/3/3/0 (реальные И1…И4 — в финале)')) {
-                    n += 1;
-                }
-                if (val != null && val !== '' && setFinalMaskInput(sid, val, lines, note)) {
+            if (MASK_STEP_IDS[sid]) {
+                // Реальные маски И1…И4 сразу в поля параметризации.
+                if (val != null && val !== '' && setMeterStepInput(sid, val, lines, note)) {
                     n += 1;
                 }
                 return;
@@ -803,19 +790,6 @@
         if (complexDesignation && applyMeterNameByComplexDesignation(complexDesignation, lines)) {
             n += 1;
         }
-        // П.298/299 — всегда копия дат комплекса после их подстановки.
-        [
-            [298, 202],
-            [299, 203],
-        ].forEach(function (pair) {
-            const dstId = pair[0];
-            const srcId = pair[1];
-            const src = document.getElementById('val_' + srcId);
-            const v = src ? String(src.value || '').trim() : '';
-            if (v && setMeterStepInput(dstId, v, lines, '= п.' + srcId)) {
-                n += 1;
-            }
-        });
         const E = window.TM07_CORRECTOR_ERROR_LIMITS;
         if (E) {
             const vst = E.recomputeDeltaVstOnForm();

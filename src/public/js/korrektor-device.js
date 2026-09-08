@@ -228,6 +228,35 @@ class KorrektorDevice {
     }
 
     /**
+     * USB-идентификация адаптера (КАО) из Web Serial getInfo().
+     * Спека отдаёт только VID/PID; serialNumber пробуем на случай расширений/WebUSB.
+     * @returns {{ usbVendorId?: number, usbProductId?: number, serialNumber: string, keys: string[], raw: object }|null}
+     */
+    getUsbInfo() {
+        if (!this.port || typeof this.port.getInfo !== 'function') {
+            return null;
+        }
+        let info = {};
+        try {
+            info = this.port.getInfo() || {};
+        } catch (_e) {
+            return null;
+        }
+        const serialRaw =
+            info.serialNumber ??
+            info.usbSerialNumber ??
+            info.serial ??
+            '';
+        return {
+            usbVendorId: info.usbVendorId,
+            usbProductId: info.usbProductId,
+            serialNumber: String(serialRaw || '').trim(),
+            keys: Object.keys(info),
+            raw: info,
+        };
+    }
+
+    /**
      * Один активный reader.read() на транзакцию: при таймауте не отменяем read(),
      * следующий read() — только если кадр ещё не собран.
      */

@@ -7,10 +7,22 @@
     # Docker DNS: перерезолвить php после recreate контейнера (иначе No route to host).
     resolver 127.0.0.11 valid=10s ipv6=off;
     set $tm07_php_upstream php:9000;
-
+    set $tm07_senselock_upstream host.docker.internal:18779;
 
     error_log  /var/log/nginx/error.log error;
     access_log /var/log/nginx/access.log main if=$loggable;
+
+    # Same-origin proxy to Senselock agent on Windows host (HTTPS pages).
+    location /senselock-agent/ {
+        proxy_http_version 1.1;
+        proxy_pass http://$tm07_senselock_upstream/;
+        proxy_set_header Host 127.0.0.1;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 2s;
+        proxy_read_timeout 5s;
+        add_header Cache-Control "no-store" always;
+        add_header Access-Control-Allow-Origin "*" always;
+    }
 
     location = /favicon.ico {
         alias /var/www/public/favicon.svg;
@@ -44,6 +56,14 @@
         fastcgi_buffering off;
     }
 
+    location = /api/admin-db-browse.php {
+        include fastcgi_params;
+        fastcgi_pass $tm07_php_upstream;
+        fastcgi_param SCRIPT_FILENAME /app/api/admin-db-browse.php;
+        fastcgi_read_timeout 120;
+        fastcgi_buffering off;
+    }
+
     location = /api/bench-cycle-progress.php {
         include fastcgi_params;
         fastcgi_pass $tm07_php_upstream;
@@ -65,6 +85,14 @@
         fastcgi_pass $tm07_php_upstream;
         fastcgi_param SCRIPT_FILENAME /app/api/bench-events.php;
         fastcgi_read_timeout 120;
+        fastcgi_buffering off;
+    }
+
+    location = /api/bench-notify.php {
+        include fastcgi_params;
+        fastcgi_pass $tm07_php_upstream;
+        fastcgi_param SCRIPT_FILENAME /app/api/bench-notify.php;
+        fastcgi_read_timeout 60;
         fastcgi_buffering off;
     }
 

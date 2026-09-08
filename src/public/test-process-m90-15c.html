@@ -140,12 +140,13 @@
                             <span id="autoReconnectHint" class="small text-body-secondary">Сохраняется в браузере.</span>
                         </div>
                         <hr class="my-3">
-                        <div class="small fw-semibold mb-2">ПКД-160-Н (АРМ)</div>
+                        <div class="small fw-semibold mb-2">ПКД-160-Н (АРМ) · <a href="/pkd160.html">отдельная страница</a></div>
                         <div class="d-flex gap-2 flex-wrap mb-2">
                             <button id="pkdConnectBtn" type="button" class="btn btn-primary btn-sm">Подключить</button>
                             <button id="pkdDisconnectBtn" type="button" class="btn btn-outline-danger btn-sm">Отключить</button>
                             <button id="pkdInitArmBtn" type="button" class="btn btn-outline-primary btn-sm">Init ARM</button>
                             <button id="pkdExitArmBtn" type="button" class="btn btn-outline-secondary btn-sm">Exit ARM</button>
+                            <button id="pkdReadSerialBtn" type="button" class="btn btn-outline-success btn-sm" title="EEPROM 0x1E + каналы 1–4">S/N</button>
                             <button id="pkdReadBtn" type="button" class="btn btn-outline-success btn-sm">Snapshot</button>
                             <button id="pkdStartPollBtn" type="button" class="btn btn-outline-success btn-sm">Автоопрос</button>
                             <button id="pkdStopPollBtn" type="button" class="btn btn-outline-warning btn-sm">Стоп</button>

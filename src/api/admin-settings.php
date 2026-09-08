@@ -176,6 +176,33 @@ function admin_redact_device_secrets(array $settings): array
     return $settings;
 }
 
+/**
+ * Merge per-workstation USB overrides from CONFIG_JSON.deviceUsb.
+ *
+ * @param array<string,mixed> $settings
+ * @return array<string,mixed>
+ */
+function admin_merge_workstation_usb(array $settings): array
+{
+    $fp = trim((string) ($_SERVER['HTTP_X_WORKSTATION_FINGERPRINT'] ?? ''));
+    $code = trim((string) ($_SERVER['HTTP_X_WORKSTATION_CODE'] ?? ''));
+    if ($fp === '' && $code === '') {
+        return $settings;
+    }
+    try {
+        require_once __DIR__ . '/bench_context.php';
+        $pdo = bench_pdo();
+        $usb = bench_workstation_device_usb($pdo, $fp !== '' ? $fp : null, $code !== '' ? $code : null);
+        if ($usb === null || $usb === []) {
+            return $settings;
+        }
+
+        return bench_apply_device_usb_to_settings($settings, $usb);
+    } catch (Throwable) {
+        return $settings;
+    }
+}
+
 $action = $_GET['action'] ?? 'get';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 
@@ -183,7 +210,7 @@ try {
     if ($action === 'public') {
         $stored = admin_load_stored_settings();
         $defaults = admin_load_default_settings();
-        $merged = admin_merge_recursive_distinct($defaults, $stored);
+        $merged = admin_merge_workstation_usb(admin_merge_recursive_distinct($defaults, $stored));
         echo json_encode(['success' => true, 'settings' => admin_public_settings($merged)], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -200,7 +227,9 @@ try {
         }
         $stored = admin_load_stored_settings();
         $defaults = admin_load_default_settings();
-        $merged = admin_apply_env_lkg_overrides(admin_merge_recursive_distinct($defaults, $stored));
+        $merged = admin_merge_workstation_usb(
+            admin_apply_env_lkg_overrides(admin_merge_recursive_distinct($defaults, $stored))
+        );
         $allowed = ['version', 'usb', 'mit', 'm90', 'tm07', 'pkd160', 'benchRegisters', 'benchScenarioDefaults'];
         $out = [];
         foreach ($allowed as $key) {
@@ -213,7 +242,7 @@ try {
     }
 
     if ($action === 'get' && $method === 'GET') {
-        auth_require_admin();
+        auth_require_admin_role(AUTH_ROLE_CONFIG);
         $stored = admin_load_stored_settings();
         $defaults = admin_load_default_settings();
         $merged = admin_apply_env_lkg_overrides(admin_merge_recursive_distinct($defaults, $stored));
@@ -230,7 +259,7 @@ try {
     }
 
     if ($action === 'save' && $method === 'POST') {
-        auth_require_admin();
+        auth_require_admin_role(AUTH_ROLE_CONFIG);
         $raw = file_get_contents('php://input');
         $incoming = is_string($raw) ? json_decode($raw, true) : null;
         if (!is_array($incoming) || !isset($incoming['settings']) || !is_array($incoming['settings'])) {
@@ -253,7 +282,7 @@ try {
     }
 
     if ($action === 'reset' && $method === 'POST') {
-        auth_require_admin();
+        auth_require_admin_role(AUTH_ROLE_CONFIG);
         if (is_file($storagePath)) {
             unlink($storagePath);
         }

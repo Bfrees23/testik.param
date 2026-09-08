@@ -1,13 +1,12 @@
 /**
- * Дополнительные параметры карты 50: счётчик (0x082A…0x086C), комплекс (0x08D1…0x0928),
- * финальные (TestMode 5 с, моточасы, токи, очистка, DEFAULT_SETTINGS=3, архивы).
- * Источник: RegisterMapFile_v50 / ModbusCommand.c / инструкция финализации.
+ * Дополнительные параметры карты 50: счётчик (0x082A…0x086C), комплекс (0x08D1…0x0928).
+ * Финальный блок удалён — маски и очистки в основных параметрах.
+ * Источник: RegisterMapFile_v50 / ModbusCommand.c.
  */
 (function () {
     const G = {
         M: 'Параметры счётчика',
         K: 'Параметры комплекса',
-        F: 'Финальные параметры',
     };
 
     const METER_STEPS = [
@@ -78,230 +77,8 @@
         { id: 229, reg: 0x0928, g: 'K', type: 'w', regCount: 1, title: 'Направление комплекса (0-слева направо;1-справа налево;2-сверху вниз;3-снизу вверх)', writeLkg: true, u8: true },
     ];
 
-    /**
-     * Финализация после основных / счётчика / комплекса (по таблице финализации).
-     * TestMode 0x07B5 — отключён.
-     * 0x0746 (ток ПАД) — пропускаем по инструкции.
-     * П5/Т5 (0x04D9/0x054F) уже пишутся в основных (п.73/76).
-     * п.78/79 — writeFinalComplexModeFlags перед этой секцией.
-     */
-    const FINAL_STEPS = [
-        // Маски (из основных п.71/72/74/75/77) — в основном разделе staging 0/3,
-        // здесь реальные И1…И4. Поля финала — отдельные id (val_final_*), чтобы
-        // не пересекаться с полями параметризации (там автоподстановка staging 0 0 3 3 0).
-        {
-            id: 71,
-            reg: 0x04d2,
-            g: 'F',
-            type: 'u',
-            title: 'Маска включенных предупреждений (поставщик)',
-            hint: 'И1=0x3C003 · И2=0x3C003 · И3=0x3C003 · И4=0x3C003',
-            defaultHex: '0x3C003',
-            writeLkg: true,
-            finalMask: true,
-            inputId: 'val_final_71',
-        },
-        {
-            id: 72,
-            reg: 0x04d4,
-            g: 'F',
-            type: 'u',
-            title: 'Маска включенных предупреждений (производитель)',
-            hint: 'И1=0x3C3FF · И2=0x3CFFF · И3=0x3F3FF · И4=0x3FFFF',
-            writeLkg: true,
-            finalMask: true,
-            inputId: 'val_final_72',
-        },
-        {
-            id: 74,
-            reg: 0x0544,
-            g: 'F',
-            type: 'u',
-            title: 'Маска включенных тревог (производитель)',
-            hint: 'И1=0x43FF · И2=0x4FFF · И3=0x73FF · И4=0x7FFF',
-            writeLkg: true,
-            finalMask: true,
-            inputId: 'val_final_74',
-        },
-        {
-            id: 75,
-            reg: 0x0565,
-            g: 'F',
-            type: 'u',
-            title: 'Маска включенных тревог (поставщик)',
-            hint: 'И1=0x43FF · И2=0x4FFF · И3=0x73FF · И4=0x7FFF',
-            writeLkg: true,
-            finalMask: true,
-            inputId: 'val_final_75',
-        },
-        {
-            id: 77,
-            reg: 0x05be,
-            g: 'F',
-            type: 'u',
-            title: 'Маска включенных аварий (производитель)',
-            hint: 'И1=0x33 · И2=0x37 · И3=0x3B · И4=0x3F',
-            defaultVal: '0x33',
-            writeLkg: true,
-            finalMask: true,
-            inputId: 'val_final_77',
-        },
-
-        // Даты поверки комплекса — дубль в финале (как в таблице финализации)
-        {
-            id: 298,
-            reg: 0x08e4,
-            g: 'F',
-            type: 'dt',
-            regCount: 2,
-            title: 'Дата поверки комплекса (финал)',
-            hint: 'копия п.202',
-            syncFrom: 202,
-            writeLkg: true,
-        },
-        {
-            id: 299,
-            reg: 0x08e6,
-            g: 'F',
-            type: 'dt',
-            regCount: 2,
-            title: 'Дата следующей поверки комплекса (финал)',
-            hint: 'копия п.203',
-            syncFrom: 203,
-            writeLkg: true,
-        },
-        // TestMode отключён
-        // { id: 300, … TestMode вкл. },
-        // { id: 301, … TestMode выкл. },
-
-        // МОТОЧАСЫ — обнуление
-        { id: 302, reg: 0x0720, g: 'F', type: 'q', regCount: 4, title: 'Время МК в стоп режиме', unit: 'мс', defaultVal: '0', writeLkg: true, manufacturerOnly: true },
-
-        { id: 303, reg: 0x0724, g: 'F', type: 'q', regCount: 4, title: 'Время МК в рабочем режиме', unit: 'мс', defaultVal: '0', writeLkg: true, manufacturerOnly: true },
-
-        { id: 304, reg: 0x0728, g: 'F', type: 'q', regCount: 4, title: 'Время работы оптического интерфейса и RS485', unit: 'мс', defaultVal: '0', writeLkg: true, manufacturerOnly: true },
-
-        { id: 305, reg: 0x072c, g: 'F', type: 'q', regCount: 4, title: 'Время работы экрана', unit: 'мс', defaultVal: '0', writeLkg: true, manufacturerOnly: true },
-
-        { id: 306, reg: 0x0730, g: 'F', type: 'q', regCount: 4, title: 'Время работы преобразователя давления газа', unit: 'мс', defaultVal: '0', writeLkg: true, manufacturerOnly: true },
-
-        { id: 307, reg: 0x0734, g: 'F', type: 'q', regCount: 4, title: 'Время работы преобразователя перепада давления', unit: 'мс', defaultVal: '0', writeLkg: true, manufacturerOnly: true },
-
-        { id: 308, reg: 0x0738, g: 'F', type: 'q', regCount: 4, title: 'Время работы модуля телеметрии', unit: 'мс', defaultVal: '0', writeLkg: true, manufacturerOnly: true },
-
-        // Токи / ёмкость — не показываем и не пишем (заводские)
-        // { id: 309, reg: 0x0740, g: 'F', type: 'f', title: 'Ток МК в стоп режиме (мкА)', defaultNum: 50, readOnly: true, writeLkg: false, manufacturerOnly: true },
-        // { id: 310, reg: 0x0742, g: 'F', type: 'f', title: 'Ток МК в рабочем режиме (мА)', defaultNum: 5, readOnly: true, writeLkg: false, manufacturerOnly: true },
-        // { id: 311, reg: 0x0744, g: 'F', type: 'f', title: 'Ток потребления экрана (мА)', defaultNum: 10, readOnly: true, writeLkg: false, manufacturerOnly: true },
-        // { id: …, reg: 0x0746, …, title: 'Ток потребления преобразователя давления (мА)', defaultNum: 20 },
-        // { id: 312, reg: 0x0748, g: 'F', type: 'f', title: 'Ток потребления преобразователя перепада давления (мА)', defaultNum: 20, readOnly: true, writeLkg: false, manufacturerOnly: true },
-        // { id: 313, reg: 0x074c, g: 'F', type: 'f', title: 'Ток потребления оптического и RS485 интерфейсов (мА)', defaultNum: 10, readOnly: true, writeLkg: false, manufacturerOnly: true },
-        // { id: 314, reg: 0x074e, g: 'F', type: 'w', title: 'Ёмкость батареи корректора (мА·ч)', defaultNum: 36000, readOnly: true, writeLkg: false, manufacturerOnly: true },
-        {
-            id: 315,
-            reg: 0x071d,
-            g: 'F',
-            type: 'battery',
-            regCount: 1,
-            title: 'Расчётный уровень заряда батарей (корректор / телеметрия)',
-            hint: 'только чтение 0x071D: 1 регистр = 2 байта (Bat1% основной, Bat2% телеметрии)',
-            unit: '%',
-            readOnly: true,
-            writeLkg: false,
-        },
-
-        {
-            id: 316,
-            reg: 0x06b1,
-            g: 'F',
-            type: 'u',
-            regCount: 2,
-            title: 'Команда подсчёта контрольной суммы калибровочных параметров (Settings №1)',
-            hint: 'uint32 LE: 0x06B1…0x06B2 ← 1 (не один регистр — иначе exception 0x03).',
-            defaultNum: 1,
-            writeOnly: true,
-            writeLkg: true,
-            manufacturerOnly: true,
-            settingsCrcCmd: true,
-        },
-        {
-            id: 317,
-            reg: 0x06aa,
-            g: 'F',
-            type: 'w',
-            u8: true,
-            title: 'Закрыть калибровочный замок (перед очисткой регистров)',
-            hint: 'Пишем 0 в 0x06AA — CmdCloseKalibKey. Дальше — очистка предупреждений/тревог/аварий.',
-            defaultNum: 0,
-            closeCalibLock: true,
-            writeOnly: true,
-            writeLkg: false,
-        },
-        {
-            id: 318,
-            reg: 0x04d6,
-            g: 'F',
-            type: 'w',
-            u8: true,
-            title: 'Очистить регистры предупреждений',
-            defaultNum: 1,
-            writeOnly: true,
-            writeLkg: true,
-            manufacturerOnly: true,
-        },
-        {
-            id: 319,
-            reg: 0x0546,
-            g: 'F',
-            type: 'w',
-            u8: true,
-            title: 'Очистить регистры тревог',
-            defaultNum: 1,
-            writeOnly: true,
-            writeLkg: true,
-            manufacturerOnly: true,
-        },
-        {
-            id: 320,
-            reg: 0x05c0,
-            g: 'F',
-            type: 'w',
-            u8: true,
-            title: 'Очистить регистры аварий',
-            defaultNum: 1,
-            writeOnly: true,
-            writeLkg: true,
-            manufacturerOnly: true,
-        },
-        {
-            id: 321,
-            reg: 0x06b4,
-            g: 'F',
-            type: 'w',
-            u8: true,
-            title: 'DEFAULT_SETTINGS: сохранить настройки пользователя во Flash (команда 3)',
-            defaultNum: 3,
-            defaultSettingsCmd: 3,
-            writeOnly: true,
-            writeLkg: false,
-            manufacturerOnly: true,
-        },
-        {
-            id: 322,
-            reg: 0x1213,
-            g: 'F',
-            type: 'w',
-            u8: true,
-            title: 'Очистить все архивы кроме архива изменений',
-            defaultNum: 1,
-            writeOnly: true,
-            writeLkg: true,
-            manufacturerOnly: true,
-        },
-    ];
-
     window.TM07_PARAMETRIZATION_EXTRA = {
-        groups: G,
+        groups: { M: 'Параметры счётчика', K: 'Параметры комплекса' },
         sections: [
             {
                 key: 'meter',
@@ -322,22 +99,6 @@
                 readAllId: 'paramComplexReadAll',
                 writeAllId: 'paramComplexWriteAll',
                 steps: COMPLEX_STEPS,
-            },
-            {
-                key: 'final',
-                title: 'Финальные параметры',
-                note:
-                    'Маски И1…И4, даты, обнуление моточасов (п.302–308), заряд батарей (п.315, опрос), ' +
-                    'команда CRC калибровки Settings №1 (п.316). ' +
-                    'Перед очисткой регистров — закрытие калибровочного замка (п.317). ' +
-                    'Токи 309–314 убраны. TestMode отключён.',
-                tbodyId: 'paramFinalTbody',
-                filterId: 'paramFinalFilter',
-                readAllId: 'paramFinalReadAll',
-                writeAllId: 'paramFinalWriteAll',
-                runAllId: 'paramFinalRun',
-                pauseAtCloseCalibLock: true,
-                steps: FINAL_STEPS,
             },
         ],
     };

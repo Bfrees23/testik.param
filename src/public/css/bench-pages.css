@@ -620,6 +620,13 @@
     display: none;
 }
 
+/* П.3 — одна карточка: блокируем содержимое body, кроме баннера */
+.wb-param-section.wb-param-locked > .card-body > *:not(.wb-param-lock-banner) {
+    opacity: 0.55;
+    pointer-events: none;
+    user-select: none;
+}
+
 .wb-param-section.wb-param-locked > .card,
 .wb-param-section.wb-param-locked > .accordion {
     opacity: 0.55;
@@ -645,6 +652,7 @@
     font-weight: 600;
 }
 
+#wbStep2Card.wb-assembly-done,
 #wbCorrectorCard.wb-assembly-done {
     border-color: rgba(var(--bs-success-rgb), 0.45) !important;
 }

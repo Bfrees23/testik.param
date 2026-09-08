@@ -94,13 +94,13 @@
                             <div class="d-flex flex-wrap align-items-center gap-2">
                                 <i class="bi bi-cpu"></i>
                                 <span>ПО прибора (0x0007): <strong id="paramFwDeviceVer">—</strong></span>
-                                <span>ЛКГ (из файла): <strong id="paramFwLkg" class="font-monospace">—</strong></span>
+                                <span id="paramFwLkgWrap" class="d-none">ЛКГ (из файла): <strong id="paramFwLkg" class="font-monospace">—</strong></span>
                                 <span>нужно: <strong id="paramFwFolderVer">—</strong></span>
                                 <span id="paramFwMatch" class="badge rounded-pill text-bg-secondary">нет связи</span>
-                                <button type="button" class="btn btn-warning btn-sm" id="paramFwFlashBtn" disabled title="Залить файл из папки firmware по метке v…">
+                                <button type="button" class="btn btn-warning btn-sm" id="paramFwFlashBtn" disabled title="Залить файл из папки firmware">
                                     <i class="bi bi-download me-1"></i>Перепрошить
                                 </button>
-                                <label class="btn btn-outline-secondary btn-sm mb-0" for="paramFwFile" title="Если папка не видна — выбрать .bin вручную">
+                                <label id="paramFwFileLabel" class="btn btn-outline-secondary btn-sm mb-0 d-none" for="paramFwFile" title="Выбор файла отключён — используйте firmware/">
                                     <i class="bi bi-folder2-open me-1"></i>Выбрать файл
                                 </label>
                                 <input type="file" id="paramFwFile" class="d-none" accept=".bin,application/octet-stream">

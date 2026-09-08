@@ -1,21 +1,25 @@
-# Firebird в Docker (автоматически)
+# Firebird в Docker — legacy
 
-При `docker compose up -d`:
-1. **firebird** — создаёт `tm07_bench.fdb`
-2. **firebird-init** — один раз накатывает `database/schema.firebird.sql`
-3. **php** — подключается к `firebird:/firebird/data/tm07_bench.fdb`
+Стенд по умолчанию использует **PostgreSQL** (`docker-compose` service `postgres`,
+схема `database/schema.postgres.sql`).
 
-Проверка:
+Скрипты Firebird (`schema.firebird.sql`, IBExpert) сохранены для:
+
+- отката (`TM07_DB_DRIVER=firebird` + сервис firebird — нужно вернуть в compose вручную);
+- миграции данных: `database/migrate_to_postgres.php`;
+- опционального слоя BPK в `.fdb` (не требуется runtime PHP стенда).
+
+Проверка Postgres:
 
 ```bash
-curl http://localhost:8081/api/bench-db-status.php?action=status
-# "driver":"firebird", "firebirdReachable":true
+curl -s http://localhost:8081/api/bench-db-status.php?action=status
+# "driver":"pgsql", "postgresReachable":true
 ```
 
-Сброс БД:
+Сброс Postgres:
 
 ```bash
 docker compose down
-docker volume rm tm07-bench_firebird_data
-docker compose up -d
+docker volume rm tm07-bench_postgres_data
+docker compose up -d --build
 ```

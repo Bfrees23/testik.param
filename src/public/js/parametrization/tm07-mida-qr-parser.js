@@ -165,8 +165,22 @@
         return d.slice(-4);
     }
 
-    function resolveTempSensorTarget() {
+    function resolveTempSensorTarget(expectKey) {
         const Ops = window.TM07_WORKBENCH_OPS;
+        const forced =
+            expectKey && (expectKey === 'DT' || expectKey === 'TT')
+                ? String(expectKey).toUpperCase()
+                : null;
+        if (forced) {
+            if (
+                Ops &&
+                typeof Ops.isSensorAllowedInOrder === 'function' &&
+                !Ops.isSensorAllowedInOrder(forced)
+            ) {
+                return { error: 'Датчик «' + forced + '» в заказе не предусмотрен.' };
+            }
+            return { sensorType: forced };
+        }
         if (Ops && typeof Ops.getNextRequiredSensor === 'function') {
             const next = Ops.getNextRequiredSensor();
             if (next === 'DT' || next === 'TT') {
@@ -204,13 +218,14 @@
     /**
      * 4 цифры — отдельный ввод S/N температурного датчика (без QR MIDA).
      * @param {string} raw
+     * @param {string} [expectKey] — DT|TT при вводе в плашку канала
      */
-    function parseTempSerialLine(raw) {
+    function parseTempSerialLine(raw, expectKey) {
         const text = normalizeQrText(raw);
         if (!/^\d{4}$/.test(text)) {
             return { ok: false };
         }
-        const target = resolveTempSensorTarget();
+        const target = resolveTempSensorTarget(expectKey);
         if (target.error) {
             return { ok: false, error: target.error };
         }
@@ -385,13 +400,36 @@
         }
     }
 
-    function setQrStatus(text, isError) {
-        const st = document.getElementById('paramQrStatus');
-        if (!st) {
-            return;
+    function setQrStatus(text, isError, sensorKey) {
+        const ids = [];
+        if (sensorKey) {
+            ids.push('paramQrStatus_' + sensorKey);
         }
-        st.textContent = text || '';
-        st.className = 'small mt-2 mb-0' + (isError ? ' text-danger' : text ? ' text-success' : ' text-body-secondary');
+        ids.push('paramQrStatus');
+        ids.forEach(function (id) {
+            const st = document.getElementById(id);
+            if (!st) {
+                return;
+            }
+            st.textContent = text || '';
+            st.className =
+                'small mt-2 mb-0' +
+                (isError ? ' text-danger' : text ? ' text-success' : ' text-body-secondary');
+            if (id === 'paramQrStatus') {
+                st.classList.toggle('d-none', !text);
+                st.setAttribute('aria-hidden', text ? 'false' : 'true');
+            }
+        });
+    }
+
+    function canonicalScanKey(sensorType) {
+        const Ops = window.TM07_WORKBENCH_OPS;
+        if (Ops && typeof Ops.canonicalSensorKey === 'function') {
+            return Ops.canonicalSensorKey(sensorType);
+        }
+        const t = String(sensorType || '').toUpperCase();
+        const map = { DP: 'DD', TG: 'DT', TP: 'TT' };
+        return map[t] || t;
     }
 
     /**
@@ -506,15 +544,23 @@
     /**
      * QR MIDA или 4 цифры для температурников.
      * @param {string} raw
+     * @param {{expectKey?: string}} [opts] — канал плашки (DA|DD|DT|TT)
      */
-    function applyScanToInputs(raw) {
+    function applyScanToInputs(raw, opts) {
+        const expectKey = opts && opts.expectKey ? canonicalScanKey(opts.expectKey) : null;
         const normalized = normalizeQrText(raw);
         if (!normalized) {
             return { ok: false, error: 'Пустая строка' };
         }
 
         if (/^\d{4}$/.test(normalized)) {
-            const temp = parseTempSerialLine(normalized);
+            if (expectKey === 'DA' || expectKey === 'DD') {
+                return {
+                    ok: false,
+                    error: 'В поле «' + expectKey + '» нужен полный QR MIDA, а не 4 цифры.',
+                };
+            }
+            const temp = parseTempSerialLine(normalized, expectKey);
             if (temp.ok) {
                 return applyParsedToInputs(temp.parsed, 'TEMP');
             }
@@ -525,6 +571,18 @@
 
         const result = parseMidaQrLine(raw);
         if (result.ok) {
+            const gotKey = canonicalScanKey(result.parsed.sensorType);
+            if (expectKey && gotKey !== expectKey) {
+                return {
+                    ok: false,
+                    error:
+                        'Это QR «' +
+                        gotKey +
+                        '», а плашка для «' +
+                        expectKey +
+                        '». Отсканируйте нужный датчик.',
+                };
+            }
             if (isTempSensorType(result.parsed.sensorType)) {
                 result.parsed.serial = formatTempSerial(result.parsed.serial);
             }
@@ -534,11 +592,15 @@
         if (/^\d+$/.test(normalized)) {
             return {
                 ok: false,
-                error: 'S/N температурного датчика — ровно 4 цифры (например 6319). Давление — полный QR MIDA.',
+                error:
+                    'S/N температурного датчика — ровно 4 цифры (например 6319). Давление — полный QR MIDA.',
             };
         }
 
-        return { ok: false, error: result.error === 'TEMP_SERIAL' ? 'Ожидается QR MIDA или 4 цифры' : result.error };
+        return {
+            ok: false,
+            error: result.error === 'TEMP_SERIAL' ? 'Ожидается QR MIDA или 4 цифры' : result.error,
+        };
     }
 
     /**
@@ -615,30 +677,71 @@
         if (!tbody) {
             return;
         }
+        const Ops = window.TM07_WORKBENCH_OPS;
+        const required =
+            Ops && typeof Ops.getRequiredSensorKeys === 'function'
+                ? Ops.getRequiredSensorKeys()
+                : ['DA', 'DT', 'DD', 'TT'];
+        const requiredSet = {};
+        required.forEach(function (k) {
+            requiredSet[k] = true;
+        });
         let html = '';
+        let shown = 0;
         buildSensorStepGroups().forEach(function (grp) {
+            if (!requiredSet[grp.key]) {
+                return;
+            }
+            shown += 1;
+            const meta = SENSOR_STEP_GROUPS.find(function (g) {
+                return g.key === grp.key;
+            }) || grp;
             const badge =
                 '<span class="d-inline-block align-middle px-2 py-1 rounded border ' +
-                grp.badgeBg + ' ' + grp.badgeBorder + ' ' + grp.badgeText +
+                (meta.badgeBg || '') +
+                ' ' +
+                (meta.badgeBorder || '') +
+                ' ' +
+                (meta.badgeText || '') +
                 '" style="font-size:.85rem;min-width:52px;text-align:center;font-weight:600">' +
-                escAttr(grp.key) + '</span>';
+                escAttr(grp.key) +
+                '</span>';
             html +=
-                '<tr class="' + grp.badgeBg + '">' +
-                '<td colspan="4" class="fw-bold ' + grp.badgeText + '" style="font-size:.9rem;padding:.35rem .75rem">' +
-                escAttr(grp.label) + '</td>' +
+                '<tr class="' +
+                (meta.badgeBg || '') +
+                '">' +
+                '<td colspan="4" class="fw-bold ' +
+                (meta.badgeText || '') +
+                '" style="font-size:.9rem;padding:.35rem .75rem">' +
+                escAttr(grp.label) +
+                ' <span class="fw-normal text-body-secondary">(по заказу)</span></td>' +
                 '</tr>';
             grp.stepIds.forEach(function (sid) {
                 const inp = document.getElementById('val_' + sid);
                 const val = inp ? String(inp.value || '') : '';
                 html +=
                     '<tr>' +
-                    '<td class="text-nowrap fw-semibold">' + badge + '</td>' +
-                    '<td class="text-nowrap">п.' + sid + '</td>' +
-                    '<td>' + escAttr(stepTitleFor(sid)) + '</td>' +
-                    '<td><input type="text" class="form-control form-control-sm font-monospace sensor-param-val" data-step="' + sid + '" value="' + escAttr(val) + '"></td>' +
+                    '<td class="text-nowrap fw-semibold">' +
+                    badge +
+                    '</td>' +
+                    '<td class="text-nowrap">п.' +
+                    sid +
+                    '</td>' +
+                    '<td>' +
+                    escAttr(stepTitleFor(sid)) +
+                    '</td>' +
+                    '<td><input type="text" class="form-control form-control-sm font-monospace sensor-param-val" data-step="' +
+                    sid +
+                    '" value="' +
+                    escAttr(val) +
+                    '"></td>' +
                     '</tr>';
             });
         });
+        if (!shown) {
+            html =
+                '<tr><td colspan="4" class="text-body-secondary">Нет датчиков по заказу — загрузите заказ 1С.</td></tr>';
+        }
         tbody.innerHTML = html;
     }
 
@@ -678,12 +781,19 @@
             }
             const Ops = window.TM07_WORKBENCH_OPS;
             if (Ops && typeof Ops.markSensorScanned === 'function') {
+                const req =
+                    Ops && typeof Ops.getRequiredSensorKeys === 'function'
+                        ? Ops.getRequiredSensorKeys()
+                        : ['DA', 'DT', 'DD', 'TT'];
                 [
                     { key: 'DA', sid: 57 },
                     { key: 'DT', sid: 61 },
                     { key: 'DD', sid: 64 },
                     { key: 'TT', sid: 68 },
                 ].forEach(function (row) {
+                    if (req.indexOf(row.key) < 0) {
+                        return;
+                    }
                     const v = document.getElementById('val_' + row.sid);
                     const sn = v ? String(v.value || '').trim() : '';
                     if (sn) {
@@ -757,57 +867,111 @@
     }
 
     function initMidaQrPanel() {
-        const inp = document.getElementById('paramQrSensor');
-        if (!inp) {
-            return;
-        }
-        function runApply() {
+        const host = document.getElementById('wbSensorCardsHost');
+        const legacyInp = document.getElementById('paramQrSensor');
+
+        function runApplyForInput(inp, expectKey) {
+            if (!inp) {
+                return;
+            }
+            const key = expectKey || inp.getAttribute('data-sensor-key') || '';
             const normalized = normalizeQrText(inp.value);
             if (!normalized) {
-                setQrStatus('Введите или отсканируйте строку QR.', true);
+                setQrStatus('Введите или отсканируйте строку QR.', true, key || null);
                 return;
             }
             if (normalized !== inp.value) {
                 inp.value = normalized;
             }
-            const r = applyScanToInputs(normalized);
+            const r = applyScanToInputs(normalized, key ? { expectKey: key } : undefined);
             if (!r.ok) {
-                setQrStatus('✗ ' + (r.error || 'Ошибка разбора'), true);
-                // Не очищаем поле — оператор видит, что пикнул, и может исправить.
+                setQrStatus('✗ ' + (r.error || 'Ошибка разбора'), true, key || null);
                 inp.select();
                 return;
             }
             const Ops = window.TM07_WORKBENCH_OPS;
             const need =
-                Ops && typeof Ops.requiredSensorsHint === 'function' ? ' | ' + Ops.requiredSensorsHint() : '';
-            setQrStatus('✓ ' + r.describe + ' (' + r.filled + ' полей)' + need, false);
+                Ops && typeof Ops.requiredSensorsHint === 'function'
+                    ? ' | ' + Ops.requiredSensorsHint()
+                    : '';
+            setQrStatus('✓ ' + r.describe + ' (' + r.filled + ' полей)' + need, false, key || null);
             inp.value = '';
             if (Ops && typeof Ops.paintWorkflowSteps === 'function') {
                 Ops.paintWorkflowSteps();
             }
+            const nextKey =
+                Ops && typeof Ops.getNextRequiredSensor === 'function'
+                    ? Ops.getNextRequiredSensor()
+                    : null;
+            const nextInp = nextKey
+                ? document.getElementById('paramQrSensor_' + nextKey)
+                : null;
+            const focusEl = nextInp || inp;
             try {
-                inp.focus({ preventScroll: true });
+                focusEl.focus({ preventScroll: true });
             } catch (_e) {
-                inp.focus();
+                focusEl.focus();
             }
         }
-        document.getElementById('paramQrApply')?.addEventListener('click', runApply);
+
+        if (host) {
+            host.addEventListener('keydown', function (e) {
+                if (e.key !== 'Enter') {
+                    return;
+                }
+                const t = e.target;
+                if (!t || !t.classList || !t.classList.contains('wb-sensor-qr-input')) {
+                    return;
+                }
+                e.preventDefault();
+                runApplyForInput(t);
+            });
+            document.getElementById('paramQrApply')?.addEventListener('click', function () {
+                const Ops = window.TM07_WORKBENCH_OPS;
+                const next =
+                    Ops && typeof Ops.getNextRequiredSensor === 'function'
+                        ? Ops.getNextRequiredSensor()
+                        : null;
+                const inp =
+                    (next && document.getElementById('paramQrSensor_' + next)) ||
+                    host.querySelector('.wb-sensor-qr-input');
+                runApplyForInput(inp);
+            });
+            document.getElementById('paramQrClear')?.addEventListener('click', function () {
+                host.querySelectorAll('.wb-sensor-qr-input').forEach(function (inp) {
+                    inp.value = '';
+                });
+                host.querySelectorAll('[id^="paramQrStatus_"]').forEach(function (el) {
+                    el.textContent = '';
+                    el.className = 'small text-body-secondary mt-2 mb-0';
+                });
+                setQrStatus('', false);
+            });
+            return;
+        }
+
+        if (!legacyInp) {
+            return;
+        }
+        function runApplyLegacy() {
+            runApplyForInput(legacyInp, '');
+        }
+        document.getElementById('paramQrApply')?.addEventListener('click', runApplyLegacy);
         document.getElementById('paramQrClear')?.addEventListener('click', function () {
-            inp.value = '';
+            legacyInp.value = '';
             setQrStatus('', false);
             try {
-                inp.focus({ preventScroll: true });
+                legacyInp.focus({ preventScroll: true });
             } catch (_e) {
-                inp.focus();
+                legacyInp.focus();
             }
         });
-        inp.addEventListener('keydown', function (e) {
+        legacyInp.addEventListener('keydown', function (e) {
             if (e.key === 'Enter') {
                 e.preventDefault();
-                runApply();
+                runApplyLegacy();
             }
         });
-        // Не фокусируем QR при загрузке страницы — иначе браузер прокручивает вниз.
     }
 
     window.TM07_MIDA_QR = {

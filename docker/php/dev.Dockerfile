@@ -14,7 +14,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Устанавливаем все расширения, КРОМЕ xdebug
 RUN install-php-extensions \
-    opcache pcntl gd zip intl iconv mysqli pdo_mysql pdo_firebird \
+    opcache pcntl gd zip intl iconv mysqli pdo_mysql pdo_pgsql pdo_firebird \
     sockets ldap soap tidy xsl bcmath exif smbclient redis imagick xdebug
 
 # Совпадает с точкой монтирования ./src в compose (см. prod.yml / dev.yml)

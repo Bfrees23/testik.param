@@ -11,6 +11,42 @@
         TT: 'темп. ТП (TT)',
     };
 
+    /** Плашки ввода QR/S/N — отдельно на каждый канал заказа. */
+    const SENSOR_CARD_META = {
+        DA: {
+            title: 'Давление (DA)',
+            hint: 'Полный QR MIDA с корпуса датчика давления.',
+            placeholder: 'серийный;MIDA;DA;…',
+            inputmode: 'text',
+            border: 'border-primary',
+            headerBg: 'bg-primary-subtle',
+        },
+        DT: {
+            title: 'Темп. газа (DT)',
+            hint: '4 цифры серийного номера с наклейки температурного датчика.',
+            placeholder: '4 цифры',
+            inputmode: 'numeric',
+            border: 'border-success',
+            headerBg: 'bg-success-subtle',
+        },
+        DD: {
+            title: 'Перепад (DD)',
+            hint: 'Полный QR MIDA с корпуса датчика перепада (ППД).',
+            placeholder: 'серийный;MIDA;DD;…',
+            inputmode: 'text',
+            border: 'border-warning',
+            headerBg: 'bg-warning-subtle',
+        },
+        TT: {
+            title: 'Темп. ТП (TT)',
+            hint: '4 цифры с наклейки датчика температуры техн. параметров (ПТТП).',
+            placeholder: '4 цифры',
+            inputmode: 'numeric',
+            border: 'border-info',
+            headerBg: 'bg-info-subtle',
+        },
+    };
+
     const METER_VERIFY_NEXT_YEARS_DEFAULT = 5;
     const COMPLEX_VERIFY_NEXT_YEARS_DEFAULT = 5;
     /** МПИ корректора ТМ-07 — 5 лет (ГРСИ 93381-24, п.80/81). */
@@ -1217,7 +1253,7 @@
         famSel.innerHTML = '';
         const empty = document.createElement('option');
         empty.value = '';
-        empty.textContent = '— Выберите семейство —';
+        empty.textContent = '— Выберите счётчики —';
         famSel.appendChild(empty);
         templates.forEach(function (fam) {
             if (!(fam.options || []).length) return;
@@ -1240,7 +1276,7 @@
         const empty = document.createElement('option');
         empty.value = '';
         if (!passport) {
-            empty.textContent = '— Сначала семейство —';
+            empty.textContent = '— Сначала счётчики —';
             sel.appendChild(empty);
             sel.disabled = true;
             return;
@@ -1498,24 +1534,13 @@
         const complexOrder = isComplexOrder();
         const writeComplex = shouldWriteComplexParams();
         const equip = getEquipmentFromOrder();
-        const meterPanel =
-            $('wbMeterParamsItem') ||
-            ($('paramMeterPanel') && $('paramMeterPanel').closest('.accordion-item'));
-        const complexPanel = $('paramComplexPanel') && $('paramComplexPanel').closest('.accordion-item');
+        const meterPanel = $('wbMeterParamsItem');
+        const complexPanel = $('wbComplexParamsItem');
         const meterSerialCard = $('wbMeterCard') || ($('paramMeterSerial') && $('paramMeterSerial').closest('.card'));
         const complexCard = $('wbComplexCard');
         // Параметры счётчика (п.100–122) нужны и для заказа только на корректор (шаблон типоразмера).
         if (meterPanel) {
             meterPanel.classList.remove('d-none');
-        }
-        const meterCollapse = $('paramMeterPanel');
-        if (meterCollapse && !complexOrder) {
-            meterCollapse.classList.add('show');
-            const btn = meterPanel && meterPanel.querySelector('[data-bs-target="#paramMeterPanel"]');
-            if (btn) {
-                btn.classList.remove('collapsed');
-                btn.setAttribute('aria-expanded', 'true');
-            }
         }
         // S/N счётчика/комплекса — только для заказа на комплекс.
         if (meterSerialCard) {
@@ -1523,17 +1548,6 @@
         }
         if (complexPanel) {
             complexPanel.classList.toggle('d-none', !writeComplex);
-            if (writeComplex && !complexOrder) {
-                const complexCollapse = $('paramComplexPanel');
-                if (complexCollapse) {
-                    complexCollapse.classList.add('show');
-                    const cbtn = complexPanel.querySelector('[data-bs-target="#paramComplexPanel"]');
-                    if (cbtn) {
-                        cbtn.classList.remove('collapsed');
-                        cbtn.setAttribute('aria-expanded', 'true');
-                    }
-                }
-            }
         }
         if (complexCard) {
             // Карточка S/N комплекса — только реальный заказ на комплекс.
@@ -1556,8 +1570,12 @@
         if (typeof syncCorrectorVerifFieldsFromSteps === 'function') {
             syncCorrectorVerifFieldsFromSteps();
         }
-        // Перепад / TT: скрыть строки, если датчика нет в заказе (основные + комплекс + финал-зеркала).
-        document.querySelectorAll('#paramTbody tr[data-step-id], #paramMeterTbody tr[data-step-id], #paramComplexTbody tr[data-step-id], #paramFinalTbody tr[data-step-id]').forEach(function (tr) {
+        // Перепад / TT: скрыть строки, если датчика нет в заказе.
+        document
+            .querySelectorAll(
+                '#paramTbody tr[data-step-id], #paramMeterTbody tr[data-step-id], #paramComplexTbody tr[data-step-id]'
+            )
+            .forEach(function (tr) {
             const sid = parseInt(tr.getAttribute('data-step-id'), 10);
             let hide = false;
             // ППД (перепад): диапазоны, погрешность, канал Dp, зеркала комплекса
@@ -1585,23 +1603,132 @@
                 }
             }
         });
-        const qrHint = document.querySelector('label[for="paramQrSensor"]');
-        const qrHelp = qrHint && qrHint.parentElement && qrHint.parentElement.querySelector('.small.text-body-secondary');
-        if (qrHelp) {
+        const qrHintEl = $('wbSensorCardsHint');
+        if (qrHintEl) {
             const need = requiredSensorsHint();
             let tip = 'По заказу: ' + need + '. ';
-            tip += 'Давление — полный QR MIDA. Температура газа (DT) — 4 цифры с наклейки.';
-            if (equip.hasPpd) {
-                tip =
-                    'По заказу: ' +
-                    need +
-                    '. Давление и перепад — полный QR MIDA. Температура газа (DT) — 4 цифры.';
+            tip += 'DA/DD — полный QR MIDA; DT/TT — 4 цифры. Чужой тип или другой диапазон из QR будет отклонён.';
+            qrHintEl.textContent = tip;
+        }
+        renderSensorScanCards();
+    }
+
+    function escHtmlLite(s) {
+        return String(s ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    }
+
+    /** Отдельные плашки ввода по датчикам, которые есть в заказе. */
+    function renderSensorScanCards() {
+        const host = $('wbSensorCardsHost');
+        if (!host) {
+            return;
+        }
+        const required = getRequiredSensorKeys();
+        const sig = required.join(',');
+        const saved = {};
+        host.querySelectorAll('.wb-sensor-qr-input').forEach(function (inp) {
+            const k = inp.getAttribute('data-sensor-key');
+            if (k) {
+                saved[k] = inp.value;
             }
-            if (equip.hasPttp) {
-                tip += ' Температура ТП (TT) — 4 цифры.';
+        });
+        if (host.dataset.sensorSig === sig && host.querySelector('[data-wb-sensor-card]')) {
+            required.forEach(function (key) {
+                paintOneSensorCardBadge(key);
+            });
+            return;
+        }
+        host.dataset.sensorSig = sig;
+        if (!required.length) {
+            host.innerHTML =
+                '<div class="col-12"><p class="text-body-secondary mb-0">Загрузите заказ — появятся плашки нужных датчиков.</p></div>';
+            return;
+        }
+        host.innerHTML = required
+            .map(function (key) {
+                const meta = SENSOR_CARD_META[key] || {
+                    title: SENSOR_LABELS[key] || key,
+                    hint: '',
+                    placeholder: '',
+                    inputmode: 'text',
+                    border: 'border-secondary',
+                    headerBg: '',
+                };
+                const id = 'paramQrSensor_' + key;
+                const stId = 'paramQrStatus_' + key;
+                const badgeId = 'wbSensorCardBadge_' + key;
+                return (
+                    '<div class="col-md-6" data-wb-sensor-card="' +
+                    key +
+                    '">' +
+                    '<div class="card h-100 ' +
+                    meta.border +
+                    '">' +
+                    '<div class="card-header py-2 d-flex align-items-center gap-2 ' +
+                    (meta.headerBg || '') +
+                    '">' +
+                    '<span class="fw-semibold">' +
+                    escHtmlLite(meta.title) +
+                    '</span>' +
+                    '<span class="badge rounded-pill text-bg-warning text-dark ms-auto" id="' +
+                    badgeId +
+                    '">○</span>' +
+                    '</div>' +
+                    '<div class="card-body">' +
+                    '<label class="form-label fw-semibold" for="' +
+                    id +
+                    '">' +
+                    (key === 'DT' || key === 'TT' ? 'S/N (4 цифры)' : 'QR MIDA') +
+                    '</label>' +
+                    '<input type="text" class="form-control form-control-lg font-monospace wb-sensor-qr-input" id="' +
+                    id +
+                    '" data-sensor-key="' +
+                    key +
+                    '" placeholder="' +
+                    escHtmlLite(meta.placeholder) +
+                    '" autocomplete="off" spellcheck="false" inputmode="' +
+                    escHtmlLite(meta.inputmode) +
+                    '">' +
+                    '<p class="small text-body-secondary mt-1 mb-0">' +
+                    escHtmlLite(meta.hint) +
+                    '</p>' +
+                    '<p class="small text-body-secondary mt-2 mb-0" id="' +
+                    stId +
+                    '" role="status"></p>' +
+                    '</div></div></div>'
+                );
+            })
+            .join('');
+        required.forEach(function (key) {
+            const inp = $('paramQrSensor_' + key);
+            if (inp && saved[key]) {
+                inp.value = saved[key];
             }
-            tip += ' Чужой тип или другой диапазон/погрешность из QR будет отклонён.';
-            qrHelp.textContent = tip;
+            paintOneSensorCardBadge(key);
+        });
+    }
+
+    function paintOneSensorCardBadge(key) {
+        const badge = $('wbSensorCardBadge_' + key);
+        if (!badge) {
+            return;
+        }
+        const done = isSensorFilled(key);
+        const sn =
+            (window.__wbScannedSensors && window.__wbScannedSensors[key]) ||
+            readStepVal(sensorStepIds(key)[0] || 0) ||
+            '';
+        badge.textContent = done ? '✓ ' + (sn && sn !== '1' ? sn : 'ок') : '○ нужен';
+        badge.className =
+            'badge rounded-pill ms-auto ' + (done ? 'text-bg-success' : 'text-bg-warning text-dark');
+        const card = document.querySelector('[data-wb-sensor-card="' + key + '"] .card');
+        if (card) {
+            card.classList.toggle('border-success', done);
+            card.classList.toggle('border-opacity-50', done);
         }
     }
 
@@ -1996,7 +2123,95 @@
                 })
             );
         } catch (_e) {}
+        void persistSensorBindingsToServer({ channel: key, sensorSerial: String(serial || '').trim() });
         return true;
+    }
+
+    function resolveCorrectorSerialForBind() {
+        const sess =
+            window.TM07_BENCH_EVENTS && typeof window.TM07_BENCH_EVENTS.getActiveSession === 'function'
+                ? window.TM07_BENCH_EVENTS.getActiveSession()
+                : null;
+        const fromSession = sess && (sess.serialCorrector || sess.SERIAL_CORRECTOR);
+        if (fromSession) {
+            return String(fromSession).trim();
+        }
+        if (window.__wbAssemblyCorrectorSerial) {
+            return String(window.__wbAssemblyCorrectorSerial).trim();
+        }
+        const el = document.getElementById('val_3');
+        if (el && String(el.value || '').trim()) {
+            return String(el.value).trim();
+        }
+        return '';
+    }
+
+    /**
+     * Сохранить привязку датчик → корректор в PG.
+     * Без S/N корректора (до сборки) — тихо пропускаем; повтор после сборки подхватит.
+     */
+    async function persistSensorBindingsToServer(opts) {
+        const o = opts || {};
+        const serialCorrector = resolveCorrectorSerialForBind();
+        if (!/^\d{10}$/.test(serialCorrector)) {
+            return { skipped: true, reason: 'no-corrector-serial' };
+        }
+        const scanned = window.__wbScannedSensors || {};
+        const sensors = {};
+        Object.keys(scanned).forEach(function (ch) {
+            const sn = scanned[ch];
+            if (sn) {
+                sensors[ch] = String(sn).trim();
+            }
+        });
+        if (o.channel && o.sensorSerial) {
+            sensors[o.channel] = String(o.sensorSerial).trim();
+        }
+        if (!Object.keys(sensors).length) {
+            return { skipped: true, reason: 'no-sensors' };
+        }
+        const events = window.TM07_BENCH_EVENTS;
+        const orderNumber =
+            (events && typeof events.getOrderNumber === 'function' && events.getOrderNumber()) ||
+            (events && events.getActiveSession && events.getActiveSession() && events.getActiveSession().orderNumber) ||
+            null;
+        const sessionId =
+            (events && events.getActiveSession && events.getActiveSession() && events.getActiveSession().id) || null;
+        try {
+            const r = await fetch('/api/tm07-sensor-bind.php', {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'bindBatch',
+                    serialCorrector: serialCorrector,
+                    sensors: sensors,
+                    orderNumber: orderNumber,
+                    sessionId: sessionId,
+                }),
+            });
+            const j = await r.json();
+            if (!j.ok && Array.isArray(j.errors) && j.errors.length) {
+                const msg = j.errors
+                    .map(function (e) {
+                        return (e.channel || '') + ': ' + (e.error || '');
+                    })
+                    .join('; ');
+                try {
+                    if (typeof window.showToast === 'function') {
+                        window.showToast(msg, 'danger');
+                    } else if (window.console) {
+                        console.warn('[sensor-bind]', msg);
+                    }
+                } catch (_e) {}
+            }
+            return j;
+        } catch (e) {
+            if (window.console) {
+                console.warn('[sensor-bind]', e);
+            }
+            return { ok: false, error: e.message || String(e) };
+        }
     }
 
     function resetScannedSensors() {
@@ -2072,19 +2287,23 @@
         resetScannedSensors();
         resetMeterSerial();
         clearParamFieldValues();
-        const qr = $('paramQrSensor');
-        if (qr) {
-            qr.value = '';
-        }
         const qrSt = $('paramQrStatus');
         if (qrSt) {
             qrSt.textContent = '';
         }
+        document.querySelectorAll('.wb-sensor-qr-input').forEach(function (inp) {
+            inp.value = '';
+        });
+        document.querySelectorAll('[id^="paramQrStatus_"]').forEach(function (el) {
+            el.textContent = '';
+            el.className = 'small text-body-secondary mt-2 mb-0';
+        });
         try {
             if (window.TM07_MIDA_QR && typeof window.TM07_MIDA_QR.setTelemetryPanelVisible === 'function') {
                 window.TM07_MIDA_QR.setTelemetryPanelVisible(false);
             }
         } catch (_eBtReset) {}
+        renderSensorScanCards();
         paintSensorBadges();
         paintMeterBadge();
         paintWorkflowSteps();
@@ -2107,6 +2326,7 @@
                 (done ? 'text-bg-success' : 'text-bg-warning text-dark');
             span.textContent = (done ? '✓ ' : '○ ') + (SENSOR_LABELS[key] || key);
             host.appendChild(span);
+            paintOneSensorCardBadge(key);
         });
     }
 
@@ -2127,48 +2347,29 @@
             window.TM07_PARAM_KAO &&
             typeof window.TM07_PARAM_KAO.isConnected === 'function' &&
             window.TM07_PARAM_KAO.isConnected();
-        const orderReady = !!readStepVal(200) || !!($('paramOrder1cNumber') || {}).value;
-        const required = getRequiredSensorKeys();
-        const scansDone = required.every(isSensorFilled);
+        const post = window.__wbPostWrite || {};
+        const doneAll = stage === 'completed' || (post.writeOk && post.verifyOk);
 
         steps.forEach(function (el) {
             el.classList.remove('is-current', 'is-done');
         });
 
+        // 0 = заказ, 1 = датчики/сборка, 2 = параметризация
         let current = 0;
         if (hasOrder) {
             current = 1;
         }
-        if (hasOrder && serial) {
+        if (hasOrder && (serial || assemblyDone)) {
             current = 1;
         }
-        if (hasOrder && assemblyDone) {
+        if (assemblyDone) {
             current = 2;
         }
         if (assemblyDone && connected) {
-            current = 3;
+            current = 2;
         }
-        if (assemblyDone && connected && orderReady) {
-            current = 4;
-        }
-        if (assemblyDone && connected && orderReady && scansDone) {
-            current = 5;
-        }
-        if (assemblyDone && connected && orderReady && scansDone && isMeterSerialFilled()) {
-            current = 6;
-        }
-        const post = window.__wbPostWrite || {};
-        if (stage === 'completed' || (post.writeOk && post.verifyOk)) {
-            current = 7;
-        }
-        const Passport = window.TM07_PASSPORT;
-        const passportsOn =
-            Passport && typeof Passport.isEnabled === 'function' && Passport.isEnabled();
-        if (
-            passportsOn &&
-            (stage === 'completed' || (post.writeOk && post.verifyOk && post.passportOk))
-        ) {
-            current = 8;
+        if (doneAll) {
+            current = 3; // past last → all done
         }
 
         steps.forEach(function (el, i) {
@@ -2176,7 +2377,7 @@
                 return;
             }
             const num = el.querySelector('.bench-op-step-num');
-            if (i < current) {
+            if (doneAll || i < current) {
                 el.classList.add('is-done');
                 if (num) {
                     num.classList.remove('is-muted');
@@ -2692,7 +2893,7 @@
             pack.steps.forEach(function (step) {
                 if (!step || step.reg == null) return; // п.1 — только ПК
                 if (step.type === 'x' || step.writeOnly || step.readOnly) return;
-                if (step.sensorMemoryCmd || step.paramMask || step.finalMask || step.hidden) return;
+                if (step.sensorMemoryCmd || step.hidden) return;
                 // п.228 — серийный номер БПЭК: по паспорту «-», пуст для заказов без телеметрии.
                 if (Number(step.id) === 228) return;
                 // п.200 — для одиночного корректора в режиме «+ комплекс» не пишется.
@@ -2714,7 +2915,11 @@
     }
 
     function focusQrInput() {
-        const inp = $('paramQrSensor');
+        const next = getNextRequiredSensor();
+        const inp =
+            (next && $('paramQrSensor_' + next)) ||
+            document.querySelector('.wb-sensor-qr-input') ||
+            null;
         if (inp) {
             try {
                 inp.focus({ preventScroll: true });
@@ -2799,10 +3004,12 @@
         purgeSensorsNotInOrder: purgeSensorsNotInOrder,
         isSensorFilled: isSensorFilled,
         markSensorScanned: markSensorScanned,
+        persistSensorBindingsToServer: persistSensorBindingsToServer,
         resetScannedSensors: resetScannedSensors,
         clearParamFieldValues: clearParamFieldValues,
         resetAllForNewSession: resetAllForNewSession,
         paintSensorBadges: paintSensorBadges,
+        renderSensorScanCards: renderSensorScanCards,
         paintWorkflowSteps: paintWorkflowSteps,
         applyVerificationAndDefaults: applyVerificationAndDefaults,
         resolveTelemetryBlockName: resolveTelemetryBlockName,

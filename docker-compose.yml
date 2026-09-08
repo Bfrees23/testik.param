@@ -15,9 +15,10 @@ services:
       context: ./docker/nginx
       dockerfile: dev.Dockerfile
     container_name: tm07-nginx
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./src:/var/www
-      - ./docker/nginx/conf.d/default.conf:/etc/nginx/conf.d/default.conf:ro
       - ./docker/nginx/conf.d/bench-locations.inc:/etc/nginx/conf.d/bench-locations.inc:ro
       - ./docker/nginx/ssl:/etc/nginx/ssl:ro
       - ./docker/nginx/logs:/var/log/nginx
@@ -27,7 +28,7 @@ services:
     # HTTP :8081 и HTTPS :8443 в LAN. Хостовый 443 не публикуем.
     ports:
       - "${TM07_BIND_HOST:-0.0.0.0}:8081:80"
-      - "${TM07_BIND_HOST:-0.0.0.0}:8443:443"
+      - "${TM07_BIND_HOST:-0.0.0.0}:${TM07_HTTPS_PORT:-8443}:443"
     depends_on:
       php:
         condition: service_healthy
@@ -62,8 +63,14 @@ services:
       - ODATA_1C_USER=${ODATA_1C_USER:-}
       - ODATA_1C_PASSWORD=${ODATA_1C_PASSWORD:-}
       - TM07_COUNTERS_SHEET_URL=${TM07_COUNTERS_SHEET_URL:-}
-      - FIREBIRD_HOST=${FIREBIRD_HOST:-firebird}
-      - FIREBIRD_DATABASE=${FIREBIRD_DATABASE:-/firebird/data/tm07_bench.fdb}
+      - TM07_DB_DRIVER=${TM07_DB_DRIVER:-pgsql}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB:-tm07}
+      - POSTGRES_USER=${POSTGRES_USER:-tm07}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-tm07}
+      - FIREBIRD_HOST=${FIREBIRD_HOST:-}
+      - FIREBIRD_DATABASE=${FIREBIRD_DATABASE:-}
       - FIREBIRD_USER=${FIREBIRD_USER:-SYSDBA}
       - FIREBIRD_PASSWORD=${FIREBIRD_PASSWORD:-masterkey}
       - FIREBIRD_CHARSET=${FIREBIRD_CHARSET:-UTF8}
@@ -95,9 +102,7 @@ services:
       - host.docker.internal:host-gateway
     restart: unless-stopped
     depends_on:
-      firebird-init:
-        condition: service_completed_successfully
-      firebird:
+      postgres:
         condition: service_healthy
       gotenberg:
         condition: service_started
@@ -113,43 +118,30 @@ services:
     networks:
       - bench
 
-  firebird-init:
-    image: jacobalberty/firebird:3.0
-    container_name: tm07-firebird-init
-    entrypoint: ["/bin/bash", "/install-schema.sh"]
+  postgres:
+    image: postgres:16-alpine
+    container_name: tm07-postgres
     environment:
-      ISC_PASSWORD: ${FIREBIRD_PASSWORD:-masterkey}
-      FIREBIRD_DATABASE: tm07_bench.fdb
-      SCHEMA_PATH: /schema/schema.firebird.sql
+      POSTGRES_DB: ${POSTGRES_DB:-tm07}
+      POSTGRES_USER: ${POSTGRES_USER:-tm07}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-tm07}
+      TZ: UTC
+      PGTZ: UTC
     volumes:
-      - firebird_data:/firebird/data
-      - ./database/schema.firebird.sql:/schema/schema.firebird.sql:ro
-      - ./docker/firebird/install-schema.sh:/install-schema.sh:ro
-    depends_on:
-      firebird:
-        condition: service_started
-    restart: "no"
-    networks:
-      - bench
-
-  firebird:
-    image: jacobalberty/firebird:3.0
-    container_name: tm07-firebird
-    environment:
-      ISC_PASSWORD: ${FIREBIRD_PASSWORD:-masterkey}
-      FIREBIRD_DATABASE: tm07_bench.fdb
-      EnableLegacyClientAuth: "true"
-    volumes:
-      - firebird_data:/firebird/data
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.postgres.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "test -f /firebird/data/tm07_bench.fdb && pidof fbguard >/dev/null"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tm07} -d ${POSTGRES_DB:-tm07}"]
       interval: 5s
       timeout: 5s
       retries: 12
       start_period: 10s
     networks:
       - bench
+    # Host access for migrate scripts / psql (optional)
+    ports:
+      - "${POSTGRES_PUBLISH_PORT:-5433}:5432"
 
 volumes:
-  firebird_data:
+  postgres_data:

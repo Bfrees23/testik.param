@@ -54,7 +54,9 @@ sync_html_mirrors() {
     "$ROOT/src/public/tm07-parametrization-kao.html|$ROOT/src/parametrization/kao/pages/tm07-parametrization-kao.html"
     "$ROOT/src/public/tm07-parametrization-kao-counters.html|$ROOT/src/parametrization/pages/tm07-parametrization-kao-counters.html"
     "$ROOT/src/public/tm07-workbench.html|$ROOT/src/parametrization/pages/tm07-workbench.html"
+    "$ROOT/src/public/order-1c.html|$ROOT/src/parametrization/pages/order-1c.html"
     "$ROOT/src/public/test-process-m90-15c.html|$ROOT/src/calibration/pages/test-process-m90-15c.html"
+    "$ROOT/src/public/pkd160.html|$ROOT/src/calibration/pages/pkd160.html"
   )
   local pair src dst
   for pair in "${pairs[@]}"; do

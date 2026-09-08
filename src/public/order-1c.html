@@ -18,14 +18,25 @@
     <div class="container-xl">
         <div class="bench-page-head">
             <h1 class="bench-hero-title">Заказ на производство</h1>
-            <p class="bench-page-lead">Введите номер заказа — страница выполнит OData-запросы через <code>/api/odata-1c.php</code>.</p>
+            <p class="bench-page-lead">Введите номер заказа или выберите из списка активных (кПроизводству) — страница выполнит OData-запросы через <code>/api/odata-1c.php</code>.</p>
         </div>
 
         <div class="card bench-card shadow-sm mb-4">
             <div class="card-body">
                 <div class="row g-3 align-items-end">
-                    <div class="col-md-6 col-lg-4">
-                        <label for="orderNumberInput" class="form-label mb-0">Номер заказа</label>
+                    <div class="col-md-6 col-lg-5">
+                        <label for="orderActiveSelect" class="form-label mb-0">Заказы к производству</label>
+                        <div class="input-group">
+                            <select id="orderActiveSelect" class="form-select">
+                                <option value="">— Загрузка… —</option>
+                            </select>
+                            <button type="button" id="orderRefreshListBtn" class="btn btn-outline-secondary" title="Обновить список">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="col-md-6 col-lg-4" id="orderManualNumberWrap">
+                        <label for="orderNumberInput" class="form-label mb-0">Номер (или вручную)</label>
                         <input type="text" id="orderNumberInput" class="form-control" placeholder="539 или ТМ00-000539" autocomplete="off">
                     </div>
                     <div class="col-md-auto">
@@ -41,6 +52,8 @@
                         </button>
                     </div>
                 </div>
+                <p class="small text-body-secondary mt-2 mb-0">В списке — заказы <strong>кПроизводству</strong> на корректор ТМ-07 или комплекс ПК-ТМ (остальная номенклатура скрыта). Уведомления — <strong>8:00–17:00 МСК</strong> (Пн–Пт).</p>
+                <div id="orderNewAlert" class="alert alert-success py-2 small mt-2 mb-0 d-none" role="status"></div>
                 <div class="mt-3 d-none">
                     <button type="button" id="orderParseFullUrlBtn" class="btn btn-outline-secondary">Разобрать</button>
                     <input type="text" id="orderOdataLink" class="form-control font-monospace small" readonly placeholder="">

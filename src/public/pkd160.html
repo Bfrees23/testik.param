@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ПКД-160 — калибратор давления</title>
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/css/bench-pages.css" rel="stylesheet">
+    <script src="/js/site-shell.js" defer></script>
+    <script src="/js/site-settings-cache.js" defer></script>
+</head>
+<body class="bench-page">
+
+    <header class="bench-header" data-bench-header></header>
+
+    <main class="bench-main">
+    <div class="container-xl">
+        <div class="bench-page-head mb-4">
+            <h1 class="bench-hero-title">ЭЛЕМЕР-ПКД-160</h1>
+            <p class="bench-page-lead">Отдельная страница работы только с калибратором давления: подключение USB, режим АРМ, заводские номера и опрос эталона.</p>
+            <span class="bench-note"><i class="bi bi-usb-symbol"></i> USB «ПК» · 9600 8N1 · адрес 1 · протокол АРМ (не Modbus)</span>
+        </div>
+
+        <div class="bench-op-workflow mb-4" role="navigation" aria-label="Порядок работы с ПКД">
+            <div class="bench-op-step">
+                <span class="bench-op-step-num" aria-hidden="true">1</span>
+                <div>
+                    <p class="bench-op-step-title">Подключить</p>
+                    <p class="bench-op-step-desc">Web Serial: обычно Microchip CDC <code>VID 0x04D8</code> / <code>PID 0x000A</code> (фильтр в админке).</p>
+                </div>
+            </div>
+            <div class="bench-op-step">
+                <span class="bench-op-step-num" aria-hidden="true">2</span>
+                <div>
+                    <p class="bench-op-step-title">Init ARM</p>
+                    <p class="bench-op-step-desc">Без режима АРМ прибор игнорирует запросы с ПК. На экране ПКД — управление с ПК.</p>
+                </div>
+            </div>
+            <div class="bench-op-step">
+                <span class="bench-op-step-num" aria-hidden="true">3</span>
+                <div>
+                    <p class="bench-op-step-title">Серийные номера</p>
+                    <p class="bench-op-step-desc">EEPROM <code>0x1E</code> — зав. номер прибора; SRAM <code>0x2C…0x38</code> — номера датчиков каналов 1–4.</p>
+                </div>
+            </div>
+            <div class="bench-op-step">
+                <span class="bench-op-step-num is-muted" aria-hidden="true">4</span>
+                <div>
+                    <p class="bench-op-step-title">Опрос / выход</p>
+                    <p class="bench-op-step-desc">Snapshot эталона; Exit ARM перед отключением (или «влево» на панели прибора).</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4">
+            <div class="col-lg-5">
+                <div class="card bench-card h-100">
+                    <div class="card-header d-flex align-items-center gap-2">
+                        <i class="bi bi-speedometer2 text-secondary"></i>
+                        <span class="fw-semibold">Подключение и АРМ</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="d-flex gap-2 flex-wrap mb-3">
+                            <button id="pkdConnectBtn" type="button" class="btn btn-primary btn-sm">Подключить</button>
+                            <button id="pkdDisconnectBtn" type="button" class="btn btn-outline-danger btn-sm">Отключить</button>
+                            <button id="pkdInitArmBtn" type="button" class="btn btn-outline-primary btn-sm">Init ARM</button>
+                            <button id="pkdExitArmBtn" type="button" class="btn btn-outline-secondary btn-sm">Exit ARM</button>
+                        </div>
+                        <p class="small mb-3">ARM: <strong id="pkdArmState">off</strong></p>
+
+                        <div class="d-flex gap-2 flex-wrap mb-3">
+                            <button id="pkdReadSerialBtn" type="button" class="btn btn-success btn-sm">
+                                <i class="bi bi-upc-scan me-1"></i>Считать серийные номера
+                            </button>
+                            <button id="pkdReadBtn" type="button" class="btn btn-outline-success btn-sm">Snapshot давления</button>
+                            <button id="pkdStartPollBtn" type="button" class="btn btn-outline-success btn-sm">Автоопрос</button>
+                            <button id="pkdStopPollBtn" type="button" class="btn btn-outline-warning btn-sm">Стоп</button>
+                        </div>
+
+                        <div class="row g-2 mb-2">
+                            <div class="col-8">
+                                <label for="pkdDacInput" class="form-label small mb-0">DAC(I), мА</label>
+                                <input id="pkdDacInput" class="form-control form-control-sm" type="number" step="0.00001" value="4.00000">
+                            </div>
+                            <div class="col-4 d-flex align-items-end">
+                                <button id="pkdSetDacBtn" type="button" class="btn btn-outline-primary btn-sm w-100">Установить</button>
+                            </div>
+                        </div>
+                        <p class="form-text small mb-0">Полный стенд с корректором/M90/МИТ — <a href="/test-process-m90-15c.html">калибровка</a>.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-lg-7">
+                <div class="card bench-card mb-4">
+                    <div class="card-header d-flex align-items-center gap-2">
+                        <i class="bi bi-hash text-secondary"></i>
+                        <span class="fw-semibold">Серийные номера</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered align-middle mb-0">
+                                <thead class="table-light">
+                                    <tr><th>Параметр</th><th>Адрес</th><th>Значение</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td>Идентификатор ППЗУ</td>
+                                        <td><code>0x00</code></td>
+                                        <td class="font-monospace" id="pkdEepromId">—</td>
+                                    </tr>
+                                    <tr>
+                                        <td><strong>Зав. номер прибора</strong></td>
+                                        <td><code>0x1E</code></td>
+                                        <td class="font-monospace fs-5 fw-semibold" id="pkdDeviceSerial">—</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Зав. номер датчика, канал 1</td>
+                                        <td><code>0x2C</code></td>
+                                        <td class="font-monospace" id="pkdDutSerial1">—</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Зав. номер датчика, канал 2</td>
+                                        <td><code>0x30</code></td>
+                                        <td class="font-monospace" id="pkdDutSerial2">—</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Зав. номер датчика, канал 3</td>
+                                        <td><code>0x34</code></td>
+                                        <td class="font-monospace" id="pkdDutSerial3">—</td>
+                                    </tr>
+                                    <tr>
+                                        <td>Зав. номер датчика, канал 4</td>
+                                        <td><code>0x38</code></td>
+                                        <td class="font-monospace" id="pkdDutSerial4">—</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="small text-body-secondary mb-0 mt-2">Чтение командой <code>10</code> после Init ARM. Источник: «ПКД-160 Автоматизированное рабочее место».</p>
+                    </div>
+                </div>
+
+                <div class="card bench-card">
+                    <div class="card-header d-flex align-items-center gap-2">
+                        <i class="bi bi-graph-up text-secondary"></i>
+                        <span class="fw-semibold">Измерения (snapshot)</span>
+                    </div>
+                    <div class="card-body p-0">
+                        <div class="table-responsive">
+                            <table class="table table-sm table-striped table-bordered align-middle mb-0">
+                                <thead class="table-light"><tr><th>Параметр</th><th>Значение</th><th>Параметр</th><th>Значение</th></tr></thead>
+                                <tbody>
+                                    <tr><td>АКБ (0)</td><td id="pkdBattery">—</td><td>P эталон (1), кПа</td><td id="pkdRefPressure">—</td></tr>
+                                    <tr><td>P эталон пр. (2)</td><td id="pkdRefPressureConv">—</td><td>P изм ch1 (9)</td><td id="pkdPCh1">—</td></tr>
+                                    <tr><td>Погр. ch1 (13)</td><td id="pkdErrCh1">—</td><td>Реле1 / реле2</td><td><span id="pkdRelay1">—</span> / <span id="pkdRelay2">—</span></td></tr>
+                                    <tr><td>Статус АКБ</td><td id="pkdAcc">—</td><td>АВАРИЯ</td><td id="pkdAlarm">—</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bench-card bench-log-card mt-4">
+            <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+                <span class="fw-semibold"><i class="bi bi-journal-text me-1"></i>Журнал ПКД</span>
+                <div class="d-flex align-items-center gap-3">
+                    <button type="button" id="clearLogBtn" class="btn btn-outline-secondary btn-sm">Очистить</button>
+                    <div class="form-check mb-0">
+                        <input class="form-check-input" id="autoScrollLog" type="checkbox" checked>
+                        <label class="form-check-label small" for="autoScrollLog">Автопрокрутка</label>
+                    </div>
+                </div>
+            </div>
+            <div class="card-body p-0">
+                <div id="log" class="log-container border-0 rounded-0 p-3 small font-monospace" style="min-height:12rem;max-height:24rem;overflow:auto;background:var(--bs-tertiary-bg,#f8f9fa)"></div>
+            </div>
+        </div>
+    </div>
+    </main>
+
+    <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script src="/js/calibration/serial-direct.js"></script>
+    <script src="/js/calibration/pkd160-panel.js"></script>
+    <script src="/js/site-nav-auth.js" defer></script>
+</body>
+</html>

@@ -142,23 +142,45 @@ ODATA_1C_PASSWORD=...
 
 | Режим | Когда |
 |-------|--------|
-| **Firebird** | `` в `.env`, схема из `database/` (см. ниже) |
-| **SQLite** | Fallback: `` (создаётся автоматически) |
+| **PostgreSQL** | По умолчанию в Docker (`TM07_DB_DRIVER=pgsql`), схема `database/schema.postgres.sql` |
+| **Firebird** | Откат: `TM07_DB_DRIVER=firebird` + `FIREBIRD_*` (legacy, см. `database/schema.firebird.sql`) |
+| **SQLite** | Только без PG/FB: `data/tm07_bench.sqlite` |
 
-### Установка схемы Firebird
+### Установка схемы PostgreSQL
 
-**По умолчанию (Docker):** при `docker compose up -d` поднимается сервис `firebird`, база `tm07_bench.fdb` и схема из `database/schema.firebird.sql` создаются автоматически. В `.env`:
+**По умолчанию (Docker):** при `docker compose up -d --build` поднимается сервис `postgres`, init из `database/schema.postgres.sql`. В `.env`:
 
 ```env
-FIREBIRD_HOST=firebird
-FIREBIRD_DATABASE=/firebird/data/tm07_bench.fdb
+TM07_DB_DRIVER=pgsql
+POSTGRES_HOST=postgres
+POSTGRES_DB=tm07
+POSTGRES_USER=tm07
+POSTGRES_PASSWORD=tm07
 ```
 
-Проверка: `` → `"driver":"firebird"`.
+Проверка: `GET /api/bench-db-status.php?action=status` → `"driver":"pgsql"`, `"postgresReachable":true`.
 
-Сброс БД: ``
+Сброс БД:
 
-**Windows / IBExpert (опционально):** см. `` — без `COMMIT;` в SQL-скриптах.
+```bash
+docker compose down
+docker volume rm tm07-bench_postgres_data
+docker compose up -d --build
+```
+
+**Миграция данных с Firebird/SQLite:**
+
+```bash
+# Источник Firebird (orphan/внешний контейнер или TM07_MIGRATE_SOURCE=sqlite)
+docker compose exec -e TM07_MIGRATE_SOURCE=firebird \
+  -e FIREBIRD_HOST=firebird -e FIREBIRD_DATABASE=/firebird/data/tm07_bench.fdb \
+  -e FIREBIRD_USER=SYSDBA -e FIREBIRD_PASSWORD=masterkey \
+  php php /app/database/migrate_to_postgres.php --wipe
+# из локального SQLite (том ./data):
+# docker compose exec -e TM07_MIGRATE_SOURCE=sqlite php php /app/database/migrate_to_postgres.php
+```
+
+**Windows / IBExpert (legacy Firebird):** см. `database/schema.firebird.ibexpert.sql` — без `COMMIT;` в SQL-скриптах.
 
 ### API
 

@@ -65,6 +65,22 @@
         odataInflight = null;
     }
 
+    function wsHeaders() {
+        const h = {};
+        try {
+            const fp =
+                (window.TM07_BENCH_EVENTS &&
+                    typeof window.TM07_BENCH_EVENTS.workstationFingerprint === 'function' &&
+                    window.TM07_BENCH_EVENTS.workstationFingerprint()) ||
+                localStorage.getItem('tm07_workstation_fp_v1') ||
+                '';
+            if (fp) {
+                h['X-Workstation-Fingerprint'] = String(fp);
+            }
+        } catch (_e) {}
+        return h;
+    }
+
     async function getPublicSettings(force) {
         if (!force) {
             const cached = readCache(KEY_PUBLIC);
@@ -75,7 +91,10 @@
                 return publicInflight;
             }
         }
-        publicInflight = fetch('/api/admin-settings.php?action=public', { credentials: 'same-origin' })
+        publicInflight = fetch('/api/admin-settings.php?action=public', {
+            credentials: 'same-origin',
+            headers: wsHeaders(),
+        })
             .then(function (r) {
                 return r.json();
             })
@@ -103,7 +122,10 @@
                 return benchInflight;
             }
         }
-        benchInflight = fetch('/api/admin-settings.php?action=bench', { credentials: 'same-origin' })
+        benchInflight = fetch('/api/admin-settings.php?action=bench', {
+            credentials: 'same-origin',
+            headers: wsHeaders(),
+        })
             .then(function (r) {
                 return r.json().then(function (j) {
                     return { status: r.status, j: j };

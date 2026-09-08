@@ -329,8 +329,23 @@ try {
             exit;
         }
         $pdo = counters_db();
-        $st = $pdo->query('SELECT id, name, serial FROM counters ORDER BY name');
-        $list = $st->fetchAll();
+        $st = $pdo->query('SELECT id, name, serial, parameters FROM counters ORDER BY name');
+        $list = [];
+        foreach ($st->fetchAll() as $row) {
+            $params = json_decode((string) ($row['parameters'] ?? ''), true);
+            if (!is_array($params)) {
+                $params = [];
+            }
+            $list[] = [
+                'id' => (int) $row['id'],
+                'name' => $row['name'],
+                'serial' => $row['serial'],
+                'parameters' => $params,
+                'typeCode' => isset($params['101']) ? (string) $params['101'] : null,
+                'qmin' => isset($params['109']) ? (string) $params['109'] : null,
+                'qmax' => isset($params['111']) ? (string) $params['111'] : null,
+            ];
+        }
         echo json_encode(['success' => true, 'counters' => $list, 'source' => 'sqlite'], JSON_UNESCAPED_UNICODE);
         exit;
     }
@@ -401,7 +416,7 @@ try {
             echo json_encode(['success' => false, 'error' => 'Invalid payload'], JSON_UNESCAPED_UNICODE);
             exit;
         }
-        auth_require_admin();
+        auth_require_admin_role(AUTH_ROLE_MONITOR);
         $name = trim((string)$incoming['name']);
         $serial = isset($incoming['serial']) ? trim((string)$incoming['serial']) : null;
         $parameters = isset($incoming['parameters']) && is_array($incoming['parameters']) ? $incoming['parameters'] : [];
@@ -443,7 +458,7 @@ try {
             echo json_encode(['success' => false, 'error' => 'Invalid id'], JSON_UNESCAPED_UNICODE);
             exit;
         }
-        auth_require_admin();
+        auth_require_admin_role(AUTH_ROLE_MONITOR);
         $pdo = counters_db();
         $st = $pdo->prepare('DELETE FROM counters WHERE id = :id');
         $st->execute([':id' => $id]);
@@ -453,7 +468,7 @@ try {
 
     // For now we only expose read‑only actions. Extend with POST/PUT as needed.
     if ($action === 'import-docx' && $method === 'POST') {
-        auth_require_admin();
+        auth_require_admin_role(AUTH_ROLE_MONITOR);
         $docxPath = counters_repo_root() . '/Параметризация (1).docx';
         if (!is_readable($docxPath)) {
             http_response_code(404);

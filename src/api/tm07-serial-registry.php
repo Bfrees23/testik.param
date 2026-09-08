@@ -23,38 +23,6 @@ try {
     $pdo = bench_pdo();
     $driver = bench_db_driver();
 
-    if ($action === 'peek' || $action === 'allocate') {
-        $orderRaw = trim((string) ($body['orderNumber'] ?? ''));
-        if ($orderRaw !== '') {
-            try {
-                $xlsxHit = serial_xlsx_lookup($orderRaw, $kind);
-            } catch (Throwable) {
-                $xlsxHit = null;
-            }
-            if ($xlsxHit) {
-                try {
-                    bench_require_operator_session();
-                    if ($action === 'allocate') {
-                        bench_remember_existing_serial($pdo, $xlsxHit, $kind, bench_order_number_canonical($orderRaw), $body);
-                    }
-                } catch (Throwable) {
-                    // номер из таблицы отдаём даже без оператора / если БД уже знает этот S/N
-                }
-                $meta = bench_serial_kind_meta($kind);
-                $result = bench_serial_result(
-                    $meta,
-                    $xlsxHit,
-                    $kind,
-                    $action === 'peek',
-                    true,
-                    'xlsx',
-                    bench_order_number_canonical($orderRaw)
-                );
-                bench_json_response(array_merge(['ok' => true, 'backend' => $driver], $result));
-            }
-        }
-    }
-
     if ($action === 'peek') {
         bench_require_operator_session();
         $result = bench_peek_serial($pdo, $kind, $date, $body);

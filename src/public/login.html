@@ -19,12 +19,26 @@
                 <div id="loginError" class="alert alert-danger py-2 small d-none" role="alert"></div>
                 <form id="loginForm" novalidate>
                     <div class="mb-3">
+                        <label for="login" class="form-label">Логин</label>
+                        <input type="text" class="form-control" id="login" autocomplete="username" required autofocus>
+                    </div>
+                    <div class="mb-3">
                         <label for="password" class="form-label">Пароль</label>
-                        <input type="password" class="form-control" id="password" autocomplete="current-password" required autofocus>
+                        <input type="password" class="form-control" id="password" autocomplete="current-password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label d-block">Роль</label>
+                        <div class="btn-group w-100" role="group" aria-label="Роль администратора">
+                            <input type="radio" class="btn-check" name="adminRole" id="roleConfig" value="config" checked>
+                            <label class="btn btn-outline-primary" for="roleConfig">Настройка рабочего места</label>
+                            <input type="radio" class="btn-check" name="adminRole" id="roleMonitor" value="monitor">
+                            <label class="btn btn-outline-primary" for="roleMonitor">Мониторинг</label>
+                        </div>
                     </div>
                     <button type="submit" class="btn btn-primary w-100" id="submitBtn">Войти</button>
                 </form>
-                <p class="small text-muted mt-3 mb-0">Пароль: <code>ADMIN_PASSWORD</code> или <code>admin</code> по умолчанию.</p>
+                <p class="small text-muted mt-3 mb-0">Единственная точка входа администратора (кнопка на главной скрыта.</p>
+                <p class="small text-muted mb-0">Логин: <code>ADMIN_LOGIN</code> или <code>admin</code> по умолчанию. Пароль: <code>ADMIN_PASSWORD</code> или <code>admin</code> по умолчанию.</p>
                 <p class="small mt-2 mb-0"><a href="/index.html">← На главную</a></p>
             </div>
         </div>
@@ -34,15 +48,17 @@
             e.preventDefault();
             const err = document.getElementById('loginError');
             const btn = document.getElementById('submitBtn');
+            const login = document.getElementById('login').value.trim();
             const pwd = document.getElementById('password').value;
             err.classList.add('d-none');
             btn.disabled = true;
             try {
+                const role = document.querySelector('input[name="adminRole"]:checked')?.value || 'config';
                 const r = await fetch('/api/auth.php?action=login', {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ password: pwd }),
+                    body: JSON.stringify({ login: login, password: pwd, role: role }),
                 });
                 const j = await r.json();
                 if (!j.success) {

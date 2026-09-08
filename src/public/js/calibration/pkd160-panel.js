@@ -9,6 +9,7 @@
     const initArmBtn = document.getElementById('pkdInitArmBtn');
     const exitArmBtn = document.getElementById('pkdExitArmBtn');
     const readBtn = document.getElementById('pkdReadBtn');
+    const readSerialBtn = document.getElementById('pkdReadSerialBtn');
     const startPollBtn = document.getElementById('pkdStartPollBtn');
     const stopPollBtn = document.getElementById('pkdStopPollBtn');
     const setDacBtn = document.getElementById('pkdSetDacBtn');
@@ -17,6 +18,16 @@
     if (!connectBtn) {
         return;
     }
+
+    /** EEPROM / SRAM адреса из «ПКД-160 Автоматизированное рабочее место» */
+    const PKD_EEPROM_ID = 0x00; // идентификатор ППЗУ (WORD), ожидание 0x55AA
+    const PKD_EEPROM_DEVICE_SN = 0x1e; // заводской номер прибора (WORD)
+    const PKD_SRAM_DUT_SN = [0x2c, 0x30, 0x34, 0x38]; // зав. номера датчиков каналов 1–4 (DWORD)
+    /** Тип операнда в кадре 10/11 (как у ИКСУ/UAIL): 1=BYTE/статус, 2=WORD, 3=FLOAT, 4=DWORD */
+    const PKD_TYPE_BYTE = 1;
+    const PKD_TYPE_WORD = 2;
+    const PKD_TYPE_FLOAT = 3;
+    const PKD_TYPE_DWORD = 4;
 
     const PKD_DECIMALS = 5;
     /** Отображение измерений ПКД в таблице и в журнале */
@@ -53,8 +64,8 @@
                 const vidHex =
                     p.vendorIdHex != null && String(p.vendorIdHex).trim() !== ''
                         ? p.vendorIdHex
-                        : j.settings.usb && j.settings.usb.vendorIdHex
-                          ? j.settings.usb.vendorIdHex
+                        : settings.usb && settings.usb.vendorIdHex
+                          ? settings.usb.vendorIdHex
                           : '0x04D8';
                 const pidHex = p.productIdHex || '0x000A';
                 const vid = parseInt(String(vidHex).replace(/^0x/i, ''), 16);
@@ -77,6 +88,14 @@
     const relay2El = document.getElementById('pkdRelay2');
     const accEl = document.getElementById('pkdAcc');
     const alarmEl = document.getElementById('pkdAlarm');
+    const eepromIdEl = document.getElementById('pkdEepromId');
+    const deviceSnEl = document.getElementById('pkdDeviceSerial');
+    const dutSnEls = [
+        document.getElementById('pkdDutSerial1'),
+        document.getElementById('pkdDutSerial2'),
+        document.getElementById('pkdDutSerial3'),
+        document.getElementById('pkdDutSerial4'),
+    ];
 
     const logEl = document.getElementById('log');
     const autoScrollLog = document.getElementById('autoScrollLog');
@@ -121,7 +140,9 @@
             this.pending = null;
             this.armInitialized = false;
             this.onDataReceived = (chunk) => {
+                // Убрать ведущий 0xFF/мусор до начала кадра
                 this.buffer += chunk;
+                this.buffer = this.buffer.replace(/^[^\r\n:!]+/, '');
                 this.processBuffer();
             };
         }
@@ -152,10 +173,12 @@
         }
 
         parseResponse(answer) {
-            if (!answer.startsWith('!') || !answer.endsWith('\r')) {
-                throw new Error('bad response format');
+            // Нормализуем конец кадра (\r / \n / \r\n)
+            const norm = String(answer).replace(/\r\n/g, '\r').replace(/\n/g, '\r');
+            if (!norm.startsWith('!') || !norm.endsWith('\r')) {
+                throw new Error('bad response format: ' + JSON.stringify(answer));
             }
-            const raw = answer.slice(1, -1);
+            const raw = norm.slice(1, -1);
             const lastSep = raw.lastIndexOf(';');
             if (lastSep < 0) {
                 throw new Error('no crc');
@@ -170,20 +193,30 @@
             const parts = payload.split(';').filter(Boolean);
             const addr = parseInt(parts[0], 10);
             const values = parts.slice(1);
-            return { addr, values };
+            return { addr, values, raw: norm };
         }
 
         processBuffer() {
+            // Ищем кадр !…\r или !…\n
             while (this.buffer.includes('!')) {
                 const start = this.buffer.indexOf('!');
-                const rest = this.buffer.slice(start);
-                const end = rest.indexOf('\r');
+                // Мусор до '!' (в т.ч. 0xFF)
+                if (start > 0) {
+                    this.buffer = this.buffer.slice(start);
+                }
+                const rest = this.buffer;
+                let end = rest.search(/[\r\n]/);
                 if (end === -1) {
                     break;
                 }
-                const answer = rest.slice(0, end + 1);
-                this.buffer = this.buffer.slice(start + end + 1);
+                let endLen = 1;
+                if (rest[end] === '\r' && rest[end + 1] === '\n') {
+                    endLen = 2;
+                }
+                const answer = rest.slice(0, end + endLen);
+                this.buffer = this.buffer.slice(end + endLen);
                 if (!this.pending) {
+                    console.warn('[PKD] ответ без ожидающей команды:', JSON.stringify(answer));
                     continue;
                 }
                 const { resolve, reject } = this.pending;
@@ -209,7 +242,16 @@
                     if (this.pending) {
                         this.pending = null;
                     }
-                    reject(new Error('timeout'));
+                    const buf = this.buffer;
+                    this.buffer = '';
+                    reject(
+                        new Error(
+                            'timeout (нет ответа !…\\r). buf=' +
+                                JSON.stringify(buf) +
+                                ' len=' +
+                                buf.length
+                        )
+                    );
                 }, timeoutMs);
 
                 this.pending = {
@@ -229,43 +271,127 @@
                     if (this.pending) {
                         const p = this.pending;
                         this.pending = null;
+                        clearTimeout(timer);
                         p.reject(e);
                     }
                 }
             });
         }
 
+        /** Код $N в ответе UAIL: $0 = OK, иначе ошибка прибора. */
+        assertOkOrValue(res, ctx) {
+            const v0 = res && res.values && res.values[0] != null ? String(res.values[0]) : '';
+            if (/^\$\d+$/.test(v0)) {
+                if (v0 === '$0') {
+                    return { ok: true, code: 0, values: res.values };
+                }
+                throw new Error((ctx || 'PKD') + ': код прибора ' + v0);
+            }
+            return { ok: true, code: null, values: res.values };
+        }
+
         async initArmMode() {
-            await this.sendCommand(11, [1, 0, 1, 1]);
+            const res = await this.sendCommand(11, [1, 0, PKD_TYPE_BYTE, 1]);
+            this.assertOkOrValue(res, 'Init ARM');
             this.armInitialized = true;
+            await new Promise((r) => setTimeout(r, 300));
         }
 
         async exitArmMode() {
-            await this.sendCommand(11, [200, 0, 1, 200]);
+            const res = await this.sendCommand(11, [200, 0, PKD_TYPE_BYTE, 200]);
+            this.assertOkOrValue(res, 'Exit ARM');
             this.armInitialized = false;
         }
 
         async readMeasurement(ch) {
             const res = await this.sendCommand(1, [ch]);
-            const v = parseFloat((res.values[0] || '').replace(',', '.'));
+            this.assertOkOrValue(res, 'cmd1 ch' + ch);
+            const v = parseFloat(String(res.values[0] || '').replace(',', '.'));
             if (Number.isNaN(v)) {
-                throw new Error(`invalid measurement for ch ${ch}`);
+                throw new Error(`invalid measurement for ch ${ch}: ${res.values[0]}`);
+            }
+            return v;
+        }
+
+        /**
+         * Чтение параметра командой 10.
+         * dataType: 1=BYTE/статус, 2=WORD, 3=FLOAT, 4=DWORD (по аналогии с ИКСУ/UAIL).
+         */
+        async readParam(addr, dataType = PKD_TYPE_BYTE) {
+            const res = await this.sendCommand(10, [addr, 0, dataType]);
+            this.assertOkOrValue(res, 'cmd10 @0x' + addr.toString(16));
+            const raw = String(res.values[0] || '').replace(',', '.');
+            if (dataType === PKD_TYPE_FLOAT) {
+                const f = parseFloat(raw);
+                if (Number.isNaN(f)) {
+                    throw new Error(`invalid float @0x${addr.toString(16)}: ${raw}`);
+                }
+                return f;
+            }
+            const v = parseInt(raw, 10);
+            if (Number.isNaN(v)) {
+                throw new Error(`invalid int @0x${addr.toString(16)}: ${raw}`);
             }
             return v;
         }
 
         async readStatus(addr) {
-            const res = await this.sendCommand(10, [addr, 0, 1]);
-            const v = parseInt(res.values[0], 10);
-            if (Number.isNaN(v)) {
-                throw new Error(`invalid status 0x${addr.toString(16)}`);
+            return this.readParam(addr, PKD_TYPE_BYTE);
+        }
+
+        /** Зав. номер прибора (EEPROM WORD 0x1E) + id ППЗУ + S/N датчиков каналов 1–4. */
+        async readSerials() {
+            // Тип 2=WORD для EEPROM; если прошивка ждёт 1 — пробуем запасной вариант
+            async function readWord(dev, addr) {
+                try {
+                    return await dev.readParam(addr, PKD_TYPE_WORD);
+                } catch (e1) {
+                    try {
+                        return await dev.readParam(addr, PKD_TYPE_BYTE);
+                    } catch (e2) {
+                        throw e1;
+                    }
+                }
             }
-            return v;
+            async function readDword(dev, addr) {
+                try {
+                    return await dev.readParam(addr, PKD_TYPE_DWORD);
+                } catch (e1) {
+                    try {
+                        return await dev.readParam(addr, PKD_TYPE_WORD);
+                    } catch (e2) {
+                        try {
+                            return await dev.readParam(addr, PKD_TYPE_BYTE);
+                        } catch (e3) {
+                            throw e1;
+                        }
+                    }
+                }
+            }
+
+            const eepromId = await readWord(this, PKD_EEPROM_ID);
+            const deviceSerial = await readWord(this, PKD_EEPROM_DEVICE_SN);
+            const dutSerials = [];
+            for (let i = 0; i < PKD_SRAM_DUT_SN.length; i += 1) {
+                dutSerials.push(await readDword(this, PKD_SRAM_DUT_SN[i]));
+            }
+            return { eepromId, deviceSerial, dutSerials };
         }
 
         async setDacCurrent(mA) {
-            await this.sendCommand(11, [45, 0, 3, mA]);
+            const res = await this.sendCommand(11, [45, 0, PKD_TYPE_FLOAT, mA]);
+            this.assertOkOrValue(res, 'DAC(I)');
         }
+    }
+
+    function fmtHexWord(n) {
+        if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
+        return '0x' + (n >>> 0).toString(16).toUpperCase().padStart(4, '0');
+    }
+
+    function fmtSerial(n) {
+        if (typeof n !== 'number' || !Number.isFinite(n)) return '—';
+        return String(n);
     }
 
     function setArmState(on) {
@@ -292,6 +418,33 @@
         if (relay2El) relay2El.textContent = '—';
         if (accEl) accEl.textContent = '—';
         if (alarmEl) alarmEl.textContent = '—';
+        if (eepromIdEl) eepromIdEl.textContent = '—';
+        if (deviceSnEl) deviceSnEl.textContent = '—';
+        dutSnEls.forEach(function (el) {
+            if (el) el.textContent = '—';
+        });
+    }
+
+    function paintSerials(info) {
+        if (eepromIdEl) {
+            eepromIdEl.textContent = fmtHexWord(info.eepromId) + (info.eepromId === 0x55aa ? ' (ok)' : '');
+        }
+        if (deviceSnEl) {
+            deviceSnEl.textContent = fmtSerial(info.deviceSerial);
+        }
+        (info.dutSerials || []).forEach(function (sn, i) {
+            if (dutSnEls[i]) dutSnEls[i].textContent = fmtSerial(sn);
+        });
+    }
+
+    async function readSerialSnapshot() {
+        if (!pkd || !pkd.isConnected) {
+            throw new Error('not connected');
+        }
+        await ensureArm();
+        const info = await pkd.readSerials();
+        paintSerials(info);
+        return info;
     }
 
     async function ensureArm() {
@@ -335,6 +488,23 @@
 
     connectBtn.addEventListener('click', async () => {
         try {
+            // Уже подключены — не открывать порт повторно
+            if (pkd && pkd.isConnected) {
+                log('уже подключено');
+                return;
+            }
+            if (window.__benchPkd && window.__benchPkd.isConnected) {
+                pkd = window.__benchPkd;
+                log('используем уже открытый порт');
+                return;
+            }
+            if (window.__benchPkd) {
+                try {
+                    await window.__benchPkd.disconnect();
+                } catch (_e) {}
+                window.__benchPkd = null;
+            }
+
             const opts = await resolvePkdConnectOptions();
             pkd = new PKD160Device(opts.addr);
             await pkd.connect(opts.baud, { filters: opts.filters, skipRequestFilters: true });
@@ -404,6 +574,25 @@
             log(`read error: ${e.message}`);
         }
     });
+
+    if (readSerialBtn) {
+        readSerialBtn.addEventListener('click', async () => {
+            try {
+                const info = await readSerialSnapshot();
+                log(
+                    'S/N прибора=' +
+                        fmtSerial(info.deviceSerial) +
+                        ', ППЗУ=' +
+                        fmtHexWord(info.eepromId) +
+                        ', датчики=[' +
+                        (info.dutSerials || []).map(fmtSerial).join(', ') +
+                        ']'
+                );
+            } catch (e) {
+                log(`serial read error: ${e.message}`);
+            }
+        });
+    }
 
     startPollBtn.addEventListener('click', () => {
         stopPolling();

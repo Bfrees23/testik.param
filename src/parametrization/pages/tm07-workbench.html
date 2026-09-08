@@ -19,86 +19,61 @@
         <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 bench-page-head">
             <div>
                 <h1 class="bench-hero-title">Рабочее место</h1>
-                <p class="bench-page-lead">Оператор → заказ → сборка корректора (S/N) → параметризация</p>
+                <p class="bench-page-lead">1 · Заказ → 2 · Датчики и S/N → 3 · КАО и параметризация</p>
             </div>
-            <a href="/tm07-parametrization-kao.html" class="btn btn-outline-secondary btn-sm flex-shrink-0">Полная параметризация</a>
         </div>
 
         <div class="bench-op-workflow mb-4" role="navigation" aria-label="Порядок работы">
-            <div class="bench-op-step is-current">
+            <div class="bench-op-step is-current" data-wb-step="1">
                 <span class="bench-op-step-num" aria-hidden="true">1</span>
                 <div>
-                    <p class="bench-op-step-title">Оператор и заказ</p>
-                    <p class="bench-op-step-desc">Войдите как оператор и откройте сессию по номеру заказа из 1С.</p>
+                    <p class="bench-op-step-title">Заказ из 1С</p>
+                    <p class="bench-op-step-desc">Войдите как оператор и откройте сессию по номеру заказа.</p>
                 </div>
             </div>
-            <div class="bench-op-step">
+            <div class="bench-op-step" data-wb-step="2">
                 <span class="bench-op-step-num is-muted" aria-hidden="true">2</span>
                 <div>
-                    <p class="bench-op-step-title">Сборка и шильд</p>
-                    <p class="bench-op-step-desc">S/N корректора, печать шильдика и подтверждение сборки.</p>
+                    <p class="bench-op-step-title">Датчики и сборка</p>
+                    <p class="bench-op-step-desc">S/N корректора, настройка датчиков, QR/серийники, шильд.</p>
                 </div>
             </div>
-            <div class="bench-op-step">
+            <div class="bench-op-step" data-wb-step="3">
                 <span class="bench-op-step-num is-muted" aria-hidden="true">3</span>
                 <div>
-                    <p class="bench-op-step-title">КАО</p>
-                    <p class="bench-op-step-desc">Подключите корректор по USB (после подтверждения сборки).</p>
-                </div>
-            </div>
-            <div class="bench-op-step">
-                <span class="bench-op-step-num is-muted" aria-hidden="true">4</span>
-                <div>
-                    <p class="bench-op-step-title">QR датчики</p>
-                    <p class="bench-op-step-desc">Отсканируйте штрихкоды MIDA с каждого датчика комплекта.</p>
-                </div>
-            </div>
-            <div class="bench-op-step">
-                <span class="bench-op-step-num is-muted" aria-hidden="true">5</span>
-                <div>
-                    <p class="bench-op-step-title">Счётчик</p>
-                    <p class="bench-op-step-desc">Введите серийный номер счётчика газа.</p>
-                </div>
-            </div>
-            <div class="bench-op-step">
-                <span class="bench-op-step-num is-muted" aria-hidden="true">6</span>
-                <div>
                     <p class="bench-op-step-title">Параметризация</p>
-                    <p class="bench-op-step-desc">Запись всех параметров в корректор.</p>
-                </div>
-            </div>
-            <div class="bench-op-step">
-                <span class="bench-op-step-num is-muted" aria-hidden="true">7</span>
-                <div>
-                    <p class="bench-op-step-title">Сверка</p>
-                    <p class="bench-op-step-desc">Опрос прибора и сравнение с заказом.</p>
-                </div>
-            </div>
-            <!-- Паспорта DOCX временно скрыты: вернуть — убрать d-none и PASSPORTS_ENABLED=true в tm07-passport-generate.js -->
-            <div class="bench-op-step d-none" data-wb-passport-step="1" aria-hidden="true">
-                <span class="bench-op-step-num is-muted" aria-hidden="true">8</span>
-                <div>
-                    <p class="bench-op-step-title">Паспорт</p>
-                    <p class="bench-op-step-desc">Формирование и скачивание паспортов DOCX.</p>
+                    <p class="bench-op-step-desc">КАО, замки, прошивка и запись всех параметров.</p>
                 </div>
             </div>
         </div>
 
         <div class="card bench-card mb-4">
-            <div class="card-header fw-semibold"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Заказ из 1С</div>
+            <div class="card-header fw-semibold"><i class="bi bi-file-earmark-spreadsheet me-1"></i>Пункт 1 · Заказ из 1С</div>
             <div class="card-body">
                 <div class="row g-3 align-items-end">
-                    <div class="col-md-4 col-lg-3">
-                        <label class="form-label fw-semibold" for="paramOrder1cNumber">Номер заказа</label>
-                        <input type="text" class="form-control form-control-lg" id="paramOrder1cNumber" placeholder="ТМ00-000000" autocomplete="off" spellcheck="false">
+                    <div class="col-md-5 col-lg-4">
+                        <label class="form-label fw-semibold" for="paramOrder1cSelect">Заказ к производству</label>
+                        <div class="input-group input-group-lg">
+                            <select class="form-select" id="paramOrder1cSelect" aria-label="Активные заказы 1С">
+                                <option value="">— Загрузка… —</option>
+                            </select>
+                            <button type="button" class="btn btn-outline-secondary" id="paramOrder1cRefreshList" title="Обновить список из 1С">
+                                <i class="bi bi-arrow-clockwise"></i>
+                            </button>
+                        </div>
+                        <div id="paramOrder1cManualWrap" class="mt-2 d-none">
+                            <label class="form-label small mb-0" for="paramOrder1cNumber">Номер вручную</label>
+                            <input type="text" class="form-control" id="paramOrder1cNumber" placeholder="ТМ00-000000" autocomplete="off" spellcheck="false">
+                        </div>
+                        <input type="hidden" id="paramOrder1cNumberHidden" value="">
                     </div>
                     <div class="col-md-auto d-flex flex-wrap gap-2 wb-hero-actions align-items-center">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramOrder1cLoad" title="Повторная загрузка из 1С"><i class="bi bi-cloud-download me-1"></i>Повторить</button>
-                        <button type="button" class="btn btn-outline-primary btn-sm" id="paramOrder1cFromCache" title="Подставить последний заказ из кэша браузера"><i class="bi bi-clock-history me-1"></i>Из кэша</button>
                         <span id="paramOrder1cOrderStatus" class="badge rounded-pill text-bg-secondary" role="status">Статус: —</span>
+                        <span id="paramOrder1cNewBadge" class="badge rounded-pill text-bg-success d-none" role="status">новый заказ</span>
                     </div>
                 </div>
-                <p class="small text-body-secondary mt-2 mb-0">Введите номер и нажмите <strong>«Войти в заказ»</strong> — заказ загрузится из 1С и откроется новая сессия. При сбое 1С — «Повторить» или «Из кэша».</p>
+                <p class="small text-body-secondary mt-2 mb-0">В списке — заказы <strong>кПроизводству</strong> только на <strong>корректор ТМ-07</strong> или <strong>комплекс ПК-ТМ</strong> (по номенклатуре). Уведомления — <strong>8:00–17:00 МСК</strong> (Пн–Пт).</p>
+                <div id="paramOrder1cNewAlert" class="alert alert-success py-2 small mt-2 mb-0 d-none" role="status"></div>
                 <p id="paramOrder1cStatus" class="small param-order-status mt-2 mb-0" role="status"></p>
                 <div id="paramOrder1cContents" class="wb-order-contents d-none" role="status">
                     <div class="wb-order-contents-label">Содержание заказа</div>
@@ -128,51 +103,244 @@
             </div>
         </div>
 
-        <div class="card bench-card mb-4 border-warning border-opacity-50" id="wbCorrectorCard">
+        <!-- Пункт 2: настройка датчиков → QR → S/N корректора -->
+        <div class="card bench-card mb-4 border-warning border-opacity-50" id="wbStep2Card">
             <div class="card-header fw-semibold d-flex flex-wrap align-items-center gap-2">
-                <span><i class="bi bi-cpu me-1"></i>Корректор · сборка</span>
+                <span><i class="bi bi-2-circle me-1"></i>Пункт 2 · Датчики и сборка</span>
                 <span id="wbSessionStageBadge" class="badge rounded-pill text-bg-secondary ms-auto">—</span>
             </div>
             <div class="card-body">
-                <p class="small text-body-secondary mb-3">Сгенерируйте заводской номер корректора (п.3, формат 300…) для шильда. После физической сборки нажмите «Подтвердить сборку» — откроется этап параметризации.</p>
-                <label class="form-label fw-semibold" for="wbCorrectorSerialDisplay">S/N корректора (п.3)</label>
-                <div class="input-group input-group-lg mb-3">
-                    <input type="text" class="form-control font-monospace" id="wbCorrectorSerialDisplay" readonly placeholder="—" aria-readonly="true">
-                    <button type="button" class="btn btn-outline-primary" id="wbCorrectorSerialGenerate" disabled>
-                        <i class="bi bi-hash me-1"></i>Сгенерировать
-                    </button>
-                    <!-- Печать шильда временно отключена
-                    <button type="button" class="btn btn-outline-secondary" id="wbCorrectorNameplatePrint" disabled title="Печать шильдика по шаблону S/N">
-                        <i class="bi bi-printer me-1"></i>Печать шильдика
-                    </button>
-                    -->
+
+                <div id="wbSensorConfigCard" class="mb-4 pb-4 border-bottom">
+                    <h3 class="h6 fw-semibold mb-2"><i class="bi bi-sliders me-1"></i>1. Настройка датчиков</h3>
+                    <p class="small text-body-secondary mb-3">
+                        Подключение к датчику по COM (Modbus RTU через Web Serial), сканирование адресов 1–16
+                        (чтение регистра <code>0x000A</code>) и живой опрос измерений (<code>0x04</code>, регистр <code>0x0002</code>).
+                    </p>
+                    <div class="row g-2 align-items-end mb-3">
+                        <div class="col-sm-4 col-md-3">
+                            <label class="form-label small mb-1" for="wbSensorComBaud">Скорость</label>
+                            <select class="form-select form-select-sm" id="wbSensorComBaud">
+                                <option value="19200" selected>19200</option>
+                                <option value="9600">9600</option>
+                                <option value="38400">38400</option>
+                            </select>
+                        </div>
+                        <div class="col-sm-auto d-flex flex-wrap gap-2">
+                            <button type="button" class="btn btn-primary btn-sm" id="wbSensorComConnect" title="Подключить USB-адаптер датчика (PID 0x7523)">
+                                <i class="bi bi-plug me-1"></i>Подключить (PID 0x7523)
+                            </button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="wbSensorComConnectAny" title="Подключить любой USB-COM">
+                                <i class="bi bi-usb-symbol me-1"></i>Любой USB
+                            </button>
+                            <button type="button" class="btn btn-outline-danger btn-sm" id="wbSensorComDisconnect" title="Закрыть COM-порт датчика">
+                                Отключить
+                            </button>
+                            <span id="wbSensorComStatus" class="badge rounded-pill text-bg-secondary align-self-center">нет связи</span>
+                        </div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 mb-2">
+                        <button type="button" class="btn btn-primary btn-sm" id="wbSensorAuto1" title="Автоматически: подключить датчик → сканировать адреса → настроить адрес 1 (абсолютное давление) → показать результат">
+                            <i class="bi bi-1-circle me-1"></i>Настроить датчик 1
+                        </button>
+                        <button type="button" class="btn btn-primary btn-sm" id="wbSensorAuto2" title="Автоматически: подключить датчик → сканировать адреса → настроить адрес 2 (перепад) → показать результат">
+                            <i class="bi bi-2-circle me-1"></i>Настроить датчик 2
+                        </button>
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="wbSensorScan" title="Сканировать адреса 1–16 (чтение 0x000A)">
+                            <i class="bi bi-radar me-1"></i>Сканировать адреса
+                        </button>
+                        <button type="button" class="btn btn-outline-success btn-sm" id="wbSensorPoll" title="Живой опрос измерений (0x04, регистр 0x0002)">
+                            <i class="bi bi-activity me-1"></i>Живой опрос
+                        </button>
+                        <button type="button" class="btn btn-outline-warning btn-sm" id="wbSensorSetZero" title="Калибровка нуля: текущее значение ADC выбранного датчика становится сдвигом нуля (давление → 0)">
+                            <i class="bi bi-bullseye me-1"></i>Установить ноль
+                        </button>
+                    </div>
+                    <div id="wbSensorScanResults" class="d-none mt-2">
+                        <div class="d-flex flex-wrap gap-1" id="wbSensorScanBadges"></div>
+                    </div>
+
+                    <ul class="nav nav-tabs mt-3" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link active" id="wbSensorCfgTab" data-bs-toggle="tab" data-bs-target="#wbSensorCfgPane" type="button" role="tab">
+                                <i class="bi bi-sliders me-1"></i>Конфигуратор
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="wbSensorVizTab" data-bs-toggle="tab" data-bs-target="#wbSensorVizPane" type="button" role="tab">
+                                <i class="bi bi-graph-up me-1"></i>Визуализатор
+                            </button>
+                        </li>
+                    </ul>
+
+                    <div class="tab-content mt-2">
+                        <div class="tab-pane fade show active" id="wbSensorCfgPane" role="tabpanel">
+                            <div class="row g-2 align-items-end mb-2">
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorCfgTarget">Датчик</label>
+                                    <select class="form-select form-select-sm" id="wbSensorCfgTarget">
+                                        <option value="1">Абсолютное давление (адрес 1)</option>
+                                        <option value="2">Датчик перепада (адрес 2)</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1">Единицы давления</label>
+                                    <div class="form-control form-control-sm text-body-secondary" aria-label="Единицы давления">кПа</div>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorK">Коэффициент K (кПа/ед. ADC)</label>
+                                    <input type="number" class="form-control form-control-sm" id="wbSensorK" value="1" step="any" placeholder="1">
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorZero">Сдвиг нуля (ADC)</label>
+                                    <input type="number" class="form-control form-control-sm" id="wbSensorZero" value="0" step="any" placeholder="0">
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorRangeUp">Диапазон верх (ед.)</label>
+                                    <input type="number" class="form-control form-control-sm" id="wbSensorRangeUp" value="0" step="any" placeholder="0">
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorRangeDown">Диапазон низ (ед.)</label>
+                                    <input type="number" class="form-control form-control-sm" id="wbSensorRangeDown" value="0" step="any" placeholder="0">
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorDFOrder">Разрядность (знаков после запятой)</label>
+                                    <input type="number" class="form-control form-control-sm" id="wbSensorDFOrder" value="3" min="0" max="6" step="1" placeholder="3">
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorFilter">Фильтр (глубина сглаживания)</label>
+                                    <input type="number" class="form-control form-control-sm" id="wbSensorFilter" value="1" min="1" max="20" step="1" placeholder="1">
+                                </div>
+                                <div class="col-sm-auto">
+                                    <button type="button" class="btn btn-primary btn-sm" id="wbSensorCfgApply" title="Сохранить параметры датчика">
+                                        <i class="bi bi-check2 me-1"></i>Применить
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="small text-body-secondary">P = (ADC − сдвиг) × K · параметры хранятся локально и применяются к пересчёту и анализу</div>
+                        </div>
+
+                        <div class="tab-pane fade" id="wbSensorVizPane" role="tabpanel">
+                            <div id="wbSensorPollPanel" class="mt-1">
+                                <div class="row g-3">
+                                    <div class="col-md-6">
+                                        <div class="card h-100">
+                                            <div class="card-body text-center">
+                                                <div class="fw-semibold mb-1">Абсолютное давление (адрес 1)</div>
+                                                <div class="display-4 fw-bold font-monospace" id="wbSensorPollAbs">—</div>
+                                                <div class="badge rounded-pill text-bg-secondary mt-1" id="wbSensorPollAbsState">нет данных</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="card h-100">
+                                            <div class="card-body text-center">
+                                                <div class="fw-semibold mb-1">Датчик перепада (адрес 2)</div>
+                                                <div class="display-4 fw-bold font-monospace" id="wbSensorPollDiff">—</div>
+                                                <div class="badge rounded-pill text-bg-secondary mt-1" id="wbSensorPollDiffState">нет данных</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card mt-2">
+                                    <div class="card-body">
+                                        <div class="fw-semibold mb-2">График изменения давления</div>
+                                        <canvas id="wbSensorChart" height="220" style="width:100%;height:220px;"></canvas>
+                                    </div>
+                                </div>
+                                <div class="small text-body-secondary mt-2">Регистр: <span class="font-monospace">0x0002</span> · обновление раз в секунду</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="wbSensorSetPanel" class="d-none mt-2">
+                        <div class="row g-2 align-items-end">
+                            <div class="col-sm-4 col-md-3">
+                                <label class="form-label small mb-1" id="wbSensorSetLabel" for="wbSensorSetValue">Значение</label>
+                                <input type="number" class="form-control form-control-sm" id="wbSensorSetValue" min="0" max="65535" step="1" placeholder="0–65535">
+                            </div>
+                            <div class="col-sm-auto">
+                                <button type="button" class="btn btn-primary btn-sm" id="wbSensorSetApply" title="Записать значение в регистр 0x0002">
+                                    <i class="bi bi-check2 me-1"></i>Применить
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <p id="wbSensorConfigStatus" class="small text-body-secondary mb-0" role="status">Подключите USB-адаптер датчика и нажмите «Сканировать адреса».</p>
                 </div>
-                <p class="small text-body-secondary mb-3">
-                    Print-агент:
-                    <span id="wbPrintAgentStatus" class="badge rounded-pill text-bg-secondary" title="Статус Windows print-агента на этом ПК">агент —</span>
-                    <span class="ms-1">нужен на ПК оператора (127.0.0.1:18778); без него — превью PDF.</span>
-                </p>
-                <div class="d-flex flex-wrap gap-2 align-items-center">
-                    <button type="button" class="btn btn-success" id="wbAssemblyConfirm" disabled>
-                        <i class="bi bi-check2-circle me-1"></i>Подтвердить сборку
-                    </button>
-                    <p id="wbAssemblyStatus" class="small mb-0 text-body-secondary" role="status"></p>
+
+                <div id="wbSensorsSection" class="mb-4 pb-4 border-bottom">
+                    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                        <h3 class="h6 fw-semibold mb-0"><i class="bi bi-qr-code-scan me-1"></i>2. Сканирование QR / S/N</h3>
+                        <div id="wbSensorBadges" class="d-flex flex-wrap gap-1 ms-auto"></div>
+                    </div>
+                    <p class="small text-body-secondary mb-3" id="wbSensorCardsHint">
+                        Плашки по составу заказа. Данные сохраняются в сессии и подставляются в поля параметризации. Привязка к S/N корректора.
+                    </p>
+                    <div id="wbSensorCardsHost" class="row g-3"></div>
+                    <p id="paramQrStatus" class="small text-body-secondary mt-2 mb-0 d-none" role="status" aria-hidden="true"></p>
+                    <div id="paramTelemetryPanel" class="d-none">
+                        <div class="row g-2 align-items-end mt-3 pt-3 border-top">
+                            <div class="col-lg">
+                                <label class="form-label fw-semibold" for="paramTelemetrySerial">БПЭК — штрихкод блока телеметрии (п.228)</label>
+                                <input type="text" class="form-control form-control-lg font-monospace" id="paramTelemetrySerial" placeholder="Сканируйте штрихкод БПЭК (только при .БТ в обозначении)" autocomplete="off" spellcheck="false" inputmode="numeric">
+                            </div>
+                            <div class="col-lg-auto">
+                                <button type="button" class="btn btn-outline-primary btn-sm" id="paramTelemetryApply"><i class="bi bi-box-arrow-in-down me-1"></i>Подставить → п.228</button>
+                            </div>
+                        </div>
+                        <p id="paramTelemetryStatus" class="small text-body-secondary mt-2 mb-0" role="status"></p>
+                    </div>
+                    <button type="button" class="d-none" id="paramQrApply" tabindex="-1" aria-hidden="true"></button>
+                    <button type="button" class="d-none" id="paramQrClear" tabindex="-1" aria-hidden="true"></button>
                 </div>
+
+                <div id="wbCorrectorCard">
+                    <h3 class="h6 fw-semibold mb-2"><i class="bi bi-cpu me-1"></i>3. S/N корректора</h3>
+                    <p class="small text-body-secondary mb-3">Сгенерируйте заводской номер (п.3, формат 300…). После сборки и привязки датчиков — «Подтвердить сборку».</p>
+                    <label class="form-label fw-semibold" for="wbCorrectorSerialDisplay">S/N корректора (п.3)</label>
+                    <div class="input-group input-group-lg mb-3">
+                        <input type="text" class="form-control font-monospace" id="wbCorrectorSerialDisplay" readonly placeholder="—" aria-readonly="true">
+                        <button type="button" class="btn btn-outline-primary" id="wbCorrectorSerialGenerate" disabled>
+                            <i class="bi bi-hash me-1"></i>Сгенерировать
+                        </button>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                        <button type="button" class="btn btn-outline-secondary" id="wbCorrectorNameplatePrint" disabled title="Печать шильдика — скоро">
+                            <i class="bi bi-printer me-1"></i>Печать шильдика
+                        </button>
+                        <span class="small text-body-secondary">Print-агент:
+                            <span id="wbPrintAgentStatus" class="badge rounded-pill text-bg-secondary">агент —</span>
+                        </span>
+                        <span class="small text-body-secondary">Senselock:
+                            <span id="wbSenselockAgentStatus" class="badge rounded-pill text-bg-secondary">агент —</span>
+                        </span>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <button type="button" class="btn btn-success" id="wbAssemblyConfirm" disabled>
+                            <i class="bi bi-check2-circle me-1"></i>Подтвердить сборку
+                        </button>
+                        <p id="wbAssemblyStatus" class="small mb-0 text-body-secondary" role="status"></p>
+                    </div>
+                </div>
+
             </div>
         </div>
 
-        <div id="wbParamSection" class="wb-param-section wb-param-locked">
-            <div class="alert alert-info py-2 px-3 mb-3 wb-param-lock-banner" id="wbParamLockBanner" role="status">
-                <i class="bi bi-lock me-1"></i>Параметризация будет доступна после подтверждения сборки корректора.
-            </div>
-
-        <div class="card bench-card mb-4 border-warning border-opacity-25 d-none" id="wbCorrectorTemplateCard">
-            <div class="card-header fw-semibold">
-                <i class="bi bi-collection me-1"></i>Шаблон счётчика
+        <!-- Пункт 3: КАО + все параметры -->
+        <div id="wbParamSection" class="card bench-card mb-4 wb-param-section wb-param-locked">
+            <div class="card-header fw-semibold d-flex flex-wrap align-items-center gap-2">
+                <span><i class="bi bi-3-circle me-1"></i>Пункт 3 · Параметризация</span>
             </div>
             <div class="card-body">
+            <div class="alert alert-info py-2 px-3 mb-3 wb-param-lock-banner" id="wbParamLockBanner" role="status">
+                <i class="bi bi-lock me-1"></i>Откроется после подтверждения сборки в пункте 2.
+            </div>
+
+            <div class="border rounded p-3 mb-4 d-none" id="wbCorrectorTemplateCard">
+                <div class="fw-semibold mb-2"><i class="bi bi-collection me-1"></i>Шаблон счётчика</div>
                 <p class="small text-body-secondary mb-2">
-                    Заказ только на корректор ТМ-07. Выберите счётчик и типоразмер — заполнятся параметры счётчика (п.100–122), расход (п.28–33), погрешности (п.119/120), серийник 0, даты 01.01.2000 и направление 0.
+                    Заказ только на корректор ТМ-07. Выберите счётчик и типоразмер — заполнятся параметры счётчика.
                 </p>
                 <div class="row g-2">
                     <div class="col-md-5">
@@ -190,140 +358,42 @@
                 </div>
                 <p id="paramCorrectorTemplateHint" class="small text-body-secondary mt-2 mb-0" role="status"></p>
             </div>
-        </div>
 
-        <div class="card bench-card mb-4 border-primary border-opacity-25">
-            <div class="card-header fw-semibold d-flex flex-wrap align-items-center gap-2">
-                <span><i class="bi bi-qr-code-scan me-1"></i>QR датчики MIDA</span>
-                <div id="wbSensorBadges" class="d-flex flex-wrap gap-1 ms-auto"></div>
-            </div>
-            <div class="card-body">
-                <label class="form-label fw-semibold" for="paramQrSensor">Скан / ввод S/N датчиков</label>
-                <input type="text" class="form-control form-control-lg font-monospace" id="paramQrSensor" placeholder="QR MIDA (давление) или 4 цифры (температура)" autocomplete="off" spellcheck="false" inputmode="text">
-                <p class="small text-body-secondary mt-1 mb-0">Давление — полный QR MIDA. Температура газа (DT) — 4 цифры. Перепад (DD) и температура ТП (TT) — только если есть в заказе.</p>
-                <div class="d-flex flex-wrap gap-2 mt-1">
-                    <button type="button" class="btn btn-outline-secondary btn-sm" id="sensorParamsOpen" title="Таблица параметров датчиков (п.55–68)"><i class="bi bi-table me-1"></i>Параметры датчиков</button>
+            <!-- Даты поверки / отдельные карточки S/N — скрыты до отдельной доработки -->
+            <div class="d-none" aria-hidden="true">
+                <div id="wbCorrectorVerifCard">
+                    <span id="wbCorrectorVerifBadge"></span>
+                    <input type="text" id="paramCorrectorSerialDisplay" readonly>
+                    <input type="text" id="paramCorrectorVerifyDate">
+                    <input type="text" id="paramCorrectorVerifyNext">
+                    <button type="button" id="paramCorrectorDatesToday"></button>
+                    <button type="button" id="paramCorrectorWrite"></button>
+                    <p id="paramCorrectorStatus"></p>
                 </div>
-                <p id="paramQrStatus" class="small text-body-secondary mt-2 mb-0" role="status"></p>
-                <div id="paramTelemetryPanel" class="d-none">
-                    <div class="row g-2 align-items-end mt-3 pt-3 border-top">
-                        <div class="col-lg">
-                            <label class="form-label fw-semibold" for="paramTelemetrySerial">БПЭК — штрихкод блока телеметрии (п.228)</label>
-                            <input type="text" class="form-control form-control-lg font-monospace" id="paramTelemetrySerial" placeholder="Сканируйте штрихкод БПЭК (только при .БТ в обозначении)" autocomplete="off" spellcheck="false" inputmode="numeric">
-                        </div>
-                        <div class="col-lg-auto">
-                            <button type="button" class="btn btn-outline-primary btn-sm" id="paramTelemetryApply"><i class="bi bi-box-arrow-in-down me-1"></i>Подставить → п.228</button>
-                        </div>
-                    </div>
-                    <p id="paramTelemetryStatus" class="small text-body-secondary mt-2 mb-0" role="status"></p>
+                <div id="wbMeterCard">
+                    <span id="wbMeterBadge"></span>
+                    <input type="text" id="paramMeterSerial">
+                    <p id="paramMeterVerifyHint"></p>
+                    <input type="text" id="paramMeterVerifyDate">
+                    <input type="text" id="paramMeterVerifyNext">
+                    <button type="button" id="paramMeterDatesToday"></button>
+                    <button type="button" id="paramMeterWrite"></button>
+                    <p id="paramMeterSerialStatus"></p>
                 </div>
-                <button type="button" class="d-none" id="paramQrApply" tabindex="-1" aria-hidden="true"></button>
-                <button type="button" class="d-none" id="paramQrClear" tabindex="-1" aria-hidden="true"></button>
+                <div id="wbComplexCard">
+                    <span id="wbComplexBadge"></span>
+                    <input type="text" id="paramComplexSerial">
+                    <button type="button" id="paramComplexSerialGenerate"></button>
+                    <input type="text" id="paramComplexVerifyDate">
+                    <input type="text" id="paramComplexVerifyNext">
+                    <button type="button" id="paramComplexDatesToday"></button>
+                    <button type="button" id="paramComplexWrite"></button>
+                    <p id="paramComplexStatus"></p>
+                </div>
             </div>
-        </div>
 
-        <div class="card bench-card mb-4 border-info border-opacity-25" id="wbCorrectorVerifCard">
-            <div class="card-header fw-semibold d-flex flex-wrap align-items-center gap-2">
-                <span><i class="bi bi-calendar2-check me-1"></i>Корректор · даты поверки</span>
-                <span id="wbCorrectorVerifBadge" class="badge rounded-pill text-bg-warning text-dark ms-auto">—</span>
-            </div>
-            <div class="card-body">
-                <p class="small text-body-secondary mb-3">
-                    S/N корректора (п.3) берётся из сборки. Даты поверки (п.80/81) — вручную или «Даты сегодня», затем «Записать корректор».
-                </p>
-                <label class="form-label fw-semibold" for="paramCorrectorSerialDisplay">Серийный номер (п.3)</label>
-                <input type="text" class="form-control form-control-lg font-monospace" id="paramCorrectorSerialDisplay" readonly placeholder="—" aria-readonly="true">
-                <div class="row g-2 align-items-end mt-3">
-                    <div class="col-sm-4">
-                        <label class="form-label small mb-1" for="paramCorrectorVerifyDate">Дата поверки (п.80)</label>
-                        <input type="text" class="form-control font-monospace" id="paramCorrectorVerifyDate" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric" title="Дата поверки корректора, п.80, Меню 1.3.5">
-                    </div>
-                    <div class="col-sm-4">
-                        <label class="form-label small mb-1" for="paramCorrectorVerifyNext">След. поверка (п.81)</label>
-                        <input type="text" class="form-control font-monospace" id="paramCorrectorVerifyNext" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric" title="След. поверка корректора, п.81, Меню 1.3.6">
-                    </div>
-                    <div class="col-sm-4 d-flex flex-wrap gap-2">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramCorrectorDatesToday" title="Подставить сегодня и +МПИ в поля (без записи в прибор)">Даты сегодня</button>
-                        <button type="button" class="btn btn-success btn-sm" id="paramCorrectorWrite" title="Записать п.3, 80, 81 в корректор">
-                            <i class="bi bi-pencil-square me-1"></i>Записать корректор
-                        </button>
-                    </div>
-                </div>
-                <p id="paramCorrectorStatus" class="small text-body-secondary mt-2 mb-0" role="status"></p>
-            </div>
-        </div>
-
-        <div class="card bench-card mb-4 border-success border-opacity-25" id="wbMeterCard">
-            <div class="card-header fw-semibold d-flex flex-wrap align-items-center gap-2">
-                <span><i class="bi bi-speedometer me-1"></i>Счётчик</span>
-                <span id="wbMeterBadge" class="badge rounded-pill text-bg-warning text-dark ms-auto">не введён</span>
-            </div>
-            <div class="card-body">
-                <p class="small text-body-secondary mb-3">
-                    Можно ввести позже (счётчик часто приходит после параметризации корректора). S/N и даты — вручную или «Даты сегодня», затем «Записать счётчик».
-                </p>
-                <label class="form-label fw-semibold" for="paramMeterSerial">Серийный номер (п.102)</label>
-                <input type="text" class="form-control form-control-lg font-monospace" id="paramMeterSerial" placeholder="6509" autocomplete="off" spellcheck="false" inputmode="numeric" maxlength="16">
-                <p class="small text-body-secondary mt-1 mb-0">4–16 цифр с таблички. Enter — в п.102.</p>
-                <p id="paramMeterVerifyHint" class="small text-body-secondary mt-1 mb-0"></p>
-                <div class="row g-2 align-items-end mt-3">
-                    <div class="col-sm-4">
-                        <label class="form-label small mb-1" for="paramMeterVerifyDate">Дата поверки (п.103)</label>
-                        <input type="text" class="form-control font-monospace" id="paramMeterVerifyDate" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric">
-                    </div>
-                    <div class="col-sm-4">
-                        <label class="form-label small mb-1" for="paramMeterVerifyNext">След. поверка (п.104)</label>
-                        <input type="text" class="form-control font-monospace" id="paramMeterVerifyNext" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric">
-                    </div>
-                    <div class="col-sm-4 d-flex flex-wrap gap-2">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramMeterDatesToday" title="Подставить сегодня и +МПИ в поля (без записи в прибор)">Даты сегодня</button>
-                        <button type="button" class="btn btn-success btn-sm" id="paramMeterWrite" title="Записать п.102–104 в корректор">
-                            <i class="bi bi-pencil-square me-1"></i>Записать счётчик
-                        </button>
-                    </div>
-                </div>
-                <p id="paramMeterSerialStatus" class="small text-body-secondary mt-2 mb-0" role="status"></p>
-            </div>
-        </div>
-
-        <div class="card bench-card mb-4 border-secondary border-opacity-25 d-none" id="wbComplexCard">
-            <div class="card-header fw-semibold d-flex flex-wrap align-items-center gap-2">
-                <span><i class="bi bi-diagram-3 me-1"></i>Комплекс · даты поверки</span>
-                <span id="wbComplexBadge" class="badge rounded-pill text-bg-warning text-dark ms-auto">не введён</span>
-            </div>
-            <div class="card-body">
-                <p class="small text-body-secondary mb-3">
-                    S/N комплекса (п.201) и даты (п.202/203) — вручную, генерация из БД или «Даты сегодня», затем «Записать комплекс».
-                </p>
-                <label class="form-label fw-semibold" for="paramComplexSerial">Серийный номер (п.201)</label>
-                <div class="input-group input-group-lg">
-                    <input type="text" class="form-control font-monospace" id="paramComplexSerial" placeholder="S/N комплекса (ввод или генерация из БД)" autocomplete="off" spellcheck="false" maxlength="16">
-                    <button type="button" class="btn btn-outline-primary" id="paramComplexSerialGenerate" title="Выдать следующий номер 400… из БД">
-                        <i class="bi bi-hash me-1"></i>Сгенерировать
-                    </button>
-                </div>
-                <div class="row g-2 align-items-end mt-3">
-                    <div class="col-sm-4">
-                        <label class="form-label small mb-1" for="paramComplexVerifyDate">Дата поверки (п.202)</label>
-                        <input type="text" class="form-control font-monospace" id="paramComplexVerifyDate" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric">
-                    </div>
-                    <div class="col-sm-4">
-                        <label class="form-label small mb-1" for="paramComplexVerifyNext">След. поверка (п.203)</label>
-                        <input type="text" class="form-control font-monospace" id="paramComplexVerifyNext" placeholder="ДД.ММ.ГГГГ" autocomplete="off" maxlength="10" inputmode="numeric">
-                    </div>
-                    <div class="col-sm-4 d-flex flex-wrap gap-2">
-                        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramComplexDatesToday" title="Подставить сегодня и +МПИ в поля (без записи в прибор)">Даты сегодня</button>
-                        <button type="button" class="btn btn-success btn-sm" id="paramComplexWrite" title="Записать п.201–203 в корректор">
-                            <i class="bi bi-pencil-square me-1"></i>Записать комплекс
-                        </button>
-                    </div>
-                </div>
-                <p id="paramComplexStatus" class="small text-body-secondary mt-2 mb-0" role="status"></p>
-            </div>
-        </div>
-
-        <div class="card bench-card mb-4">
-            <div class="card-body">
+            <div class="border rounded p-3 mb-4" id="wbKaoConnectBlock">
+                <div class="fw-semibold mb-2"><i class="bi bi-plug me-1"></i>Подключение КАО</div>
                 <div class="row g-3 align-items-center">
                     <div class="col-lg">
                         <div class="d-flex flex-wrap align-items-center gap-2 mb-2 mb-lg-0">
@@ -335,27 +405,27 @@
                                 <option value="38400">38400</option>
                             </select>
                             <button type="button" class="btn btn-primary btn-sm" id="paramConnectKao" title="Только адаптер с VID/PID из настроек"><i class="bi bi-plug me-1"></i>КАО</button>
-                            <button type="button" class="btn btn-outline-primary btn-sm" id="paramConnectAny" title="Любой USB-COM, если КАОшка не в списке"><i class="bi bi-usb-symbol me-1"></i>Любой USB</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="paramConnectAny" title="Любой USB-COM"><i class="bi bi-usb-symbol me-1"></i>Любой USB</button>
                             <button type="button" class="btn btn-outline-danger btn-sm" id="paramDisconnect">Отключить</button>
                             <span id="paramConnStatus" class="badge rounded-pill text-bg-secondary">отключено</span>
                             <span id="paramLockStatus" class="badge rounded-pill text-bg-secondary" title="Статус замков REG 0x0028">Закрыт*</span>
-                            <span id="paramLkgStatus" class="badge rounded-pill text-bg-secondary" title="Ключи ЛКГ из .env или админки">ЛКГ —</span>
-                            <button type="button" class="btn btn-outline-danger btn-sm" id="paramCloseLocks" title="Закрыть калибровочный замок: запись 0 в 0x06AA (CmdCloseKalibKey). Нужно перед очисткой регистров в финале."><i class="bi bi-lock me-1"></i>Закрыть калибр. замок</button>
+                            <span id="paramLkgStatus" class="badge rounded-pill text-bg-secondary" title="Ключи ЛКГ">ЛКГ —</span>
+                            <button type="button" class="btn btn-outline-danger btn-sm" id="paramCloseLocks" title="Закрыть калибровочный замок"><i class="bi bi-lock me-1"></i>Закрыть калибр. замок</button>
                             <button type="button" class="btn btn-outline-secondary btn-sm" id="paramRefreshLock" title="Прочитать статус замков"><i class="bi bi-arrow-clockwise"></i></button>
                         </div>
-                        <p class="small text-body-secondary mb-0 mt-1">Закрытие калибровочного замка — перед очисткой регистров в финале. Открытие (AutoPass) выполняется при подключении КАО и перед записью.</p>
+                        <p class="small text-body-secondary mb-0 mt-1">Ниже — все параметры (корректор → счётчик → комплекс).</p>
                         <div id="paramLockBanner" class="alert alert-warning py-2 small mt-2 mb-0 d-none" role="status"></div>
                         <div id="paramFwBanner" class="alert alert-secondary py-2 small mt-2 mb-0" role="status">
                             <div class="d-flex flex-wrap align-items-center gap-2">
                                 <i class="bi bi-cpu"></i>
                                 <span>ПО прибора (0x0007): <strong id="paramFwDeviceVer">—</strong></span>
-                                <span>ЛКГ (из файла): <strong id="paramFwLkg" class="font-monospace">—</strong></span>
+                                <span id="paramFwLkgWrap" class="d-none">ЛКГ (из файла): <strong id="paramFwLkg" class="font-monospace">—</strong></span>
                                 <span>нужно: <strong id="paramFwFolderVer">—</strong></span>
                                 <span id="paramFwMatch" class="badge rounded-pill text-bg-secondary">нет связи</span>
-                                <button type="button" class="btn btn-warning btn-sm" id="paramFwFlashBtn" disabled title="Залить файл из папки firmware по метке v…">
+                                <button type="button" class="btn btn-warning btn-sm" id="paramFwFlashBtn" disabled title="Залить файл из папки firmware">
                                     <i class="bi bi-download me-1"></i>Перепрошить
                                 </button>
-                                <label class="btn btn-outline-secondary btn-sm mb-0" for="paramFwFile" title="Если папка не видна — выбрать .bin вручную">
+                                <label id="paramFwFileLabel" class="btn btn-outline-secondary btn-sm mb-0 d-none" for="paramFwFile">
                                     <i class="bi bi-folder2-open me-1"></i>Выбрать файл
                                 </label>
                                 <input type="file" id="paramFwFile" class="d-none" accept=".bin,application/octet-stream">
@@ -366,143 +436,101 @@
                     </div>
                     <div class="col-lg-auto d-flex flex-wrap gap-2 align-items-center">
                         <button type="button" class="btn btn-warning btn-lg wb-action-primary px-4" id="paramWriteAll"><i class="bi bi-lightning-charge me-1"></i>Параметризовать</button>
-                        <button type="button" class="btn btn-outline-success btn-sm" id="paramReadAll" title="Полный опрос корректора и сверка с заказом"><i class="bi bi-eye"></i></button>
-                        <span id="paramTimer" class="badge rounded-pill text-bg-dark d-none fs-6 fw-semibold" title="Выполнено" role="status">0%</span>
+                        <button type="button" class="btn btn-outline-success btn-sm" id="paramReadAll" title="Полный опрос и сверка"><i class="bi bi-eye"></i></button>
+                        <span id="paramTimer" class="badge rounded-pill text-bg-dark d-none fs-6 fw-semibold" role="status">0%</span>
                     </div>
                 </div>
                 <p id="paramWbAutoStatus" class="small mt-3 mb-0" role="status"></p>
             </div>
-        </div>
 
-        <div class="card bench-card mb-3">
-            <div class="card-header d-flex flex-wrap align-items-center gap-2 py-2">
-                <span class="fw-semibold small">Корректор — основные параметры</span>
-                <span class="badge text-bg-light border text-body-secondary fw-normal">п.1–99 · карта 50</span>
-                <div class="ms-auto" style="max-width:16rem; width:100%">
-                    <input type="search" class="form-control form-control-sm" id="paramFilter" placeholder="Поиск #108…" autocomplete="off">
-                </div>
-            </div>
-            <div class="table-responsive param-table-wrap">
-                <table class="table table-sm table-hover table-striped align-middle small mb-0">
-                    <thead class="table-light position-sticky top-0 z-1">
-                        <tr>
-                            <th class="text-end" style="width:2.5rem">#</th>
-                            <th style="width:4.5rem">Рег.</th>
-                            <th>Параметр</th>
-                            <th style="min-width:8rem">Значение</th>
-                            <th style="width:1%"></th>
-                        </tr>
-                    </thead>
-                    <tbody id="paramTbody"></tbody>
-                </table>
-            </div>
-        </div>
-
-        <div class="accordion bench-accordion mb-3" id="paramExtraAccordion">
-            <div class="accordion-item bench-card border" id="wbMeterParamsItem">
-                <h2 class="accordion-header">
-                    <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#paramMeterPanel" aria-expanded="true" aria-controls="paramMeterPanel">
-                        <i class="bi bi-speedometer me-2 text-secondary"></i>Параметры счётчика
-                        <span class="text-body-secondary fw-normal ms-2 small">п.100–122 · 0x082A…0x086C</span>
-                    </button>
-                </h2>
-                <div id="paramMeterPanel" class="accordion-collapse collapse show" data-bs-parent="#paramExtraAccordion">
-                    <div class="accordion-body p-0">
-                        <div class="param-toolbar border-top border-bottom px-3 py-2 d-flex flex-wrap gap-2 align-items-center">
-                            <input type="search" class="form-control form-control-sm" id="paramMeterFilter" placeholder="Поиск #108…" autocomplete="off" style="max-width:16rem">
-                            <button type="button" class="btn btn-outline-success btn-sm ms-auto d-none" id="paramMeterReadAll">Прочитать</button>
-                            <button type="button" class="btn btn-outline-warning btn-sm d-none" id="paramMeterWriteAll">Записать</button>
-                        </div>
-                        <div class="table-responsive param-table-wrap" style="max-height:min(50vh,480px)">
-                            <table class="table table-sm table-hover table-striped align-middle small mb-0">
-                                <thead class="table-light position-sticky top-0 z-1">
-                                    <tr>
-                                        <th class="text-end" style="width:2.5rem">#</th>
-                                        <th style="width:4.5rem">Рег.</th>
-                                        <th style="min-width:14rem">Параметр</th>
-                                        <th style="min-width:8rem">Значение</th>
-                                        <th style="width:1%"></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="paramMeterTbody"></tbody>
-                            </table>
-                        </div>
+            <div class="mb-3" id="wbCorrectorParamsCard">
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <span class="fw-semibold"><i class="bi bi-cpu me-1"></i>Корректор</span>
+                    <span class="badge text-bg-light border text-body-secondary fw-normal">основные · маски · очистки</span>
+                    <div class="ms-auto" style="max-width:16rem; width:100%">
+                        <input type="search" class="form-control form-control-sm" id="paramFilter" placeholder="Поиск #108…" autocomplete="off">
                     </div>
                 </div>
-            </div>
-            <div class="accordion-item bench-card border">
-                <h2 class="accordion-header">
-                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#paramComplexPanel" aria-expanded="false" aria-controls="paramComplexPanel">
-                        <i class="bi bi-diagram-3 me-2 text-secondary"></i>Параметры комплекса
-                        <span class="text-body-secondary fw-normal ms-2 small">п.200–229 · 0x08D1…0x0928</span>
-                    </button>
-                </h2>
-                <div id="paramComplexPanel" class="accordion-collapse collapse" data-bs-parent="#paramExtraAccordion">
-                    <div class="accordion-body p-0">
-                        <div class="param-toolbar border-top border-bottom px-3 py-2 d-flex flex-wrap gap-2 align-items-center">
-                            <input type="search" class="form-control form-control-sm" id="paramComplexFilter" placeholder="Поиск #219…" autocomplete="off" style="max-width:16rem">
-                            <button type="button" class="btn btn-outline-success btn-sm ms-auto d-none" id="paramComplexReadAll">Прочитать</button>
-                            <button type="button" class="btn btn-outline-warning btn-sm d-none" id="paramComplexWriteAll">Записать</button>
-                        </div>
-                        <div class="table-responsive param-table-wrap" style="max-height:min(50vh,480px)">
-                            <table class="table table-sm table-hover table-striped align-middle small mb-0">
-                                <thead class="table-light position-sticky top-0 z-1">
-                                    <tr>
-                                        <th class="text-end" style="width:2.5rem">#</th>
-                                        <th style="width:4.5rem">Рег.</th>
-                                        <th style="min-width:14rem">Параметр</th>
-                                        <th style="min-width:8rem">Значение</th>
-                                        <th style="width:1%"></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="paramComplexTbody"></tbody>
-                            </table>
-                        </div>
-                    </div>
+                <div class="table-responsive param-table-wrap border rounded">
+                    <table class="table table-sm table-hover table-striped align-middle small mb-0">
+                        <thead class="table-light position-sticky top-0 z-1">
+                            <tr>
+                                <th class="text-end" style="width:2.5rem">#</th>
+                                <th style="width:4.5rem">Рег.</th>
+                                <th>Параметр</th>
+                                <th style="min-width:8rem">Значение</th>
+                                <th style="width:1%"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="paramTbody"></tbody>
+                    </table>
                 </div>
             </div>
-            <div class="accordion-item bench-card border">
-                <h2 class="accordion-header">
-                    <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#paramFinalPanel" aria-expanded="false" aria-controls="paramFinalPanel">
-                        <i class="bi bi-flag me-2 text-secondary"></i>Финальные параметры
-                        <span class="text-body-secondary fw-normal ms-2 small">п.298–322 · даты, моточасы, маски, закрытие калибр. замка, очистка</span>
-                    </button>
-                </h2>
-                <div id="paramFinalPanel" class="accordion-collapse collapse" data-bs-parent="#paramExtraAccordion">
-                    <div class="accordion-body p-0">
-                        <div class="param-toolbar border-top border-bottom px-3 py-2 d-flex flex-wrap gap-2 align-items-center">
-                            <input type="search" class="form-control form-control-sm" id="paramFinalFilter" placeholder="Поиск #318…" autocomplete="off" style="max-width:16rem">
-                            <div class="ms-auto d-flex flex-wrap gap-2 align-items-center">
-                                <button type="button" class="btn btn-warning btn-sm d-none" id="paramFinalRun" title="Маски, даты, моточасы, закрытие калибр. замка, очистка регистров">
-                                    <i class="bi bi-play-fill me-1"></i>Прогнать финальные параметры
-                                </button>
-                                <button type="button" class="btn btn-outline-success btn-sm d-none" id="paramFinalReadAll">Прочитать</button>
-                                <span id="paramFinalTimer" class="badge rounded-pill text-bg-dark d-none fw-semibold" title="Прогресс записи финальных параметров" role="status">0%</span>
-                                <button type="button" class="btn btn-success" id="paramFinalWriteAll" title="Записать только финальные параметры из таблицы">
-                                    <i class="bi bi-pencil-square me-1"></i>Записать
-                                </button>
-                            </div>
-                        </div>
-                        <div class="table-responsive param-table-wrap" style="max-height:min(50vh,480px)">
-                            <table class="table table-sm table-hover table-striped align-middle small mb-0">
-                                <thead class="table-light position-sticky top-0 z-1">
-                                    <tr>
-                                        <th class="text-end" style="width:2.5rem">#</th>
-                                        <th style="width:4.5rem">Рег.</th>
-                                        <th style="min-width:14rem">Параметр</th>
-                                        <th style="min-width:8rem">Значение</th>
-                                        <th style="width:1%"></th>
-                                    </tr>
-                                </thead>
-                                <tbody id="paramFinalTbody"></tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
 
+            <div class="mb-3" id="wbMeterParamsItem">
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <span class="fw-semibold"><i class="bi bi-speedometer me-1"></i>Счётчик</span>
+                    <span class="badge text-bg-light border text-body-secondary fw-normal">п.100–122</span>
+                    <div class="ms-auto d-flex flex-wrap gap-2 align-items-center" style="max-width:22rem; width:100%">
+                        <input type="search" class="form-control form-control-sm" id="paramMeterFilter" placeholder="Поиск #108…" autocomplete="off">
+                        <button type="button" class="btn btn-outline-success btn-sm d-none" id="paramMeterReadAll">Прочитать</button>
+                        <button type="button" class="btn btn-outline-warning btn-sm d-none" id="paramMeterWriteAll">Записать</button>
+                    </div>
+                </div>
+                <div class="table-responsive param-table-wrap border rounded" style="max-height:min(50vh,480px)">
+                    <table class="table table-sm table-hover table-striped align-middle small mb-0">
+                        <thead class="table-light position-sticky top-0 z-1">
+                            <tr>
+                                <th class="text-end" style="width:2.5rem">#</th>
+                                <th style="width:4.5rem">Рег.</th>
+                                <th style="min-width:14rem">Параметр</th>
+                                <th style="min-width:8rem">Значение</th>
+                                <th style="width:1%"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="paramMeterTbody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="mb-0" id="wbComplexParamsItem">
+                <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+                    <span class="fw-semibold"><i class="bi bi-diagram-3 me-1"></i>Комплекс</span>
+                    <span class="badge text-bg-light border text-body-secondary fw-normal">п.200–229</span>
+                    <div class="ms-auto d-flex flex-wrap gap-2 align-items-center" style="max-width:22rem; width:100%">
+                        <input type="search" class="form-control form-control-sm" id="paramComplexFilter" placeholder="Поиск #219…" autocomplete="off">
+                        <button type="button" class="btn btn-outline-success btn-sm d-none" id="paramComplexReadAll">Прочитать</button>
+                        <button type="button" class="btn btn-outline-warning btn-sm d-none" id="paramComplexWriteAll">Записать</button>
+                    </div>
+                </div>
+                <div class="table-responsive param-table-wrap border rounded" style="max-height:min(50vh,480px)">
+                    <table class="table table-sm table-hover table-striped align-middle small mb-0">
+                        <thead class="table-light position-sticky top-0 z-1">
+                            <tr>
+                                <th class="text-end" style="width:2.5rem">#</th>
+                                <th style="width:4.5rem">Рег.</th>
+                                <th style="min-width:14rem">Параметр</th>
+                                <th style="min-width:8rem">Значение</th>
+                                <th style="width:1%"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="paramComplexTbody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="d-none" aria-hidden="true">
+                <tbody id="paramFinalTbody"></tbody>
+                <button type="button" id="paramFinalRun"></button>
+                <button type="button" id="paramFinalWriteAll"></button>
+                <button type="button" id="paramFinalReadAll"></button>
+                <input type="search" id="paramFinalFilter" value="">
+                <span id="paramFinalTimer"></span>
+            </div>
+
+            </div><!-- /card-body -->
         </div><!-- /wbParamSection -->
+
 
         <div class="card bench-card bench-log-card">
             <div class="card-header d-flex align-items-center py-2">
@@ -539,7 +567,7 @@
                     <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
                 </div>
                 <div class="modal-body">
-                    <p class="small text-body-secondary mb-2">Значения из QR/заказа для каналов датчиков (п.55–68). Можно править здесь и применить в таблицу параметризации.</p>
+                    <p class="small text-body-secondary mb-2">Ручной ввод только по датчикам из заказа (п.55–68). Можно править здесь и применить в таблицу параметризации.</p>
                     <div class="table-responsive">
                         <table class="table table-sm align-middle">
                             <thead>
