@@ -27,7 +27,7 @@ def run_workbench_checks(driver: WebDriver, report: Report) -> None:
     blocks = [
         ("paramOrder1cNumber", "Поле номера заказа"),
         ("wbCorrectorCard", "Карточка сборки корректора"),
-        ("paramQrSensor", "Поле QR MIDA"),
+        ("wbSensorCardsHost", "Контейнер QR/S/N датчиков"),
         ("wbAssemblyConfirm", "Кнопка подтверждения сборки"),
         ("paramConnectKao", "Кнопка подключения КАО"),
         ("wbOrderSessionOpen", "Кнопка «Войти в заказ»"),
@@ -91,20 +91,33 @@ def run_workbench_checks(driver: WebDriver, report: Report) -> None:
     except Exception as exc:
         report.fail("QR MIDA parser", str(exc))
 
-    # Поле QR — ввод текста
+    # Карточки QR/S/N — применение скана
     try:
-        qr = driver.find_element(By.ID, "paramQrSensor")
-        driver.execute_script(
-            "arguments[0].value = arguments[1]; arguments[0].dispatchEvent(new Event('input', {bubbles:true}));",
-            qr,
-            "1234",
-        )
-        if qr.get_attribute("value") == "1234":
-            report.ok("Workbench: поле QR", "Принимает ввод")
+        qr_inputs = driver.find_elements(By.CSS_SELECTOR, "#wbSensorCardsHost .wb-sensor-qr-input")
+        if not qr_inputs:
+            report.fail("Workbench: карточки QR/S/N", "Поля сканирования не созданы")
         else:
-            report.fail("Workbench: поле QR", "Значение не сохранилось")
+            qr = qr_inputs[0]
+            result = driver.execute_script(
+                """
+                const inp = arguments[0];
+                const line = arguments[1];
+                if (!window.TM07_MIDA_QR || typeof window.TM07_MIDA_QR.applyScanToInputs !== 'function') {
+                    return { ok: false, error: 'TM07_MIDA_QR.applyScanToInputs missing' };
+                }
+                return window.TM07_MIDA_QR.applyScanToInputs(line, {
+                    expectKey: (inp && inp.getAttribute('data-sensor-key')) || undefined,
+                });
+                """,
+                qr,
+                config.MIDA_QR_SAMPLE,
+            ) or {}
+            if result.get("ok"):
+                report.ok("Workbench: карточки QR/S/N", "Скан применён")
+            else:
+                report.fail("Workbench: карточки QR/S/N", str(result.get("error") or result))
     except Exception as exc:
-        report.fail("Workbench: поле QR", str(exc))
+        report.fail("Workbench: карточки QR/S/N", str(exc))
 
 
 def run_order_page_checks(driver: WebDriver, report: Report) -> None:

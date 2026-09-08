@@ -2618,8 +2618,8 @@
 
     /**
      * «Настройка датчиков» (п.2): Modbus RTU через Web Serial (KorrektorDevice).
-     * Каждый датчик читается отдельно (адрес 1 — абсолют, адрес 2 — перепад).
-     * Давление — input 0x0003..0x0004, FP32 (табл. М.21). В регистр измерения не пишем.
+     * Сканирование адресов 1–16 (чтение 0x000A) + живой опрос измерений (0x04, регистр 0x0002).
+     * Датчик — отдельное устройство на своей шине, поэтому используем собственный экземпляр KorrektorDevice.
      */
     function initSensorConfig() {
         const status = $('wbSensorConfigStatus');
@@ -2650,11 +2650,11 @@
         const CHART_MAX_POINTS = 120;
         let chart = null;
 
-        const SENSOR_TYPE_REG = 0x000a; // holding DFOrder — проверка наличия датчика
-        const SENSOR_PRESS_REG = 0x0003; // input Pressure FP32, 2 регистра (табл. М.21)
-        const ABS_ADDR = 1;
-        const DIFF_ADDR = 2;
-        const PROBE_TIMEOUT_MS = 800;
+        const SENSOR_TYPE_REG = 0x000a; // тип/версия карты датчика
+        const SENSOR_MEAS_REG = 0x0002; // входной регистр измерений
+        const SCAN_ADDR_MIN = 1;
+        const SCAN_ADDR_MAX = 16;
+        const SCAN_TIMEOUT_MS = 400;
         const POLL_INTERVAL_MS = 1000;
         const SENSOR_USB_VID = 0x0403; // FTDI (как у КАО)
         const SENSOR_USB_PID = 0x7523; // адаптер датчика
