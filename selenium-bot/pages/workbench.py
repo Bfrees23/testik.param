@@ -63,7 +63,9 @@ class WorkbenchPage(BasePage):
         return "wb-param-locked" in classes
 
     def qr_input_present(self) -> bool:
-        return self.is_visible("paramQrSensor")
+        return self.is_visible("paramQrSensor") or bool(
+            self.driver.find_elements(By.CSS_SELECTOR, "#wbSensorCardsHost .wb-sensor-qr-input")
+        )
 
     def parse_mida_qr(self, line: str) -> dict:
         script = """

@@ -33,11 +33,20 @@ const done = arguments[arguments.length - 1];
     const stage = E.getSessionStage();
     const section = document.getElementById('wbParamSection');
     const unlocked = section && !section.classList.contains('wb-param-locked');
-    const qr = document.getElementById('paramQrSensor');
-    if (qr) {
-      qr.value = midaQr;
-      qr.dispatchEvent(new Event('input', {bubbles: true}));
-      qr.dispatchEvent(new Event('change', {bubbles: true}));
+    const qrInput =
+      document.querySelector('#wbSensorCardsHost .wb-sensor-qr-input[data-sensor-key="DA"]') ||
+      document.querySelector('#wbSensorCardsHost .wb-sensor-qr-input');
+    if (!qrInput) {
+      return done({ok: false, step: 'qr', error: 'sensor scan input missing'});
+    }
+    if (!window.TM07_MIDA_QR || typeof window.TM07_MIDA_QR.applyScanToInputs !== 'function') {
+      return done({ok: false, step: 'qr', error: 'TM07_MIDA_QR.applyScanToInputs missing'});
+    }
+    const qrRes = window.TM07_MIDA_QR.applyScanToInputs(midaQr, {
+      expectKey: qrInput.getAttribute('data-sensor-key') || undefined,
+    });
+    if (!qrRes || !qrRes.ok) {
+      return done({ok: false, step: 'qr', error: (qrRes && qrRes.error) || 'scan rejected'});
     }
     const meter = document.getElementById('paramMeterSerial');
     if (meter) {
