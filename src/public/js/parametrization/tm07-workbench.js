@@ -4219,6 +4219,92 @@
             return pickWizardSourceAddress(targetAddr);
         }
 
+        function buildWizardTargetInterface(targetAddr) {
+            const mode = readSelectInt(cfgMode, 0, 0, 1);
+            const parity = readSelectInt(cfgParity, 0, 0, 2);
+            const targetBaud = clampInt((cfgBusBaud && cfgBusBaud.value) || sensorBaud || getSelectedBaud(), 1200, 28800, 19200);
+            const baudCode = BAUD_TO_INTERFACE_CODE[targetBaud];
+            if (baudCode == null) {
+                throw new Error('Неподдерживаемая скорость шины для Interface: ' + targetBaud);
+            }
+            return {
+                mode: mode,
+                parity: parity,
+                targetBaud: targetBaud,
+                interfaceRaw: encodeInterface(targetAddr, mode, baudCode, parity),
+                serialProfile: recommendedSerialProfileForParity(parity)
+            };
+        }
+
+        async function broadcastReaddressWizard(targetAddr, name) {
+            if (!sensorDev) throw new Error('порт не подключён');
+            const target = buildWizardTargetInterface(targetAddr);
+            const initialProfile = profileByKey(sensorLinkProfile && sensorLinkProfile.key);
+            const initialSerialProfile = serialProfileByKey(sensorSerialProfile && sensorSerialProfile.key);
+            const initialBaud = sensorBaud || getSelectedBaud();
+            const scanBauds = [initialBaud].concat(
+                SCAN_FALLBACK_BAUDS.filter(function (b) {
+                    return b !== initialBaud;
+                })
+            );
+            const scanProfiles = profileOrder(initialProfile);
+            const scanSerialProfiles = serialProfileOrder(initialSerialProfile);
+            let lastErr = '';
+            setMsg('Мастер ' + targetAddr + ': датчик не найден, пробую широковещательную запись Interface (адрес 0)…');
+            for (let p = 0; p < scanProfiles.length; p += 1) {
+                const linkProfile = scanProfiles[p];
+                const switchedLink = await switchSensorLinkProfile(linkProfile);
+                if (!switchedLink) continue;
+                for (let s = 0; s < scanSerialProfiles.length; s += 1) {
+                    const serialProfile = scanSerialProfiles[s];
+                    for (let b = 0; b < scanBauds.length; b += 1) {
+                        const baud = scanBauds[b];
+                        const switchedSerial = await switchSensorSerialProfile(serialProfile, baud);
+                        if (!switchedSerial) continue;
+                        try {
+                            sensorDev.address = 0;
+                            await writeHoldingU16(SENSOR_INTERFACE_REG, target.interfaceRaw);
+                            pendingReaddressByTarget.set(targetAddr, {
+                                fromAddr: 0,
+                                toAddr: targetAddr,
+                                interfaceRaw: target.interfaceRaw,
+                                broadcast: true
+                            });
+                            sensorSerialProfile = target.serialProfile;
+                            if (cfgBusBaud) cfgBusBaud.value = String(target.targetBaud);
+                            setSelectedBaud(target.targetBaud);
+                            await disconnectSensorUsb(true);
+                            setMsg(
+                                'Мастер ' +
+                                    targetAddr +
+                                    ': широковещательная запись выполнена для ' +
+                                    name +
+                                    '. Выключите/включите питание датчика и нажмите эту же кнопку ещё раз для подтверждения.'
+                            );
+                            plog(
+                                'Датчик: мастер ' +
+                                    targetAddr +
+                                    ' сделал broadcast 0x06 Interface=' +
+                                    hex2(target.interfaceRaw) +
+                                    ' через ' +
+                                    linkProfile.label +
+                                    ', ' +
+                                    serialProfile.label +
+                                    ', ' +
+                                    baud +
+                                    ' бод.'
+                            );
+                            return true;
+                        } catch (e) {
+                            lastErr = errText(e);
+                        }
+                    }
+                }
+            }
+            setMsg('Широковещательная запись Interface не выполнена: ' + (lastErr || 'нет ответа на всех профилях.'), true);
+            return false;
+        }
+
         /** Жёсткий мастер: датчик 1 => Interface.I=1, датчик 2 => Interface.I=2. */
         async function autoConfigure(addr) {
             if (autoBusy) return;
@@ -4241,7 +4327,10 @@
                     setMsg('Мастер ' + addr + ': шаг 2/6 — проверка после перезапуска питания…');
                     const targetProbe = await probeAddress(addr);
                     if (!(targetProbe && targetProbe.ok)) {
-                        const oldProbe = await probeAddress(pending.fromAddr);
+                        let oldProbe = null;
+                        if (pending.fromAddr > 0) {
+                            oldProbe = await probeAddress(pending.fromAddr);
+                        }
                         if (oldProbe && oldProbe.ok) {
                             setMsg(
                                 'Адрес ещё не сменился: датчик отвечает по старому адресу ' +
@@ -4278,6 +4367,10 @@
                 setMsg('Мастер ' + addr + ': шаг 2/6 — поиск текущего адреса датчика…');
                 const sourceAddr = await findSourceAddressForWizard(addr);
                 if (sourceAddr == null) {
+                    if (found.size === 0) {
+                        await broadcastReaddressWizard(addr, name);
+                        return;
+                    }
                     setMsg(
                         'Найдено несколько датчиков, нельзя однозначно выбрать ' +
                             name +
