@@ -153,7 +153,7 @@
                         <button type="button" class="btn btn-outline-primary btn-sm" id="wbSensorScan" title="Сканировать адреса 1–16 (чтение 0x000A)">
                             <i class="bi bi-radar me-1"></i>Сканировать адреса
                         </button>
-                        <button type="button" class="btn btn-outline-success btn-sm" id="wbSensorPoll" title="Живой опрос измерений (0x04, регистр 0x0002)">
+                        <button type="button" class="btn btn-outline-success btn-sm" id="wbSensorPoll" title="Живой опрос измерений (0x04, Input 0x0001..0x0004; для WMode=1 автоматически отправляется Start)">
                             <i class="bi bi-activity me-1"></i>Живой опрос
                         </button>
                         <button type="button" class="btn btn-outline-warning btn-sm" id="wbSensorSetZero" title="Калибровка нуля: текущее значение ADC выбранного датчика становится сдвигом нуля (давление → 0)">
@@ -209,7 +209,7 @@
                                 </div>
                                 <div class="col-sm-4 col-md-3">
                                     <label class="form-label small mb-1" for="wbSensorDFOrder">Разрядность (знаков после запятой)</label>
-                                    <input type="number" class="form-control form-control-sm" id="wbSensorDFOrder" value="3" min="0" max="6" step="1" placeholder="3">
+                                    <input type="number" class="form-control form-control-sm" id="wbSensorDFOrder" value="3" min="0" max="16" step="1" placeholder="3">
                                 </div>
                                 <div class="col-sm-4 col-md-3">
                                     <label class="form-label small mb-1" for="wbSensorFilter">Фильтр (глубина сглаживания)</label>
@@ -398,7 +398,7 @@
                                             <button type="button" class="btn btn-outline-secondary btn-sm" id="wbSensorRegReadInput">Read Input</button>
                                         </div>
                                         <div class="col-sm-auto">
-                                            <button type="button" class="btn btn-outline-primary btn-sm" id="wbSensorRegWrite">Write 0x10</button>
+                                            <button type="button" class="btn btn-outline-primary btn-sm" id="wbSensorRegWrite" title="Последовательная запись регистров через Modbus 0x06">Write 0x06 (seq)</button>
                                         </div>
                                     </div>
                                     <pre class="small mt-2 mb-0 p-2 bg-body-tertiary border rounded font-monospace" id="wbSensorRegOut">—</pre>
