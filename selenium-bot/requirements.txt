@@ -1,0 +1,6 @@
+# Selenium bot dependencies (API + UI tests)
+pyserial>=3.5
+selenium>=4.45
+requests>=2.34
+python-dotenv>=1.2
+pytest>=9.1

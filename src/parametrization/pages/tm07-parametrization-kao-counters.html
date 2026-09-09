@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Параметризация ТМ-07 (КАО) – Счётчики</title>
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/css/bench-pages.css" rel="stylesheet">
+    <script src="/js/site-shell.js" defer></script>
+    <script src="/js/site-settings-cache.js" defer></script>
+</head>
+<body class="bench-page param-page">
+
+<header class="bench-header" data-bench-header></header>
+
+<main class="bench-main">
+<div class="container-xl">
+    <div class="bench-page-head">
+        <h1 class="bench-hero-title">Параметризация · Счётчики</h1>
+        <p class="bench-page-lead">79 параметров и список счётчиков из Google Таблицы или локальной базы.</p>
+    </div>
+    <div class="alert alert-light border small mb-2" role="note">
+        <strong>Карта регистров 50</strong> («Параметризация (1).docx», xlsx). Ошибка Modbus <code>0x02</code> — нет holding по адресу. Поля «замена reg» — только если паспорт не совпадает.
+    </div>
+    <!-- Подключение -->
+    <div class="row g-3 mb-4">
+        <div class="col-12">
+            <div class="card bench-card h-100">
+                <div class="card-header fw-semibold"><i class="bi bi-hdd-network me-1"></i>Подключение</div>
+                <div class="card-body small">
+                    <div class="row g-2 align-items-end">
+                        <div class="col-4">
+                            <label class="form-label mb-0" for="paramAddr">Modbus 1..15</label>
+                            <input type="number" class="form-control form-control-sm" id="paramAddr" min="1" max="15" value="1">
+                        </div>
+                        <div class="col-4">
+                            <label class="form-label mb-0" for="paramBaud">Бод</label>
+                            <select class="form-select form-select-sm" id="paramBaud">
+                                <option value="9600">9600</option>
+                                <option value="19200" selected>19200</option>
+                                <option value="38400">38400</option>
+                            </select>
+                        </div>
+                        <div class="col-12 d-flex flex-wrap gap-1">
+                            <button type="button" class="btn btn-primary btn-sm" id="paramConnectKao">Подключить КАО</button>
+                            <button type="button" class="btn btn-outline-primary btn-sm" id="paramConnectAny">Любой COM</button>
+                            <button type="button" class="btn btn-outline-danger btn-sm" id="paramDisconnect">Отключить</button>
+                        </div>
+                    </div>
+                    <p class="text-body-secondary mb-0 mt-2" id="paramConnStatus">отключено</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Replace address – unchanged -->
+    <div class="card bench-card mb-4">
+        <div class="card-header fw-semibold">Замена адреса (если ваша карта ≠ документу)</div>
+        <div class="card-body row g-2 small">
+            <div class="col-md-4">
+                <label class="form-label mb-0" for="ovSerialReg">Сер. № (шаг 3), первый reg (hex)</label>
+                <input type="text" class="form-control form-control-sm font-monospace" id="ovSerialReg" value="" placeholder="пусто=0x000F" title="0x000F">
+            </div>
+            <div class="col-md-4">
+                <label class="form-label mb-0" for="ovDateReg">Дата/время (шаг 20), reg (hex)</label>
+                <input type="text" class="form-control form-control-sm font-monospace" id="ovDateReg" value="" placeholder="пусто=0x008C" title="0x008C">
+            </div>
+        </div>
+    </div>
+
+    <!-- OData block – unchanged -->
+    <div class="card bench-card mb-4">
+        <div class="card-header fw-semibold"><i class="bi bi-box-arrow-in-down me-1"></i>Заказ 1С → поля таблицы</div>
+        <div class="card-body small">
+            <p class="text-body-secondary mb-2">Подстановка в <code>val_*</code> по совпадению <strong>имён реквизитов</strong> OData с шаблонами в <code>TM07_ORDER1C_KEY_RULES</code> (<code>js/parametrization/tm07-order1c-to-param.js</code>) — подстройте под свою публикацию. На странице <a href="/order-1c.html">Заказ 1С</a> после «Загрузить» строка кэшируется в сессии; здесь: «Из кэша» или ссылка «Параметризация» с заказа.</p>
+            <div class="row g-2 align-items-end mb-2">
+                <div class="col-md-2">
+                    <label class="form-label mb-0" for="paramOrder1cNumber">Номер</label>
+                    <input type="text" class="form-control form-control-sm" id="paramOrder1cNumber" placeholder="TM00-000001" autocomplete="off">
+                </div>
+                <div class="col-md-4">
+                    <label class="form-label mb-0" for="paramOrder1cEntity">Сущность OData</label>
+                    <input type="text" class="form-control form-control-sm font-monospace" id="paramOrder1cEntity" value="Document_ЗаказНаПроизводство2_2" autocomplete="off">
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label mb-0" for="paramOrder1cBase">База (до …/standard.odata)</label>
+                    <input type="url" class="form-control form-control-sm font-monospace" id="paramOrder1cBase" placeholder="http://…/standard.odata" autocomplete="off">
+                </div>
+            </div>
+            <div class="d-flex flex-wrap gap-1 mb-2">
+                <button type="button" class="btn btn-primary btn-sm" id="paramOrder1cLoad">Загрузить и подставить</button>
+                <button type="button" class="btn btn-outline-primary btn-sm" id="paramOrder1cFromCache">Из кэша</button>
+            </div>
+            <div class="mb-1">
+                <label class="form-label mb-0" for="paramOrder1cJson">Вставка JSON одной записи (как «Полный JSON» в заказе):</label>
+                <textarea id="paramOrder1cJson" class="form-control form-control-sm font-monospace" rows="3" placeholder='{"Ref_Key":"…","Number":"…", …}'></textarea>
+            </div>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="paramOrder1cApplyJson">Подставить из вставки</button>
+            <p id="paramOrder1cStatus" class="small text-body-secondary mt-2 mb-0" role="status"></p>
+        </div>
+    </div>
+
+    <!-- Counter selector – NEW -->
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <div class="d-flex flex-wrap align-items-center gap-1">
+            <label class="small text-body-secondary mb-0" for="counterSelect">Счётчик:</label>
+            <select class="form-select form-select-sm" id="counterSelect" style="width:auto;min-width:12rem">
+                <option value="">—</option>
+            </select>
+            <button type="button" class="btn btn-sm btn-outline-primary" id="loadCounterBtn">Подставить параметры</button>
+        </div>
+        <input type="search" class="form-control form-control-sm" id="paramFilter" placeholder="Поиск по таблице…" style="max-width:20rem" autocomplete="off">
+        <button type="button" class="btn btn-outline-secondary btn-sm" id="paramNowToDatetime" title="Поставить в поле шага 20 текущий unix, если пусто">Сейчас в поле п.20</button>
+        <button type="button" class="btn btn-sm btn-success" id="paramReadAll" title="Поочерёдное чтение всех holding по таблице (шаги с регистром)">Прочитать все</button>
+        <button type="button" class="btn btn-sm btn-warning" id="paramWriteAll" title="Поочерёдная запись; пустые поля пропускаются, для даты/время пусто = текущий unix">Записать все</button>
+    </div>
+
+    <!-- Table – unchanged -->
+    <div class="card bench-card mb-4">
+        <div class="table-responsive" style="max-height: min(70vh, 640px)">
+            <table class="table table-sm table-hover table-striped align-middle small mb-0">
+                <thead class="table-light position-sticky top-0 z-1">
+                    <tr>
+                        <th class="text-end" style="width:2.5rem">#</th>
+                        <th style="width:4.5rem">Рег.</th>
+                        <th style="min-width:14rem">Параметр</th>
+                        <th style="min-width:8rem">Значение</th>
+                        <th style="width:1%"></th>
+                    </tr>
+                </thead>
+                <tbody id="paramTbody"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="card bench-card">
+        <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+            <span class="fw-semibold">Журнал</span>
+            <button type="button" class="btn btn-outline-secondary btn-sm" id="paramClearLog">Очистить</button>
+        </div>
+        <div class="card-body p-0">
+            <div id="paramLog" class="log-container border-0" style="min-height:6rem; max-height:18rem; overflow-y:auto; font-size:0.8rem; padding:0.5rem 0.75rem"></div>
+        </div>
+    </div>
+</div>
+</main>
+
+<input type="hidden" id="paramLkgHex" value="">
+<input type="hidden" id="paramLkgReg" value="">
+<input type="hidden" id="paramLkgDelayMs" value="">
+
+<script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+<script src="/js/korrektor-device.js"></script>
+<script src="/js/parametrization/tm07-parametrization-data.js"></script>
+    <script src="/js/parametrization/tm07-complex-meter-types-data.js"></script>
+    <script src="/js/parametrization/tm07-volume-error-limits-data.js"></script>
+    <script src="/js/parametrization/tm07-corrector-execution-data.js"></script>
+    <script src="/js/parametrization/tm07-corrector-error-limits-data.js"></script>
+    <script src="/js/parametrization/tm07-param-auto-fill-data.js"></script>
+<script src="/js/tm07-bench-events.js"></script>
+<script src="/js/site-operator-auth.js"></script>
+<script src="/js/parametrization/tm07-serial-registry.js"></script>
+<script src="/js/parametrization/order-1c-odata.js"></script>
+<script src="/js/parametrization-kao/tm07-parametrization-kao.js"></script>
+<script src="/js/parametrization/tm07-serial-registry-ui.js"></script>
+<script src="/js/parametrization/tm07-order1c-to-param.js"></script>
+<script src="/js/parametrization/tm07-counters.js"></script>
+<script>
+    document.getElementById('paramClearLog')?.addEventListener('click', function () { var p = document.getElementById('paramLog'); if (p) p.innerHTML = ''; });
+</script>
+<script src="/js/site-nav-auth.js" defer></script>
+</body>
+</html>

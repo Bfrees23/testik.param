@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Просмотр BarTender (.btw)</title>
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/css/bench-pages.css" rel="stylesheet">
+    <script src="/js/site-shell.js" defer></script>
+    <style>
+        .btw-dropzone {
+            border: 2px dashed var(--bs-border-color);
+            border-radius: 0.75rem;
+            padding: 2rem 1rem;
+            text-align: center;
+            transition: border-color 0.15s, background 0.15s;
+            cursor: pointer;
+        }
+        .btw-dropzone.dragover {
+            border-color: var(--bs-primary);
+            background: rgba(var(--bs-primary-rgb), 0.06);
+        }
+        .btw-hex {
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.75rem;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 280px;
+            overflow: auto;
+        }
+        .btw-thumb {
+            max-width: 100%;
+            height: auto;
+            border: 1px solid var(--bs-border-color);
+            border-radius: 0.375rem;
+            background: #fff;
+        }
+    </style>
+</head>
+<body class="bench-page">
+
+    <header class="bench-header" data-bench-header></header>
+
+    <main class="bench-main">
+        <div class="container-xl">
+            <div class="bench-page-head">
+                <h1 class="bench-hero-title">Просмотр .btw</h1>
+                <p class="bench-page-lead">Чтение шаблонов BarTender: метаданные, заголовок файла и встроенные PNG. Для настройки координат полей — <a href="/nameplate-template-editor.html">редактор шильдика</a>.</p>
+            </div>
+
+            <div class="row g-4">
+                <div class="col-lg-5">
+                    <div class="card bench-card shadow-sm mb-4">
+                        <div class="card-header fw-semibold"><i class="bi bi-folder2-open me-1"></i>Шаблоны проекта</div>
+                        <div class="card-body">
+                            <p class="small text-body-secondary">Файлы из <code>data/nameplate-templates/</code></p>
+                            <div id="btwTemplateList" class="list-group list-group-flush border rounded"></div>
+                            <p id="btwListStatus" class="small text-body-secondary mt-3 mb-0"></p>
+                        </div>
+                    </div>
+
+                    <div class="card bench-card shadow-sm">
+                        <div class="card-header fw-semibold"><i class="bi bi-cloud-upload me-1"></i>Загрузить файл</div>
+                        <div class="card-body">
+                            <div id="btwDropzone" class="btw-dropzone" tabindex="0" role="button" aria-label="Выбрать или перетащить .btw файл">
+                                <i class="bi bi-file-earmark-binary fs-2 d-block mb-2 text-primary"></i>
+                                <div class="fw-semibold">Перетащите .btw сюда</div>
+                                <div class="small text-body-secondary mt-1">или нажмите для выбора (до 15 МБ)</div>
+                            </div>
+                            <input type="file" id="btwFileInput" class="d-none" accept=".btw,application/octet-stream">
+                            <p id="btwUploadStatus" class="small text-body-secondary mt-3 mb-0"></p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="col-lg-7">
+                    <div id="btwEmptyState" class="card bench-card shadow-sm">
+                        <div class="card-body text-center text-body-secondary py-5">
+                            <i class="bi bi-eye fs-1 d-block mb-3"></i>
+                            Выберите шаблон из списка или загрузите свой .btw
+                        </div>
+                    </div>
+
+                    <div id="btwResult" class="d-none">
+                        <div class="card bench-card shadow-sm mb-4">
+                            <div class="card-header d-flex flex-wrap align-items-center justify-content-between gap-2">
+                                <span class="fw-semibold"><i class="bi bi-info-circle me-1"></i><span id="btwResultTitle">Файл</span></span>
+                                <span id="btwValidBadge" class="badge"></span>
+                            </div>
+                            <div class="card-body">
+                                <div class="row g-3 small">
+                                    <div class="col-sm-6"><span class="text-body-secondary">Размер:</span> <span id="btwFileSize" class="fw-semibold"></span></div>
+                                    <div class="col-sm-6"><span class="text-body-secondary">PNG внутри:</span> <span id="btwPngCount" class="fw-semibold"></span></div>
+                                    <div class="col-sm-6"><span class="text-body-secondary">Формат:</span> <span id="btwFormat" class="font-monospace"></span></div>
+                                    <div class="col-sm-6"><span class="text-body-secondary">QR-маркер:</span> <span id="btwQrMarker" class="fw-semibold"></span></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card bench-card shadow-sm mb-4">
+                            <div class="card-header fw-semibold"><i class="bi bi-tags me-1"></i>Metadata</div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-sm table-striped mb-0 align-middle">
+                                        <tbody id="btwMetadataBody"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card bench-card shadow-sm mb-4">
+                            <div class="card-header fw-semibold"><i class="bi bi-file-text me-1"></i>Заголовок файла</div>
+                            <div class="card-body p-0">
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0 align-middle">
+                                        <tbody id="btwHeaderBody"></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card bench-card shadow-sm mb-4">
+                            <div class="card-header fw-semibold"><i class="bi bi-fonts me-1"></i>Читаемый текст в файле</div>
+                            <div class="card-body">
+                                <p class="small text-body-secondary mb-2">Весь текст, который реально хранится как строки (не бинарный мусор):</p>
+                                <pre id="btwReadableText" class="btw-hex mb-2 bg-body-tertiary rounded p-3" style="max-height:320px"></pre>
+                                <p id="btwLabelTextNote" class="small mb-0"></p>
+                            </div>
+                        </div>
+
+                        <div class="card bench-card shadow-sm mb-4">
+                            <div class="card-header fw-semibold"><i class="bi bi-input-cursor-text me-1"></i>Поля из nameplate-config.json</div>
+                            <div class="card-body">
+                                <p class="small text-body-secondary">Имена Named Substrings, которые отправляет стенд при печати через BarTender:</p>
+                                <div id="btwKnownFields" class="d-flex flex-wrap gap-2"></div>
+                            </div>
+                        </div>
+
+                        <div id="btwImagesCard" class="card bench-card shadow-sm mb-4 d-none">
+                            <div class="card-header fw-semibold"><i class="bi bi-images me-1"></i>Встроенные PNG</div>
+                            <div class="card-body">
+                                <div id="btwImages" class="row g-3"></div>
+                            </div>
+                        </div>
+
+                        <div class="card bench-card shadow-sm mb-4">
+                            <div class="card-header fw-semibold"><i class="bi bi-braces me-1"></i>Hex (первые 256 байт)</div>
+                            <div class="card-body">
+                                <pre id="btwHexPreview" class="btw-hex mb-0 bg-body-tertiary rounded p-3"></pre>
+                            </div>
+                        </div>
+
+                        <div class="alert alert-secondary small mb-0" id="btwNote"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script src="/js/btw-viewer.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,30 @@
+.env
+src/data/admin_password.hash
+src/logs/*.txt
+docker/nginx/logs/*.log
+docker/nginx/ssl/ca.key
+docker/nginx/ssl/prod.key
+docker/nginx/ssl/*.csr
+docker/nginx/ssl/*.ext
+docker/nginx/ssl/*.srl
+*.log
+
+# Runtime data (secrets, DB, generated files)
+data/admin_password.hash
+data/*.sqlite
+data/*.sqlite-*
+data/device_settings.json
+data/nameplate-config.json
+data/passports/
+data/nameplates/
+data/nameplate-generated/
+data/nameplate-templates/_*
+data/.rate-*.json
+data/serial/
+src/logs/.rate-*.json
+
+# Selenium bot: local browser binaries & virtualenv
+selenium-bot/.chrome/
+selenium-bot/.venv/
+**/__pycache__/
+*.pyc

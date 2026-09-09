@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ: настройки приборов</title>
+    <link href="/vendor/bootstrap/css/bootstrap.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/vendor/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" crossorigin="anonymous">
+    <link href="/css/bench-pages.css" rel="stylesheet">
+</head>
+<body class="bench-page">
+
+    <header class="navbar navbar-expand-lg bench-admin-header">
+        <div class="container-xl py-2">
+            <span class="navbar-brand"><i class="bi bi-gear me-2"></i>Администратор</span>
+            <span id="adminRoleBadge" class="badge text-bg-secondary d-none"></span>
+            <div class="ms-auto d-flex flex-wrap gap-2">
+                <a class="btn btn-outline-light btn-sm" href="/index.html">Главная</a>
+                <button type="button" class="btn btn-warning btn-sm" id="logoutBtn">Выйти</button>
+            </div>
+        </div>
+    </header>
+
+    <main class="bench-main">
+    <div class="container-xl">
+        <div id="adminStatus" class="alert alert-secondary border-0 py-2 small mb-3" role="status">Загрузка…</div>
+        <p id="adminMeta" class="small text-body-secondary mb-3"></p>
+
+        <ul class="nav nav-pills flex-wrap gap-1 mb-4" id="adminSectionNav">
+            <li class="nav-item"><a class="nav-link active" href="#admSecDevices">Приборы</a></li>
+            <li class="nav-item"><a class="nav-link" href="#admSecWorkstations">Стенды</a></li>
+            <li class="nav-item"><a class="nav-link" href="#admSecFirmware">Прошивки</a></li>
+            <li class="nav-item"><a class="nav-link" href="#admSecCounters">Счётчики</a></li>
+            <li class="nav-item"><a class="nav-link" href="#admSecSensors">Датчики</a></li>
+            <li class="nav-item"><a class="nav-link" href="#admSecOps">Сессии / S/N</a></li>
+            <li class="nav-item"><a class="nav-link" href="#admSecParams">Параметры</a></li>
+            <li class="nav-item"><a class="nav-link" href="#admSecEvents">События</a></li>
+            <li class="nav-item"><a class="nav-link" href="#admSecLogs">Логи</a></li>
+            <li class="nav-item"><a class="nav-link" href="#admSecDb">БД</a></li>
+            <li class="nav-item"><a class="nav-link" href="#admSecOperators">Операторы</a></li>
+            <li class="nav-item"><a class="nav-link" href="#admSecTools">Ссылки</a></li>
+        </ul>
+
+        <div id="admHealthBar" class="alert alert-light border py-2 small mb-4 d-none" role="status"></div>
+
+        <div id="admSecDevices">
+        <div class="row g-4 mb-4">
+            <div class="col-lg-6">
+                <div class="card bench-card h-100">
+                    <div class="card-header fw-semibold"><i class="bi bi-usb-symbol me-1"></i>USB / МИТ 8 (глобально)</div>
+                    <div class="card-body small">
+                        <input type="hidden" id="adm_version" value="1">
+                        <div class="mb-2">
+                            <label class="form-label mb-0">VID (hex)</label>
+                            <input type="text" class="form-control form-control-sm" id="adm_usb_vid" value="0x0403">
+                        </div>
+                        <div class="row g-2">
+                            <div class="col-6">
+                                <label class="form-label mb-0">МИТ: baud</label>
+                                <input type="number" class="form-control form-control-sm" id="adm_mit_baud" value="9600">
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label mb-0">МИТ: PID (hex)</label>
+                                <input type="text" class="form-control form-control-sm" id="adm_mit_pid" value="0x6015">
+                            </div>
+                        </div>
+                        <div class="mt-2">
+                            <label class="form-label mb-0">Подпись</label>
+                            <input type="text" class="form-control form-control-sm" id="adm_mit_label" value="МИТ 8">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="card bench-card h-100">
+                    <div class="card-header fw-semibold"><i class="bi bi-fire me-1"></i>M90 (общие + 3 канала)</div>
+                    <div class="card-body small">
+                        <div class="row g-2 mb-2">
+                            <div class="col-4">
+                                <label class="form-label mb-0">Baud</label>
+                                <input type="number" class="form-control form-control-sm" id="adm_m90_baud" value="9600">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label mb-0">Адрес UAIL</label>
+                                <input type="number" class="form-control form-control-sm" id="adm_m90_addr" value="2">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label mb-0">Тип КТ</label>
+                                <input type="number" class="form-control form-control-sm" id="adm_m90_type" value="64">
+                            </div>
+                        </div>
+                        <p class="text-muted mb-1">Каналы стенда (id, PID hex, уставка °C, имя):</p>
+                        <div class="table-responsive">
+                            <table class="table table-sm table-bordered align-middle mb-0">
+                                <thead class="table-light"><tr><th>#</th><th>Id</th><th>PID</th><th>°C</th><th>Имя</th></tr></thead>
+                                <tbody>
+                                    <tr>
+                                        <td>1</td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_0_id" type="text" value="m90_6044"></td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_0_pid" type="text" value="0x6044"></td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_0_sp" type="number" step="0.1" value="-40"></td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_0_lbl" type="text" value="M90 #1 (−40)"></td>
+                                    </tr>
+                                    <tr>
+                                        <td>2</td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_1_id" type="text" value="m90_6045"></td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_1_pid" type="text" value="0x6045"></td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_1_sp" type="number" step="0.1" value="10"></td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_1_lbl" type="text" value="M90 #2 (+10)"></td>
+                                    </tr>
+                                    <tr>
+                                        <td>3</td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_2_id" type="text" value="m90_6049"></td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_2_pid" type="text" value="0x6049"></td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_2_sp" type="number" step="0.1" value="60"></td>
+                                        <td><input class="form-control form-control-sm" id="adm_m90_2_lbl" type="text" value="M90 #3 (+60)"></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="row g-4 mb-4">
+            <div class="col-lg-6">
+                <div class="card bench-card h-100">
+                    <div class="card-header fw-semibold"><i class="bi bi-cpu me-1"></i>ТМ-07 (Modbus)</div>
+                    <div class="card-body small">
+                        <div class="row g-2">
+                            <div class="col-4">
+                                <label class="form-label mb-0">Baud по умолч.</label>
+                                <input type="number" class="form-control form-control-sm" id="adm_tm07_baud" value="19200">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label mb-0">Адрес</label>
+                                <input type="number" class="form-control form-control-sm" id="adm_tm07_addr" value="1" min="1" max="15">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label mb-0">КАО USB PID (hex)</label>
+                                <input type="text" class="form-control form-control-sm" id="adm_tm07_kao_pid" value="0x604E" title="Адаптер RS485 «КАО» в тест-процессе">
+                            </div>
+                        </div>
+                        <div class="row g-2 mt-1">
+                            <div class="col-4">
+                                <label class="form-label mb-0">REG_LKG hex</label>
+                                <input type="text" class="form-control form-control-sm" id="adm_tm07_lkg" value="07B6" title="REG_LKG, карта 50">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label mb-0">DateTime hex</label>
+                                <input type="text" class="form-control form-control-sm" id="adm_tm07_dt" value="008C">
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label mb-0">Пример write hex</label>
+                                <input type="text" class="form-control form-control-sm" id="adm_tm07_wex" value="07B6" title="REG_LKG, карта 50">
+                            </div>
+                        </div>
+                        <div class="row g-2 mt-1">
+                            <div class="col-12">
+                                <label class="form-label mb-0">Заводской S/N, 1-й регистр (hex, Char×20)</label>
+                                <input type="text" class="form-control form-control-sm" id="adm_tm07_sn_reg" value="000F" title="Uint64, 4 регистра (карта 50: 0x000F)">
+                            </div>
+                        </div>
+                        <div class="row g-2 mt-2 pt-2 border-top">
+                            <div class="col-md-6">
+                                <label class="form-label mb-0">ЛКГ поставщика (hex, 4 байта)</label>
+                                <input type="text" class="form-control form-control-sm font-monospace" id="adm_tm07_lkg_supplier" value="" placeholder="или TM07_SUPPLIER_LKG_HEX в .env" autocomplete="off">
+                                <div class="form-text">Можно не заполнять здесь — задайте <code>TM07_SUPPLIER_LKG_HEX</code> в <code>.env</code></div>
+                            </div>
+                            <div class="col-md-6">
+                                <label class="form-label mb-0">ЛКГ производителя (hex, опц.)</label>
+                                <input type="text" class="form-control form-control-sm font-monospace" id="adm_tm07_lkg_mfg" value="" autocomplete="off" placeholder="или TM07_MANUFACTURER_LKG_HEX">
+                                <div class="form-text">Для п.3/4/5 — или <code>TM07_MANUFACTURER_LKG_HEX</code> в <code>.env</code></div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label mb-0">Пауза после ЛКГ, мс</label>
+                                <input type="number" class="form-control form-control-sm" id="adm_tm07_lkg_delay" value="150" min="0" max="2000">
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label mb-0">Пароль замка производителя</label>
+                                <input type="text" class="form-control form-control-sm font-monospace" id="adm_tm07_lock_mfg" value="авто" disabled title="Считается из даты/времени прибора (ДДММЧЧ+0x20) → 0x06A7">
+                                <div class="form-text">авто из часов прибора</div>
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label mb-0">Пароль замка поставщика</label>
+                                <input type="text" class="form-control form-control-sm font-monospace" id="adm_tm07_lock_sup" value="-22" autocomplete="off" title="ASCII → atoi → 0x06A4 (после производителя)">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="col-lg-6">
+                <div class="card bench-card h-100">
+                    <div class="card-header fw-semibold"><i class="bi bi-speedometer2 me-1"></i>ПКД-160 (АРМ)</div>
+                    <div class="card-body small">
+                        <div class="row g-2">
+                            <div class="col-6 col-md-3">
+                                <label class="form-label mb-0">Baud</label>
+                                <input type="number" class="form-control form-control-sm" id="adm_pkd_baud" value="9600">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label mb-0">Адрес шины</label>
+                                <input type="number" class="form-control form-control-sm" id="adm_pkd_addr" value="1">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label mb-0">VID USB (hex)</label>
+                                <input type="text" class="form-control form-control-sm" id="adm_pkd_vid" value="0x04D8" title="Microchip ПКД: 0x04D8; FTDI: 0x0403">
+                            </div>
+                            <div class="col-6 col-md-3">
+                                <label class="form-label mb-0">PID USB (hex)</label>
+                                <input type="text" class="form-control form-control-sm" id="adm_pkd_pid" value="0x000A" title="CDC demo ПКД: 0x000A; FTDI 6014 — старая связка">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card bench-card mb-4">
+            <div class="card-header fw-semibold">Стенд: регистры корректора и умолчания сценария</div>
+            <div class="card-body small">
+                <div class="row g-2 mb-3">
+                    <div class="col-6 col-md">
+                        <label class="form-label mb-0">T read hex</label>
+                        <input type="text" class="form-control form-control-sm" id="adm_reg_tr" value="0120">
+                    </div>
+                    <div class="col-6 col-md">
+                        <label class="form-label mb-0">T write hex</label>
+                        <input type="text" class="form-control form-control-sm" id="adm_reg_tw" value="0124">
+                    </div>
+                    <div class="col-6 col-md">
+                        <label class="form-label mb-0">P abs hex</label>
+                        <input type="text" class="form-control form-control-sm" id="adm_reg_pa" value="0200">
+                    </div>
+                    <div class="col-6 col-md">
+                        <label class="form-label mb-0">P diff hex</label>
+                        <input type="text" class="form-control form-control-sm" id="adm_reg_pd" value="0202">
+                    </div>
+                    <div class="col-12 col-md">
+                        <label class="form-label mb-0">ЛКГ стенда M90 (hex)</label>
+                        <input type="text" class="form-control form-control-sm" id="adm_reg_lkg" value="" placeholder="только M90" title="Только калибровочный стенд M90">
+                    </div>
+                </div>
+                <div class="row g-2">
+                    <div class="col-6 col-md-3">
+                        <label class="form-label mb-0">Ramp M90, мин</label>
+                        <input type="number" class="form-control form-control-sm" id="adm_sc_ramp" value="10">
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label mb-0">Стаб. M90, мин</label>
+                        <input type="number" class="form-control form-control-sm" id="adm_sc_stab" value="5">
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label mb-0">Допуск T, °C</label>
+                        <input type="number" class="form-control form-control-sm" id="adm_sc_ttol" step="0.05" value="0.5">
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label mb-0">Плато МИТ, мин</label>
+                        <input type="number" class="form-control form-control-sm" id="adm_sc_flatm" value="5">
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label mb-0">Порог плато МИТ</label>
+                        <input type="number" class="form-control form-control-sm" id="adm_sc_flatt" step="0.05" value="0.15">
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label mb-0">Допуск P, кПа</label>
+                        <input type="number" class="form-control form-control-sm" id="adm_sc_ptol" step="0.01" value="0.5">
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label mb-0">Допуск ПКД, кПа</label>
+                        <input type="number" class="form-control form-control-sm" id="adm_sc_pkdt" step="0.01" value="0.3">
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label mb-0">Abs min/max</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control" id="adm_sc_amin" step="0.01" value="0">
+                            <input type="number" class="form-control" id="adm_sc_amax" step="0.01" value="100">
+                        </div>
+                    </div>
+                    <div class="col-6 col-md-3">
+                        <label class="form-label mb-0">Diff min/max</label>
+                        <div class="input-group input-group-sm">
+                            <input type="number" class="form-control" id="adm_sc_dmin" step="0.01" value="0">
+                            <input type="number" class="form-control" id="adm_sc_dmax" step="0.01" value="100">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="d-flex flex-wrap gap-2 mb-4">
+            <button type="button" class="btn btn-primary" id="saveBtn"><i class="bi bi-cloud-arrow-up me-1"></i>Сохранить на сервере</button>
+            <button type="button" class="btn btn-outline-warning" id="resetServerBtn"><i class="bi bi-arrow-counterclockwise me-1"></i>Сбросить к умолчаниям (файл)</button>
+        </div>
+        </div><!-- /admSecDevices -->
+
+        <div id="admSecWorkstations" class="card bench-card mb-4">
+            <div class="card-header fw-semibold"><i class="bi bi-pc-display me-1"></i>Рабочие места (стенды)</div>
+            <div class="card-body small">
+                <p class="text-body-secondary mb-3">
+                    ПК стенда. Идентификация места — локальный агент Senselock (свисток USB).
+                    Для каждого можно задать имя и USB VID/PID устройств — они перекроют глобальные настройки приборов на этом ПК.
+                </p>
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                    <a class="btn btn-success btn-sm" href="/api/senselock-agent-download.php?format=cmd">
+                        <i class="bi bi-download me-1"></i>Скачать агент Senselock (.cmd)
+                    </a>
+                    <a class="btn btn-outline-secondary btn-sm" href="/api/senselock-agent-download.php?format=zip">ZIP</a>
+                    <span class="small text-body-secondary">Двойной клик → ключ в USB → окно агента не закрывать</span>
+                </div>
+                <div class="table-responsive mb-3">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Имя</th>
+                                <th>Code / FP</th>
+                                <th>Host</th>
+                                <th>Активен</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="admWsTbody">
+                            <tr><td colspan="5" class="text-body-secondary">Загрузка…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="admWsEditor" class="border rounded p-3 bg-body-tertiary d-none">
+                    <div class="fw-semibold mb-2" id="admWsEditorTitle">Стенд</div>
+                    <input type="hidden" id="adm_ws_id" value="">
+                    <div class="row g-2 mb-2">
+                        <div class="col-md-6">
+                            <label class="form-label mb-0">Отображаемое имя</label>
+                            <input type="text" class="form-control form-control-sm" id="adm_ws_name">
+                        </div>
+                        <div class="col-md-3 d-flex align-items-end">
+                            <div class="form-check">
+                                <input class="form-check-input" type="checkbox" id="adm_ws_active" checked>
+                                <label class="form-check-label" for="adm_ws_active">Активен</label>
+                            </div>
+                        </div>
+                    </div>
+                    <p class="mb-1 text-body-secondary">USB-профили этого стенда (пусто = глобальные)</p>
+                    <div class="row g-2 mb-2">
+                        <div class="col-6 col-md-3">
+                            <label class="form-label mb-0">VID</label>
+                            <input type="text" class="form-control form-control-sm" id="adm_ws_vid" placeholder="0x0403">
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label mb-0">ТМ-07 PID</label>
+                            <input type="text" class="form-control form-control-sm" id="adm_ws_tm07_pid" placeholder="0x604E">
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label mb-0">МИТ PID</label>
+                            <input type="text" class="form-control form-control-sm" id="adm_ws_mit_pid" placeholder="0x6015">
+                        </div>
+                        <div class="col-6 col-md-3">
+                            <label class="form-label mb-0">ПКД PID</label>
+                            <input type="text" class="form-control form-control-sm" id="adm_ws_pkd_pid" placeholder="">
+                        </div>
+                        <div class="col-12 col-md-6">
+                            <label class="form-label mb-0">S/N адаптера КАО</label>
+                            <input type="text" class="form-control form-control-sm font-monospace" id="adm_ws_kao_sn" placeholder="заполняется при подключении КАО" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-primary btn-sm" id="admWsSaveBtn">Сохранить стенд</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="admWsCancelBtn">Свернуть</button>
+                        <span id="admWsMsg" class="small text-body-secondary align-self-center"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div id="admSecFirmware" class="card bench-card mb-4">
+            <div class="card-header fw-semibold"><i class="bi bi-motherboard me-1"></i>Прошивки ТМ-07</div>
+            <div class="card-body small">
+                <p class="text-body-secondary mb-3">
+                    Загрузка <code>.bin</code> в <code>data/firmware</code>. Оператор выбирает файл на странице КАО.
+                </p>
+                <div class="row g-2 align-items-end mb-3">
+                    <div class="col-md-8">
+                        <label class="form-label mb-0" for="admFwFile">Файл .bin</label>
+                        <input type="file" class="form-control form-control-sm" id="admFwFile" accept=".bin,application/octet-stream">
+                    </div>
+                    <div class="col-md-4">
+                        <button type="button" class="btn btn-success btn-sm w-100" id="admFwUploadBtn">
+                            <i class="bi bi-upload me-1"></i>Загрузить
+                        </button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr><th>Файл</th><th>Версия</th><th>Размер</th><th></th></tr>
+                        </thead>
+                        <tbody id="admFwTbody">
+                            <tr><td colspan="4" class="text-body-secondary">Загрузка…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p id="admFwMsg" class="small mt-2 mb-0"></p>
+            </div>
+        </div>
+
+        <div id="admSecCounters" class="card bench-card mb-5">
+            <div class="card-header fw-semibold"><i class="bi bi-speedometer2 me-1"></i>Счётчики (типоразмеры)</div>
+            <div class="card-body small">
+                <p class="text-body-secondary mb-3">
+                    Добавление по типоразмеру: семейство → G/DN/Q. Параметры паспорта подставляются сразу.
+                </p>
+                <input type="hidden" id="counter_id" value="">
+                <div class="row g-2 mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label mb-0">Семейство / паспорт</label>
+                        <select class="form-select form-select-sm" id="admMeterFamily"></select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label mb-0">Типоразмер</label>
+                        <select class="form-select form-select-sm" id="admMeterType"></select>
+                    </div>
+                </div>
+                <div class="row g-2 mb-3">
+                    <div class="col-md-8">
+                        <label class="form-label mb-0">Название в списке</label>
+                        <input type="text" class="form-control form-control-sm" id="counter_name" placeholder="заполнится из типоразмера">
+                    </div>
+                    <div class="col-md-4 d-flex align-items-end">
+                        <span id="admCounterTypeHint" class="small text-body-secondary"></span>
+                    </div>
+                </div>
+                <div id="admCounterParamsPanel" class="border rounded p-2 mb-3 bg-body-tertiary d-none">
+                    <div class="row g-2" id="admCounterParamsGrid"></div>
+                </div>
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                    <button type="button" class="btn btn-success btn-sm" id="saveCounterBtn"><i class="bi bi-save me-1"></i>Сохранить типоразмер</button>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="resetCounterFormBtn"><i class="bi bi-x-circle me-1"></i>Сбросить</button>
+                    <button type="button" class="btn btn-outline-danger btn-sm" id="deleteCounterBtn"><i class="bi bi-trash me-1"></i>Удалить</button>
+                    <span id="admCounterMsg" class="small text-body-secondary align-self-center"></span>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr><th>ID</th><th>Типоразмер</th><th>G / Q</th><th></th></tr>
+                        </thead>
+                        <tbody id="admCountersTbody">
+                            <tr><td colspan="4" class="text-body-secondary">Загрузка…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <select class="d-none" id="counterSelectAdmin"></select>
+            </div>
+        </div>
+
+        <div id="admSecSensors" class="card bench-card mb-4">
+            <div class="card-header fw-semibold"><i class="bi bi-link-45deg me-1"></i>Датчики ↔ корректор</div>
+            <div class="card-body small">
+                <p class="text-body-secondary mb-3">
+                    Поиск: S/N корректора (300…) или S/N датчика. Все серийники уникальны —
+                    один датчик только у одного корректора.
+                </p>
+                <div class="row g-2 align-items-end mb-3">
+                    <div class="col-md-8">
+                        <label class="form-label mb-0" for="admSensorQuery">Поиск</label>
+                        <input type="text" class="form-control form-control-sm" id="admSensorQuery" placeholder="3002609001 или 24428615 или DA">
+                    </div>
+                    <div class="col-md-4 d-flex gap-2">
+                        <button type="button" class="btn btn-primary btn-sm flex-grow-1" id="admSensorSearchBtn">Найти</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="admSensorRefreshBtn">Все</button>
+                    </div>
+                </div>
+                <p id="admSensorMsg" class="small text-body-secondary mb-2"></p>
+                <div class="table-responsive border rounded" style="max-height: 22rem;">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Корректор</th>
+                                <th>Канал</th>
+                                <th>Датчик</th>
+                                <th>Заказ</th>
+                                <th>Когда</th>
+                                <th class="text-end"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="admSensorTbody">
+                            <tr><td colspan="5" class="text-body-secondary">Загрузка…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="admSecDb" class="card bench-card mb-4">
+            <div class="card-header fw-semibold d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <span><i class="bi bi-database me-1"></i>База данных (просмотр)</span>
+                <span id="admDbDriver" class="small text-body-secondary"></span>
+            </div>
+            <div class="card-body small">
+                <p class="text-body-secondary mb-3">
+                    Только чтение таблиц <code>TM07_*</code>. PIN и длинные payload обрезаются.
+                </p>
+                <div class="row g-2 mb-3" id="admDbTableCards"></div>
+                <div class="row g-2 align-items-end mb-2">
+                    <div class="col-md-5">
+                        <label class="form-label mb-0" for="admDbTableSelect">Таблица</label>
+                        <select class="form-select form-select-sm" id="admDbTableSelect"></select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label mb-0" for="admDbLimit">Лимит</label>
+                        <select class="form-select form-select-sm" id="admDbLimit">
+                            <option value="25">25</option>
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                        </select>
+                    </div>
+                    <div class="col-md-5 d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="admDbRefreshBtn">
+                            <i class="bi bi-arrow-clockwise me-1"></i>Обновить
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="admDbPrevBtn">←</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="admDbNextBtn">→</button>
+                        <span id="admDbPager" class="small text-body-secondary align-self-center"></span>
+                    </div>
+                </div>
+                <p id="admDbMsg" class="small text-body-secondary mb-2"></p>
+                <div class="table-responsive border rounded" style="max-height: 28rem;">
+                    <table class="table table-sm table-striped table-hover align-middle mb-0">
+                        <thead class="table-light sticky-top" id="admDbThead"></thead>
+                        <tbody id="admDbTbody">
+                            <tr><td class="text-body-secondary">Выберите таблицу</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="admSecOps" class="card bench-card mb-4 border-danger border-opacity-25">
+            <div class="card-header fw-semibold"><i class="bi bi-journal-bookmark me-1"></i>Сессии · админ</div>
+            <div class="card-body small">
+                <p class="text-body-secondary mb-3">
+                    Список, удаление одной/всех, закрытие зависших active. S/N и счётчики месяца — ниже.
+                </p>
+                <div class="d-flex flex-wrap gap-2 align-items-center mb-3">
+                    <select class="form-select form-select-sm" id="admSessionsFilter" style="max-width:10rem">
+                        <option value="all">Все</option>
+                        <option value="active">Активные</option>
+                        <option value="closed">Закрытые</option>
+                    </select>
+                    <button type="button" class="btn btn-outline-secondary btn-sm" id="admSessionsRefreshBtn">
+                        <i class="bi bi-arrow-clockwise me-1"></i>Обновить
+                    </button>
+                    <button type="button" class="btn btn-outline-warning btn-sm" id="admCloseStaleBtn" title="Закрыть active старше N часов">
+                        Закрыть зависшие
+                    </button>
+                    <input type="number" class="form-control form-control-sm" id="admStaleHours" value="8" min="1" max="720" style="max-width:5rem" title="Часов">
+                    <button type="button" class="btn btn-outline-danger btn-sm" id="admDeleteAllSessionsBtn">
+                        <i class="bi bi-trash3 me-1"></i>Удалить все
+                    </button>
+                    <span id="admSessionsMsg" class="small text-body-secondary"></span>
+                </div>
+                <div class="table-responsive border rounded mb-4" style="max-height:18rem">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>#</th>
+                                <th>Заказ</th>
+                                <th>Сост.</th>
+                                <th>Этап</th>
+                                <th>S/N</th>
+                                <th>Оператор</th>
+                                <th>Открыта</th>
+                                <th class="text-end"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="admSessionsBody">
+                            <tr><td colspan="8" class="text-body-secondary">Загрузка…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <hr class="my-3">
+                <h3 class="h6 fw-semibold mb-2"><i class="bi bi-upc-scan me-1"></i>Выданные серийные номера</h3>
+                <p class="text-body-secondary mb-2">
+                    Удаление из <code>TM07_SERIAL_ISSUED</code>. Счётчик месяца правится отдельно (ниже).
+                </p>
+                <div class="row g-2 align-items-end mb-2">
+                    <div class="col-md-5">
+                        <label class="form-label mb-0" for="admSerialQuery">Поиск (S/N или заказ)</label>
+                        <input type="text" class="form-control form-control-sm font-monospace" id="admSerialQuery" placeholder="300… / ТМ00-…" autocomplete="off">
+                    </div>
+                    <div class="col-md-auto d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="admSerialSearchBtn">Найти</button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="admSerialRefreshBtn">Обновить</button>
+                    </div>
+                    <div class="col-12">
+                        <span id="admSerialsMsg" class="small text-body-secondary"></span>
+                    </div>
+                </div>
+                <div class="table-responsive mb-4">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>S/N</th>
+                                <th>Тип</th>
+                                <th>Заказ</th>
+                                <th>Выдан</th>
+                                <th class="text-end"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="admSerialsBody">
+                            <tr><td colspan="5" class="text-body-secondary">Загрузка…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <h3 class="h6 fw-semibold mb-2"><i class="bi bi-123 me-1"></i>Счётчики выдачи (месяц)</h3>
+                <p class="text-body-secondary mb-2">
+                    Серийники выдаются <strong>только из БД</strong>
+                    (<code>TM07_SERIAL_COUNTER</code> + <code>TM07_SERIAL_ISSUED</code>).
+                    Excel больше не читается и не пишется.
+                    Следующий номер = <code>LAST_SEQ + 1</code>. Обнулите LAST_SEQ, чтобы начать месяц с …001.
+                    Повторный заказ получает уже выданный S/N из <code>TM07_SERIAL_ISSUED</code>.
+                </p>
+                <div class="table-responsive mb-2">
+                    <table class="table table-sm align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Prefix</th>
+                                <th>Месяц</th>
+                                <th>LAST_SEQ (БД)</th>
+                                <th>След.</th>
+                                <th class="text-end"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="admSerialCountersBody">
+                            <tr><td colspan="5" class="text-body-secondary">Загрузка…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <span id="admSerialCountersMsg" class="small text-body-secondary"></span>
+            </div>
+        </div>
+
+        <div class="card bench-card mb-4 border-success border-opacity-25">
+            <div class="card-header fw-semibold"><i class="bi bi-bell me-1"></i>Уведомления операторам</div>
+            <div class="card-body small">
+                <p class="text-body-secondary mb-3">
+                    Тест push и очередь <code>operator_notify_queue.json</code>.
+                </p>
+                <div class="row g-2 align-items-end mb-2">
+                    <div class="col-md-4">
+                        <label class="form-label mb-0" for="adm_notify_order">Номер заказа (тест)</label>
+                        <input type="text" class="form-control form-control-sm font-monospace" id="adm_notify_order" value="ТМ00-ТЕСТ001" autocomplete="off">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label mb-0" for="adm_notify_kind">Тип</label>
+                        <select class="form-select form-select-sm" id="adm_notify_kind">
+                            <option value="corrector" selected>корректор</option>
+                            <option value="complex">комплекс</option>
+                        </select>
+                    </div>
+                    <div class="col-md-auto d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-success btn-sm" id="admTestNotifyBtn">
+                            <i class="bi bi-bell-fill me-1"></i>Проверить
+                        </button>
+                        <button type="button" class="btn btn-outline-secondary btn-sm" id="admNotifyQueueRefreshBtn">Очередь</button>
+                        <button type="button" class="btn btn-outline-danger btn-sm" id="admNotifyQueueClearBtn">Очистить очередь</button>
+                    </div>
+                </div>
+                <span id="admNotifyMsg" class="small text-body-secondary d-block mb-2"></span>
+                <pre id="admNotifyQueueBox" class="small bg-body-tertiary border rounded p-2 mb-0" style="max-height:10rem;overflow:auto">—</pre>
+            </div>
+        </div>
+
+        <div id="admSecParams" class="card bench-card mb-4 border-primary border-opacity-25">
+            <div class="card-header fw-semibold"><i class="bi bi-sliders me-1"></i>Параметры: заказ ↔ корректор</div>
+            <div class="card-body small">
+                <p class="text-body-secondary mb-3">
+                    Поиск по <strong>S/N корректора</strong> (300…) или <strong>номеру заказа</strong>.
+                    После записи в прибор логируется <strong>полный опрос</strong>: колонка «В корректоре» —
+                    все считанные параметры, «В заказе» — что было подставлено из заказа.
+                </p>
+                <div class="row g-2 align-items-end mb-3">
+                    <div class="col-md-6">
+                        <label class="form-label mb-0" for="admParamQuery">S/N или заказ</label>
+                        <input type="text" class="form-control form-control-sm font-monospace" id="admParamQuery" placeholder="3002609001 / 893 / ТМ00-000893" autocomplete="off">
+                    </div>
+                    <div class="col-md-auto d-flex flex-wrap gap-2">
+                        <button type="button" class="btn btn-primary btn-sm" id="admParamSearchBtn">
+                            <i class="bi bi-search me-1"></i>Найти
+                        </button>
+                    </div>
+                    <div class="col-12"><span id="admParamMsg" class="small text-body-secondary"></span></div>
+                </div>
+                <div id="admParamResults"></div>
+            </div>
+        </div>
+
+        <div id="admSecEvents" class="card bench-card mb-4">
+            <div class="card-header fw-semibold"><i class="bi bi-activity me-1"></i>Журнал событий стенда</div>
+            <div class="card-body small">
+                <div class="row g-2 align-items-end mb-2">
+                    <div class="col-md-3">
+                        <label class="form-label mb-0" for="admEventsSerial">S/N корректора</label>
+                        <input type="text" class="form-control form-control-sm font-monospace" id="admEventsSerial" placeholder="300…" autocomplete="off">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label mb-0" for="admEventsStage">Этап</label>
+                        <input type="text" class="form-control form-control-sm" id="admEventsStage" placeholder="order / serial…" autocomplete="off">
+                    </div>
+                    <div class="col-md-auto">
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="admEventsRefreshBtn">Обновить</button>
+                    </div>
+                    <div class="col-12"><span id="admEventsMsg" class="small text-body-secondary"></span></div>
+                </div>
+                <div class="table-responsive border rounded" style="max-height:18rem">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light sticky-top">
+                            <tr>
+                                <th>Когда</th>
+                                <th>Тип</th>
+                                <th>Этап</th>
+                                <th>S/N</th>
+                                <th>Оператор</th>
+                                <th>Стенд</th>
+                            </tr>
+                        </thead>
+                        <tbody id="admEventsBody">
+                            <tr><td colspan="6" class="text-body-secondary">Загрузка…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div id="admSecLogs" class="card bench-card mb-4">
+            <div class="card-header fw-semibold"><i class="bi bi-file-text me-1"></i>Логи действий (файлы)</div>
+            <div class="card-body small">
+                <div class="row g-2 align-items-end mb-2">
+                    <div class="col-md-3">
+                        <label class="form-label mb-0" for="admLogDate">Дата</label>
+                        <select class="form-select form-select-sm" id="admLogDate"></select>
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label mb-0" for="admLogTail">Хвост строк</label>
+                        <select class="form-select form-select-sm" id="admLogTail">
+                            <option value="100">100</option>
+                            <option value="200" selected>200</option>
+                            <option value="500">500</option>
+                        </select>
+                    </div>
+                    <div class="col-md-auto">
+                        <button type="button" class="btn btn-outline-primary btn-sm" id="admLogsRefreshBtn">Обновить</button>
+                    </div>
+                    <div class="col-12"><span id="admLogsMsg" class="small text-body-secondary"></span></div>
+                </div>
+                <pre id="admLogsBox" class="small bg-body-tertiary border rounded p-2 mb-0" style="max-height:16rem;overflow:auto;white-space:pre-wrap">—</pre>
+            </div>
+        </div>
+
+        <div id="admSecTools" class="card bench-card mb-4">
+            <div class="card-header fw-semibold"><i class="bi bi-box-arrow-up-right me-1"></i>Инструменты и бэкап настроек</div>
+            <div class="card-body small">
+                <div class="d-flex flex-wrap gap-2 mb-3">
+                    <a class="btn btn-outline-secondary btn-sm" href="/index.html">Главная / сессии</a>
+                    <a class="btn btn-outline-secondary btn-sm" href="/pkd160.html">ПКД-160</a>
+                    <a class="btn btn-outline-secondary btn-sm" href="/nameplate-template-editor.html">Шильдики</a>
+                    <a class="btn btn-outline-secondary btn-sm" href="/tm07-workbench.html">Рабочее место</a>
+                </div>
+                <div class="d-flex flex-wrap gap-2 align-items-center">
+                    <button type="button" class="btn btn-outline-primary btn-sm" id="admExportSettingsBtn">Экспорт device_settings.json</button>
+                    <label class="btn btn-outline-secondary btn-sm mb-0">
+                        Импорт settings…
+                        <input type="file" id="admImportSettingsFile" accept="application/json,.json" class="d-none">
+                    </label>
+                    <span id="admToolsMsg" class="small text-body-secondary"></span>
+                </div>
+            </div>
+        </div>
+
+        <div id="admSecOperators" class="card bench-card mb-4">
+            <div class="card-header fw-semibold"><i class="bi bi-person-badge me-1"></i>Операторы и PIN</div>
+            <div class="card-body small">
+                <p class="text-body-secondary mb-3">
+                    У каждого оператора свой PIN (хранится как hash в БД). Можно также задать в <code>.env</code>:
+                    <code>BENCH_OPERATOR_PINS=Иванов:Иван:4567,Петров:Пётр:8901</code>.
+                    Общий <code>BENCH_OPERATOR_PIN</code> — только запасной, если персонального ещё нет.
+                    Удаление оператора обнуляет ссылки в сессиях/событиях.
+                </p>
+                <div class="row g-2 align-items-end mb-3">
+                    <div class="col-md-3">
+                        <label class="form-label mb-0" for="adm_op_login">Логин</label>
+                        <input type="text" class="form-control form-control-sm" id="adm_op_login" autocomplete="off">
+                    </div>
+                    <div class="col-md-3">
+                        <label class="form-label mb-0" for="adm_op_last">Фамилия</label>
+                        <input type="text" class="form-control form-control-sm" id="adm_op_last" autocomplete="off">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label mb-0" for="adm_op_first">Имя</label>
+                        <input type="text" class="form-control form-control-sm" id="adm_op_first" autocomplete="off">
+                    </div>
+                    <div class="col-md-2">
+                        <label class="form-label mb-0" for="adm_op_pin">Новый PIN</label>
+                        <input type="password" class="form-control form-control-sm" id="adm_op_pin" autocomplete="new-password" inputmode="numeric">
+                    </div>
+                    <div class="col-md-2">
+                        <button type="button" class="btn btn-primary btn-sm w-100" id="admOpPinSaveBtn">Сохранить PIN</button>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover align-middle mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>Фамилия</th>
+                                <th>Имя</th>
+                                <th>Login</th>
+                                <th>PIN</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="admOperatorsTbody">
+                            <tr><td colspan="5" class="text-body-secondary">Загрузка…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <p id="admOpPinMsg" class="small mt-2 mb-0"></p>
+            </div>
+        </div>
+
+        <div class="card bench-card mb-5">
+            <div class="card-header fw-semibold"><i class="bi bi-key me-1"></i>Смена пароля администратора</div>
+            <div class="card-body small">
+                <form id="pwdForm" class="row g-2 align-items-end">
+                    <div class="col-md-4">
+                        <label class="form-label mb-0">Текущий пароль</label>
+                        <input type="password" class="form-control form-control-sm" id="pwdCurrent" autocomplete="current-password" required>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label mb-0">Новый (≥ 8 символов)</label>
+                        <input type="password" class="form-control form-control-sm" id="pwdNew" autocomplete="new-password" required minlength="8">
+                    </div>
+                    <div class="col-md-4">
+                        <button type="submit" class="btn btn-outline-primary btn-sm">Сменить</button>
+                    </div>
+                    <div class="col-12"><span id="pwdMsg"></span></div>
+                </form>
+            </div>
+        </div>
+    </div>
+    </main>
+
+    <script>
+        document.getElementById('logoutBtn').addEventListener('click', async () => {
+            await fetch('/api/auth.php?action=logout', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            window.location.href = '/login.html';
+        });
+    </script>
+    <script src="/vendor/bootstrap/js/bootstrap.bundle.min.js" crossorigin="anonymous"></script>
+    <script src="/js/parametrization/tm07-complex-meter-types-data.js"></script>
+    <script src="/js/site-settings-cache.js" defer></script>
+    <script src="/js/admin-panel.js" defer></script>
+</body>
+</html>

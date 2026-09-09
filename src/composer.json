@@ -1,0 +1,12 @@
+{
+    "name": "tm07/bench-api",
+    "description": "TM-07 bench PHP dependencies",
+    "require": {
+        "php": ">=8.2",
+        "setasign/fpdi-tcpdf": "^2.3",
+        "tecnickcom/tcpdf": "^6.7"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
