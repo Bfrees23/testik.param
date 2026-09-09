@@ -4201,6 +4201,24 @@
             return ((rawValue - cfg.zero) * cfg.k).toFixed(cfg.dfOrder) + ' кПа';
         }
 
+        async function findSourceAddressForWizard(targetAddr) {
+            const pairedAddr = targetAddr === 1 ? 2 : 1;
+            const selectedAddr = selectedBusAddr();
+            const candidateSet = [targetAddr, pairedAddr, selectedAddr]
+                .filter(function (addr, idx, arr) {
+                    return Number.isFinite(addr) && arr.indexOf(addr) === idx;
+                });
+            for (let i = 0; i < candidateSet.length; i += 1) {
+                const addr = candidateSet[i];
+                const quick = await probeAddress(addr);
+                if (quick && quick.ok) {
+                    return addr;
+                }
+            }
+            await doScan();
+            return pickWizardSourceAddress(targetAddr);
+        }
+
         /** Жёсткий мастер: датчик 1 => Interface.I=1, датчик 2 => Interface.I=2. */
         async function autoConfigure(addr) {
             if (autoBusy) return;
@@ -4217,20 +4235,14 @@
                     }
                 }
 
-                // 2. Сканирование адресов 1..16.
-                setMsg('Мастер ' + addr + ': шаг 2/6 — сканирование адресов 1–16…');
-                await doScan();
-                if (found.size === 0) {
-                    setMsg('Датчики не найдены (адреса 1–16).', true);
-                    return;
-                }
-
                 const pending = pendingReaddressByTarget.get(addr);
                 if (pending) {
-                    // 3. Подтверждение после перезапуска питания.
-                    setMsg('Мастер ' + addr + ': шаг 3/6 — проверка после перезапуска питания…');
-                    if (!found.has(addr)) {
-                        if (found.has(pending.fromAddr)) {
+                    // 2. Подтверждение после перезапуска питания.
+                    setMsg('Мастер ' + addr + ': шаг 2/6 — проверка после перезапуска питания…');
+                    const targetProbe = await probeAddress(addr);
+                    if (!(targetProbe && targetProbe.ok)) {
+                        const oldProbe = await probeAddress(pending.fromAddr);
+                        if (oldProbe && oldProbe.ok) {
                             setMsg(
                                 'Адрес ещё не сменился: датчик отвечает по старому адресу ' +
                                     pending.fromAddr +
@@ -4247,6 +4259,8 @@
                         }
                         return;
                     }
+                    found.set(addr, targetProbe.data);
+                    paintScanBadges();
                     pendingReaddressByTarget.delete(addr);
                     ensureSensorTargetOption(addr);
                     if (cfgTarget) cfgTarget.value = String(addr);
@@ -4260,8 +4274,9 @@
                     return;
                 }
 
-                // 3. Выбор источника для переназначения.
-                const sourceAddr = pickWizardSourceAddress(addr);
+                // 2. Выбор источника для переназначения (сначала быстрые адреса, затем полный поиск).
+                setMsg('Мастер ' + addr + ': шаг 2/6 — поиск текущего адреса датчика…');
+                const sourceAddr = await findSourceAddressForWizard(addr);
                 if (sourceAddr == null) {
                     setMsg(
                         'Найдено несколько датчиков, нельзя однозначно выбрать ' +
@@ -4272,12 +4287,12 @@
                     return;
                 }
 
-                // 4. Чтение текущего Interface источника.
+                // 3. Чтение текущего Interface источника.
                 sensorDev.address = sourceAddr;
                 setMsg(
                     'Мастер ' +
                         addr +
-                        ': шаг 4/6 — чтение Interface с адреса ' +
+                        ': шаг 3/6 — чтение Interface с адреса ' +
                         sourceAddr +
                         '…'
                 );
@@ -4301,11 +4316,11 @@
                     return;
                 }
 
-                // 5. Запись нового сетевого идентификатора в Interface.
+                // 4. Запись нового сетевого идентификатора в Interface.
                 setMsg(
                     'Мастер ' +
                         addr +
-                        ': шаг 5/6 — запись сетевого идентификатора ' +
+                        ': шаг 4/6 — запись сетевого идентификатора ' +
                         addr +
                         ' в Interface…'
                 );
@@ -4316,7 +4331,7 @@
                     interfaceRaw: newInterface
                 });
 
-                // 6. Завершение шага и ожидание power-cycle.
+                // 5. Завершение шага и ожидание power-cycle.
                 sensorSerialProfile = profile;
                 if (cfgBusBaud) cfgBusBaud.value = String(targetBaud);
                 setSelectedBaud(targetBaud);
@@ -4324,7 +4339,7 @@
                 setMsg(
                     'Мастер ' +
                         addr +
-                        ': шаг 6/6 — запись выполнена. Выключите/включите питание датчика и нажмите эту же кнопку ещё раз для подтверждения.'
+                        ': шаг 5/6 — запись выполнена. Выключите/включите питание датчика и нажмите эту же кнопку ещё раз для подтверждения.'
                 );
                 plog(
                     'Датчик: мастер ' +
