@@ -4251,7 +4251,7 @@
             const scanProfiles = profileOrder(initialProfile);
             const scanSerialProfiles = serialProfileOrder(initialSerialProfile);
             let lastErr = '';
-            setMsg('Мастер ' + targetAddr + ': датчик не найден, пробую широковещательную запись Interface (адрес 0)…');
+            setMsg('Мастер ' + targetAddr + ': шаг 2/6 — широковещательная запись Interface (адрес 0, без поиска адреса)…');
             for (let p = 0; p < scanProfiles.length; p += 1) {
                 const linkProfile = scanProfiles[p];
                 const switchedLink = await switchSensorLinkProfile(linkProfile);
@@ -4364,90 +4364,9 @@
                     return;
                 }
 
-                // 2. Выбор источника для переназначения (сначала быстрые адреса, затем полный поиск).
-                setMsg('Мастер ' + addr + ': шаг 2/6 — поиск текущего адреса датчика…');
-                const sourceAddr = await findSourceAddressForWizard(addr);
-                if (sourceAddr == null) {
-                    if (found.size === 0) {
-                        await broadcastReaddressWizard(addr, name);
-                        return;
-                    }
-                    setMsg(
-                        'Найдено несколько датчиков, нельзя однозначно выбрать ' +
-                            name +
-                            '. Оставьте в линии только настраиваемый датчик и повторите.',
-                        true
-                    );
-                    return;
-                }
-
-                // 3. Чтение текущего Interface источника.
-                sensorDev.address = sourceAddr;
-                setMsg(
-                    'Мастер ' +
-                        addr +
-                        ': шаг 3/6 — чтение Interface с адреса ' +
-                        sourceAddr +
-                        '…'
-                );
-                const currentInterface = await readHoldingU16(SENSOR_INTERFACE_REG, 1800);
-                const iface = decodeInterface(currentInterface);
-                const newInterface = (currentInterface & 0xff00) | (addr & 0xff);
-                const targetBaud = INTERFACE_CODE_TO_BAUD[iface.baudCode] || sensorBaud || getSelectedBaud();
-                const profile = recommendedSerialProfileForParity(iface.parity);
-
-                // Если адрес уже правильный — просто подтвердить чтением.
-                if (sourceAddr === addr && (currentInterface & 0xff) === addr) {
-                    ensureSensorTargetOption(addr);
-                    if (cfgTarget) cfgTarget.value = String(addr);
-                    if (cfgModbusAddr) cfgModbusAddr.value = String(addr);
-                    const live = await readSensorLive(addr);
-                    const pressureText = formatWizardPressure(addr, live ? live.pressureRaw : null);
-                    setMsg('Мастер ' + addr + ': адрес уже ' + addr + ', давление: ' + pressureText + '.');
-                    plog('Датчик: мастер ' + addr + ' — адрес уже установлен (' + addr + ').');
-                    if (addr === 1 && pollAbs) pollAbs.textContent = pressureText;
-                    if (addr === 2 && pollDiff) pollDiff.textContent = pressureText;
-                    return;
-                }
-
-                // 4. Запись нового сетевого идентификатора в Interface.
-                setMsg(
-                    'Мастер ' +
-                        addr +
-                        ': шаг 4/6 — запись сетевого идентификатора ' +
-                        addr +
-                        ' в Interface…'
-                );
-                await writeHoldingU16(SENSOR_INTERFACE_REG, newInterface);
-                pendingReaddressByTarget.set(addr, {
-                    fromAddr: sourceAddr,
-                    toAddr: addr,
-                    interfaceRaw: newInterface
-                });
-
-                // 5. Завершение шага и ожидание power-cycle.
-                sensorSerialProfile = profile;
-                if (cfgBusBaud) cfgBusBaud.value = String(targetBaud);
-                setSelectedBaud(targetBaud);
-                await disconnectSensorUsb(true);
-                setMsg(
-                    'Мастер ' +
-                        addr +
-                        ': шаг 5/6 — запись выполнена. Выключите/включите питание датчика и нажмите эту же кнопку ещё раз для подтверждения.'
-                );
-                plog(
-                    'Датчик: мастер ' +
-                        addr +
-                        ' записал Interface ' +
-                        hex2(currentInterface) +
-                        ' -> ' +
-                        hex2(newInterface) +
-                        ', источник ' +
-                        sourceAddr +
-                        ', целевой адрес ' +
-                        addr +
-                        '.'
-                );
+                // 2. Прямая настройка без поиска адреса: broadcast 0x06 в Interface.
+                await broadcastReaddressWizard(addr, name);
+                return;
             } finally {
                 autoBusy = false;
             }
