@@ -2651,7 +2651,11 @@
         let chart = null;
 
         const SENSOR_TYPE_REG = 0x000a; // тип/версия карты датчика
-        const SENSOR_MEAS_REG = 0x0002; // входной регистр измерений
+        const SENSOR_INTERFACE_REG = 0x0002; // holding: Interface (сетевой адрес/baud/режим)
+        const SENSOR_MEAS_INPUT_REG = 0x0002; // input: измерение (legacy-режим датчика)
+        const SENSOR_INPUT_BLOCK_REG = 0x0001; // input: блок [ADCPress, ADCTerm, Pressure]
+        const SENSOR_WMODE_REG = 0x00f9; // holding: WMode
+        const SENSOR_START_REG = 0x00fa; // holding: Start
         const SCAN_ADDR_MIN = 1;
         const SCAN_ADDR_MAX = 16;
         const SCAN_TIMEOUT_MS = 650;
@@ -2669,6 +2673,8 @@
         let autoBusy = false;
         /** Найденные адреса: addr -> { type:number, typeHex:string, via:string } */
         const found = new Map();
+        /** Адреса, для которых уже пробовали принудительный запуск измерения. */
+        const wakeupTried = new Set();
 
         function setMsg(msg, isError) {
             if (!status) return;
@@ -2737,6 +2743,188 @@
                 plog('Датчик: ошибка переключения скорости на ' + baud + ' бод — ' + errText(e));
                 return false;
             }
+        }
+
+        const SENSOR_BAUD_BY_CODE = {
+            0x0: 1200,
+            0x1: 2400,
+            0x2: 4800,
+            0x3: 9600,
+            0x4: 14400,
+            0x5: 19200,
+            0x6: 28800
+        };
+
+        function toU16LE(bytes) {
+            if (!bytes || bytes.length < 2) return null;
+            return (bytes[0] & 0xff) | ((bytes[1] & 0xff) << 8);
+        }
+
+        function u16leBytes(value) {
+            const n = value & 0xffff;
+            return [n & 0xff, (n >> 8) & 0xff];
+        }
+
+        function interfaceFields(raw) {
+            const v = raw & 0xffff;
+            return {
+                raw: v,
+                netId: v & 0xff,
+                mode: (v >> 8) & 0x03,
+                baudCode: (v >> 10) & 0x0f,
+                parity: (v >> 14) & 0x03,
+                baudRate: SENSOR_BAUD_BY_CODE[(v >> 10) & 0x0f] || null
+            };
+        }
+
+        /** Датчики МИДА: сетевой адрес хранится в младшем байте Interface (holding 2). */
+        async function readdressSensor(sourceAddr, targetAddr) {
+            if (!sensorDev) throw new Error('Порт датчика не подключён.');
+            const src = sourceAddr & 0xff;
+            const dst = targetAddr & 0xff;
+            sensorDev.address = src;
+            const ifaceResp = await sensorDev.readHolding(SENSOR_INTERFACE_REG, 1, 1200, 1);
+            const ifaceBytes = KorrektorDevice.modbusDataBytes(ifaceResp);
+            const ifaceRaw = toU16LE(ifaceBytes);
+            if (ifaceRaw == null) {
+                throw new Error('Короткий ответ при чтении Interface (holding 2).');
+            }
+            const iface = interfaceFields(ifaceRaw);
+            const nextRaw = (iface.raw & 0xff00) | dst;
+            if (iface.netId === dst) {
+                return { changed: false, ifaceRaw: iface.raw, nextRaw: nextRaw, iface: iface };
+            }
+            await sensorDev.writeMultiple(SENSOR_INTERFACE_REG, u16leBytes(nextRaw), 1400, 1);
+            await new Promise(function (r) {
+                setTimeout(r, 220);
+            });
+
+            const verifyBauds = [];
+            const pushBaud = function (b) {
+                if (!Number.isFinite(b) || b <= 0) return;
+                if (verifyBauds.indexOf(b) >= 0) return;
+                verifyBauds.push(b);
+            };
+            pushBaud(sensorBaud);
+            pushBaud(iface.baudRate);
+            SCAN_FALLBACK_BAUDS.forEach(pushBaud);
+
+            let verifyError = '';
+            for (let i = 0; i < verifyBauds.length; i += 1) {
+                const baud = verifyBauds[i];
+                const switched = await switchSensorBaud(baud);
+                if (!switched) continue;
+                const verify = await probeAddress(dst);
+                if (verify && verify.ok) {
+                    found.delete(src);
+                    found.set(dst, verify.data);
+                    wakeupTried.delete(src);
+                    wakeupTried.delete(dst);
+                    return {
+                        changed: true,
+                        ifaceRaw: iface.raw,
+                        nextRaw: nextRaw,
+                        iface: iface,
+                        verifiedVia: verify.data.via,
+                        verifiedBaud: baud
+                    };
+                }
+                verifyError = (verify && verify.error) || 'нет ответа';
+            }
+            throw new Error(
+                'Адрес записан, но датчик не подтвердил связь на новом адресе ' +
+                    dst +
+                    '. Последняя ошибка: ' +
+                    verifyError
+            );
+        }
+
+        function chooseSensorForAutoConfig(targetAddr) {
+            if (found.has(targetAddr)) {
+                return { sourceAddr: targetAddr, requiresReaddress: false };
+            }
+            const addrs = Array.from(found.keys()).sort(function (a, b) {
+                return a - b;
+            });
+            if (addrs.length === 1) {
+                return { sourceAddr: addrs[0], requiresReaddress: addrs[0] !== targetAddr };
+            }
+            return null;
+        }
+
+        async function tryWakeSensorMeasurements(addr) {
+            if (!sensorDev) return false;
+            sensorDev.address = addr;
+            let attempted = false;
+            try {
+                await sensorDev.writeMultiple(SENSOR_WMODE_REG, [0x00, 0x00], 900, 0);
+                attempted = true;
+            } catch (_e) {}
+            try {
+                await sensorDev.writeMultiple(SENSOR_START_REG, [0x00, 0xff], 900, 0);
+                attempted = true;
+            } catch (_e) {}
+            if (attempted) {
+                await new Promise(function (r) {
+                    setTimeout(r, 180);
+                });
+            }
+            return attempted;
+        }
+
+        async function readSensorPressureRaw(addr, allowWakeup) {
+            if (!sensorDev) return null;
+            sensorDev.address = addr;
+            const attempts = [
+                {
+                    via: '0x04/0x0002 x2',
+                    run: function () {
+                        return sensorDev.readInputRegisters(SENSOR_MEAS_INPUT_REG, 2, 1000, 1);
+                    },
+                    parse: function (resp) {
+                        const b = KorrektorDevice.modbusDataBytes(resp);
+                        if (b.length < 4) return null;
+                        return KorrektorDevice.parseFloat32LE(b.subarray(0, 4));
+                    }
+                },
+                {
+                    via: '0x04/0x0001 x4',
+                    run: function () {
+                        return sensorDev.readInputRegisters(SENSOR_INPUT_BLOCK_REG, 4, 1200, 1);
+                    },
+                    parse: function (resp) {
+                        const b = KorrektorDevice.modbusDataBytes(resp);
+                        if (b.length < 8) return null;
+                        return KorrektorDevice.parseFloat32LE(b.subarray(4, 8));
+                    }
+                }
+            ];
+            const readOnce = async function () {
+                for (let i = 0; i < attempts.length; i += 1) {
+                    const t = attempts[i];
+                    try {
+                        const resp = await t.run();
+                        const raw = t.parse(resp);
+                        if (Number.isFinite(raw)) {
+                            return { raw: raw, via: t.via };
+                        }
+                    } catch (_e) {}
+                }
+                return null;
+            };
+
+            let got = await readOnce();
+            if (got) return got;
+            if (allowWakeup && !wakeupTried.has(addr)) {
+                wakeupTried.add(addr);
+                const woke = await tryWakeSensorMeasurements(addr);
+                if (woke) {
+                    plog('Датчик: адрес ' + addr + ' — выполнен запуск измерения (WMode/Start), повтор чтения.');
+                    got = await readOnce();
+                    if (got) return got;
+                }
+            }
+            return null;
         }
 
         /** Множители пересчёта давления в кПа (как в Mida15Tool). */
@@ -3051,22 +3239,54 @@
                     setMsg('Датчики не найдены (адреса 1–16).', true);
                     return;
                 }
-                // 3. Настройка выбранного адреса
+                // 3. Настройка выбранного адреса (как в Mida15Tool Modbus: сетевой ID в Interface).
                 setMsg('Шаг 3/4: настройка ' + name + ' (адрес ' + addr + ')…');
-                if (!found.has(addr)) {
-                    setMsg(name + ' (адрес ' + addr + ') не найден при сканировании.', true);
+                const selected = chooseSensorForAutoConfig(addr);
+                if (!selected) {
+                    setMsg(
+                        name +
+                            ': найдено несколько датчиков, но адрес ' +
+                            addr +
+                            ' отсутствует. Для автонастройки оставьте на линии только один датчик.',
+                        true
+                    );
                     return;
+                }
+                if (selected.requiresReaddress) {
+                    const srcAddr = selected.sourceAddr;
+                    setMsg(
+                        'Шаг 3/4: переназначение адреса ' +
+                            name +
+                            ' (' +
+                            srcAddr +
+                            ' → ' +
+                            addr +
+                            ')…'
+                    );
+                    const remap = await readdressSensor(srcAddr, addr);
+                    if (remap.changed) {
+                        plog(
+                            'Датчик: Interface (holding 2) обновлён, адрес ' +
+                                srcAddr +
+                                ' → ' +
+                                addr +
+                                '; raw ' +
+                                hex2(remap.ifaceRaw) +
+                                ' → ' +
+                                hex2(remap.nextRaw) +
+                                (remap.verifiedBaud ? ', ' + remap.verifiedBaud + ' бод' : '')
+                        );
+                    }
                 }
                 const c = getSensorCfg(addr);
                 c.unit = 'kPa'; // единицы всегда кПа
                 sensorCfg[addr] = c;
-                let raw = null;
-                sensorDev.address = addr;
-                try {
-                    const resp = await sensorDev.readInputRegisters(SENSOR_MEAS_REG, 2);
-                    const b = KorrektorDevice.modbusDataBytes(resp);
-                    if (b.length >= 4) raw = KorrektorDevice.parseFloat32LE(b.subarray(0, 4));
-                } catch (_e) {}
+                setMsg('Шаг 4/4: проверка чтения давления на адресе ' + addr + '…');
+                const pressure = await readSensorPressureRaw(addr, true);
+                const raw = pressure ? pressure.raw : null;
+                if (pressure && pressure.via) {
+                    plog('Датчик: чтение после настройки, адрес ' + addr + ' через ' + pressure.via + '.');
+                }
                 const kPa = raw == null ? null : (raw - c.zero) * c.k;
                 try {
                     localStorage.setItem('wb_sensor_cfg', JSON.stringify(sensorCfg));
@@ -3091,13 +3311,8 @@
                 const ABS_ADDR = 1; // датчик абсолютного давления
                 const DIFF_ADDR = 2; // датчик перепада
                 const readVal = async function (addr) {
-                    sensorDev.address = addr;
-                    try {
-                        const resp = await sensorDev.readInputRegisters(SENSOR_MEAS_REG, 2);
-                        const b = KorrektorDevice.modbusDataBytes(resp);
-                        if (b.length >= 4) return KorrektorDevice.parseFloat32LE(b.subarray(0, 4));
-                    } catch (_e) {}
-                    return null;
+                    const pressure = await readSensorPressureRaw(addr, true);
+                    return pressure ? pressure.raw : null;
                 };
                 const absVal = await readVal(ABS_ADDR);
                 const diffVal = await readVal(DIFF_ADDR);
@@ -3158,9 +3373,9 @@
             const bytes = Array.from(KorrektorDevice.floatBytesLE(raw));
             try {
                 setMsg('Запись значения ' + raw + ' в ' + name + ' (адрес ' + addr + ')…');
-                await sensorDev.writeMultiple(SENSOR_MEAS_REG, bytes);
+                await sensorDev.writeMultiple(SENSOR_MEAS_INPUT_REG, bytes);
                 setMsg('Значение ' + raw + ' записано в ' + name + ' (адрес ' + addr + ').');
-                plog('Датчик: ' + name + ' (адрес ' + addr + '): записано ' + raw + ' (float32) в 0x0002.');
+                plog('Датчик: ' + name + ' (адрес ' + addr + '): записано ' + raw + ' (float32) в input 0x0002.');
             } catch (e) {
                 setMsg('Ошибка записи: ' + (e.message || String(e)), true);
                 plog('Датчик: ошибка записи — ' + (e.message || String(e)));
@@ -3175,15 +3390,13 @@
             }
             const addr = parseInt((cfgTarget && cfgTarget.value) || '1', 10);
             const name = addr === 1 ? 'датчик абсолютного давления' : 'датчик перепада';
-            sensorDev.address = addr;
             try {
-                const resp = await sensorDev.readInputRegisters(SENSOR_MEAS_REG, 2);
-                const b = KorrektorDevice.modbusDataBytes(resp);
-                if (b.length < 4) {
+                const pressure = await readSensorPressureRaw(addr, true);
+                if (!pressure) {
                     setMsg('Не удалось прочитать текущее значение ' + name + ' (адрес ' + addr + ').', true);
                     return;
                 }
-                const raw = KorrektorDevice.parseFloat32LE(b.subarray(0, 4));
+                const raw = pressure.raw;
                 const c = getSensorCfg(addr);
                 c.zero = raw;
                 sensorCfg[addr] = c;
@@ -3191,7 +3404,17 @@
                     localStorage.setItem('wb_sensor_cfg', JSON.stringify(sensorCfg));
                 } catch (_e) {}
                 setMsg('Ноль ' + name + ' (адрес ' + addr + ') установлен: сдвиг = ' + raw + ' кПа. Давление теперь ≈ 0.');
-                plog('Датчик: калибровка нуля ' + name + ' (адрес ' + addr + '): сдвиг = ' + raw + ' кПа.');
+                plog(
+                    'Датчик: калибровка нуля ' +
+                        name +
+                        ' (адрес ' +
+                        addr +
+                        '): сдвиг = ' +
+                        raw +
+                        ' кПа; чтение через ' +
+                        pressure.via +
+                        '.'
+                );
             } catch (e) {
                 setMsg('Ошибка калибровки нуля: ' + (e.message || String(e)), true);
                 plog('Датчик: ошибка калибровки нуля — ' + (e.message || String(e)));
@@ -3303,6 +3526,7 @@
                 }
                 sensorDev = d;
                 sensorBaud = baud;
+                wakeupTried.clear();
                 setComStatus('подключено', true);
                 setMsg('USB-адаптер датчика подключён. Нажмите «Сканировать адреса».');
                 plog('Датчик: USB-адаптер подключён (' + baud + ' бод).');
@@ -3341,6 +3565,7 @@
                 }
                 sensorBaud = getSelectedBaud();
                 found.clear();
+                wakeupTried.clear();
                 if (scanResults) scanResults.classList.add('d-none');
                 if (scanBadges) scanBadges.innerHTML = '';
                 setComStatus('нет связи', false);
