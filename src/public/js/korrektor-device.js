@@ -575,6 +575,57 @@ class KorrektorDevice {
         });
     }
 
+    /**
+     * Broadcast-кадр Modbus (адрес 0): ответ не ожидается по протоколу.
+     */
+    async sendFrameNoReply(frame, settleMs = 80) {
+        return this._withIoLock(async () => {
+            const waitMs = Math.max(10, Math.min(300, Number(settleMs) || 80));
+            this._emitExchangeEvent('attempt-start', {
+                attempt: 1,
+                attemptsTotal: 1,
+                timeoutMs: waitMs,
+                noReply: true,
+                address: this.address & 0xff,
+                fn: frame && frame.length > 1 ? frame[1] & 0xff : null,
+                frameLength: frame ? frame.length : 0,
+                baudRate: this._baudRate,
+                dataBits: this._dataBits,
+                stopBits: this._stopBits,
+                parity: this._parity,
+                rs485Rts: this._rs485Rts,
+                rs485RtsTxHigh: this._rs485RtsTxHigh,
+            });
+            try {
+                if (this.onFrameExchange) this.onFrameExchange('tx', frame);
+                this._emitExchangeEvent('tx', {
+                    attempt: 1,
+                    noReply: true,
+                    frame: frame,
+                });
+                await this._rs485SetTransmit(true);
+                await this.writer.write(frame);
+                if (this._rs485Rts) {
+                    await this._sleep(this._txDrainDelayMs(frame.length));
+                }
+                await this._rs485SetReceive();
+                await this._sleep(waitMs);
+                this._emitExchangeEvent('attempt-success', {
+                    attempt: 1,
+                    noReply: true,
+                });
+                return null;
+            } catch (e) {
+                this._emitExchangeEvent('attempt-error', {
+                    attempt: 1,
+                    noReply: true,
+                    error: (e && e.message) || String(e),
+                });
+                throw e;
+            }
+        });
+    }
+
     static parseIdentifyResponse(response) {
         const data = KorrektorDevice.modbusDataBytes(response);
         const name = KorrektorDevice.trimRegisterText(data.slice(0, 12));
@@ -841,13 +892,21 @@ class KorrektorDevice {
             dataBytes.length & 0xff,
             ...dataBytes
         ];
-        return this.sendFrame(this.buildFrame(0x10, p), timeoutMs, retries);
+        const frame = this.buildFrame(0x10, p);
+        if ((this.address & 0xff) === 0) {
+            return this.sendFrameNoReply(frame, timeoutMs);
+        }
+        return this.sendFrame(frame, timeoutMs, retries);
     }
 
     async writeSingleRegister(reg, value, timeoutMs = 2000, retries = 1) {
         const v = value & 0xffff;
         const p = [(reg >> 8) & 0xff, reg & 0xff, (v >> 8) & 0xff, v & 0xff];
-        return this.sendFrame(this.buildFrame(0x06, p), timeoutMs, retries);
+        const frame = this.buildFrame(0x06, p);
+        if ((this.address & 0xff) === 0) {
+            return this.sendFrameNoReply(frame, timeoutMs);
+        }
+        return this.sendFrame(frame, timeoutMs, retries);
     }
 
     /**
