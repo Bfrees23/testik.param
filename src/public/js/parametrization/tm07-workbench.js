@@ -2766,6 +2766,8 @@
         let autoBusy = false;
         /** Найденные адреса: addr -> { type:number, typeHex:string, via:string } */
         const found = new Map();
+        /** Ожидаемое подтверждение смены адреса: targetAddr -> {fromAddr,toAddr,interfaceRaw}. */
+        const pendingReaddressByTarget = new Map();
         /** Последнее валидное давление по адресу для стабилизации авто-декодирования формата float. */
         const lastPressureRawByAddr = new Map();
 
@@ -3985,7 +3987,7 @@
                             ', ' +
                             baud +
                             ' бод, ' +
-                            (sensorSerialProfile ? sensorSerialProfile.label : '8N1') +
+                            (sensorSerialProfile ? sensorSerialProfile.label : '8E1') +
                             ').'
                     );
                     continue;
@@ -4107,7 +4109,7 @@
                         'Сканирование завершено: датчики не ответили на адресах 1–16 ' +
                         '(проверены ' +
                         scanBaudText +
-                        ' бод, профили RTS/инверсия/Auto DE и форматы 8N1/8E1/8N2).';
+                        ' бод, профили RTS/инверсия/Auto DE и форматы 8E1/8O1/8N2).';
                     if (stats.firstError) {
                         msg += ' ' + stats.firstError;
                     } else if (stats.noReply > 0) {
@@ -4134,56 +4136,174 @@
             }
         }
 
-        /** Автоматическая настройка датчиков: подключение → сканирование → настройка адресов 1 и 2 → ответ. */
-        /** Автоматическая настройка одного датчика: подключение → сканирование → настройка адреса → ответ. */
+        function pickWizardSourceAddress(targetAddr) {
+            const sorted = Array.from(found.keys()).sort(function (a, b) {
+                return a - b;
+            });
+            if (sorted.length === 0) {
+                return null;
+            }
+            if (sorted.indexOf(targetAddr) >= 0) {
+                return targetAddr;
+            }
+            if (sorted.length === 1) {
+                return sorted[0];
+            }
+            const pairedAddr = targetAddr === 1 ? 2 : 1;
+            const preferred = sorted.filter(function (addr) {
+                return addr !== pairedAddr;
+            });
+            if (preferred.length === 1) {
+                return preferred[0];
+            }
+            return null;
+        }
+
+        function formatWizardPressure(addr, rawValue) {
+            if (rawValue == null) return 'нет данных';
+            if (!Number.isFinite(rawValue)) return pressureToken(rawValue);
+            const cfg = getSensorCfg(addr);
+            return ((rawValue - cfg.zero) * cfg.k).toFixed(cfg.dfOrder) + ' кПа';
+        }
+
+        /** Жёсткий мастер: датчик 1 => Interface.I=1, датчик 2 => Interface.I=2. */
         async function autoConfigure(addr) {
             if (autoBusy) return;
             autoBusy = true;
             const name = addr === 1 ? 'датчик абсолютного давления' : 'датчик перепада';
             try {
-                // 1. Подключение USB-адаптера датчика
+                // 1. Подключение USB-адаптера датчика.
                 if (!isConnected()) {
-                    setMsg('Шаг 1/4: подключение USB-адаптера датчика…');
+                    setMsg('Мастер ' + addr + ': шаг 1/6 — подключение USB-адаптера…');
                     await connectSensorUsb(true);
                     if (!isConnected()) {
                         setMsg('Не удалось подключить датчик. Проверьте USB-адаптер.', true);
                         return;
                     }
                 }
-                // 2. Сканирование адресов 1–16
-                setMsg('Шаг 2/4: сканирование адресов 1–16…');
+
+                // 2. Сканирование адресов 1..16.
+                setMsg('Мастер ' + addr + ': шаг 2/6 — сканирование адресов 1–16…');
                 await doScan();
                 if (found.size === 0) {
                     setMsg('Датчики не найдены (адреса 1–16).', true);
                     return;
                 }
-                // 3. Настройка выбранного адреса
-                setMsg('Шаг 3/4: настройка ' + name + ' (адрес ' + addr + ')…');
-                if (!found.has(addr)) {
-                    setMsg(name + ' (адрес ' + addr + ') не найден при сканировании.', true);
+
+                const pending = pendingReaddressByTarget.get(addr);
+                if (pending) {
+                    // 3. Подтверждение после перезапуска питания.
+                    setMsg('Мастер ' + addr + ': шаг 3/6 — проверка после перезапуска питания…');
+                    if (!found.has(addr)) {
+                        if (found.has(pending.fromAddr)) {
+                            setMsg(
+                                'Адрес ещё не сменился: датчик отвечает по старому адресу ' +
+                                    pending.fromAddr +
+                                    '. Выключите/включите питание датчика и нажмите кнопку ещё раз.',
+                                true
+                            );
+                        } else {
+                            setMsg(
+                                'После записи Interface датчик пока не найден на адресе ' +
+                                    addr +
+                                    '. Выполните перезапуск питания и повторите.',
+                                true
+                            );
+                        }
+                        return;
+                    }
+                    pendingReaddressByTarget.delete(addr);
+                    ensureSensorTargetOption(addr);
+                    if (cfgTarget) cfgTarget.value = String(addr);
+                    if (cfgModbusAddr) cfgModbusAddr.value = String(addr);
+                    const live = await readSensorLive(addr);
+                    const pressureText = formatWizardPressure(addr, live ? live.pressureRaw : null);
+                    setMsg('Мастер ' + addr + ' завершён: ' + name + ' закреплён на адресе ' + addr + ', давление: ' + pressureText + '.');
+                    plog('Датчик: мастер ' + addr + ' подтверждён после перезапуска, адрес ' + addr + '.');
+                    if (addr === 1 && pollAbs) pollAbs.textContent = pressureText;
+                    if (addr === 2 && pollDiff) pollDiff.textContent = pressureText;
                     return;
                 }
-                const c = getSensorCfg(addr);
-                c.unit = 'kPa'; // единицы всегда кПа
-                sensorCfg[addr] = c;
-                const live = await readSensorLive(addr);
-                const raw = live ? live.pressureRaw : null;
-                const kPa = raw == null || !Number.isFinite(raw) ? raw : (raw - c.zero) * c.k;
-                try {
-                    localStorage.setItem('wb_sensor_cfg', JSON.stringify(sensorCfg));
-                } catch (_e) {}
-                // 4. Ответ по нашей логике
-                const v =
-                    kPa == null
-                        ? 'нет данных'
-                        : !Number.isFinite(kPa)
-                        ? pressureToken(kPa)
-                        : kPa.toFixed(3) + ' кПа';
-                setMsg('Настройка завершена: ' + name + ' (адрес ' + addr + ') = ' + v + '.');
-                plog('Датчик: автонастройка ' + name + ' (адрес ' + addr + ') завершена — ' + v + '.');
-                // Обновить индикатор визуализатора, если он есть
-                if (addr === 1 && pollAbs) pollAbs.textContent = v;
-                if (addr === 2 && pollDiff) pollDiff.textContent = v;
+
+                // 3. Выбор источника для переназначения.
+                const sourceAddr = pickWizardSourceAddress(addr);
+                if (sourceAddr == null) {
+                    setMsg(
+                        'Найдено несколько датчиков, нельзя однозначно выбрать ' +
+                            name +
+                            '. Оставьте в линии только настраиваемый датчик и повторите.',
+                        true
+                    );
+                    return;
+                }
+
+                // 4. Чтение текущего Interface источника.
+                sensorDev.address = sourceAddr;
+                setMsg(
+                    'Мастер ' +
+                        addr +
+                        ': шаг 4/6 — чтение Interface с адреса ' +
+                        sourceAddr +
+                        '…'
+                );
+                const currentInterface = await readHoldingU16(SENSOR_INTERFACE_REG, 1800);
+                const iface = decodeInterface(currentInterface);
+                const newInterface = (currentInterface & 0xff00) | (addr & 0xff);
+                const targetBaud = INTERFACE_CODE_TO_BAUD[iface.baudCode] || sensorBaud || getSelectedBaud();
+                const profile = recommendedSerialProfileForParity(iface.parity);
+
+                // Если адрес уже правильный — просто подтвердить чтением.
+                if (sourceAddr === addr && (currentInterface & 0xff) === addr) {
+                    ensureSensorTargetOption(addr);
+                    if (cfgTarget) cfgTarget.value = String(addr);
+                    if (cfgModbusAddr) cfgModbusAddr.value = String(addr);
+                    const live = await readSensorLive(addr);
+                    const pressureText = formatWizardPressure(addr, live ? live.pressureRaw : null);
+                    setMsg('Мастер ' + addr + ': адрес уже ' + addr + ', давление: ' + pressureText + '.');
+                    plog('Датчик: мастер ' + addr + ' — адрес уже установлен (' + addr + ').');
+                    if (addr === 1 && pollAbs) pollAbs.textContent = pressureText;
+                    if (addr === 2 && pollDiff) pollDiff.textContent = pressureText;
+                    return;
+                }
+
+                // 5. Запись нового сетевого идентификатора в Interface.
+                setMsg(
+                    'Мастер ' +
+                        addr +
+                        ': шаг 5/6 — запись сетевого идентификатора ' +
+                        addr +
+                        ' в Interface…'
+                );
+                await writeHoldingU16(SENSOR_INTERFACE_REG, newInterface);
+                pendingReaddressByTarget.set(addr, {
+                    fromAddr: sourceAddr,
+                    toAddr: addr,
+                    interfaceRaw: newInterface
+                });
+
+                // 6. Завершение шага и ожидание power-cycle.
+                sensorSerialProfile = profile;
+                if (cfgBusBaud) cfgBusBaud.value = String(targetBaud);
+                setSelectedBaud(targetBaud);
+                await disconnectSensorUsb(true);
+                setMsg(
+                    'Мастер ' +
+                        addr +
+                        ': шаг 6/6 — запись выполнена. Выключите/включите питание датчика и нажмите эту же кнопку ещё раз для подтверждения.'
+                );
+                plog(
+                    'Датчик: мастер ' +
+                        addr +
+                        ' записал Interface ' +
+                        hex2(currentInterface) +
+                        ' -> ' +
+                        hex2(newInterface) +
+                        ', источник ' +
+                        sourceAddr +
+                        ', целевой адрес ' +
+                        addr +
+                        '.'
+                );
             } finally {
                 autoBusy = false;
             }
