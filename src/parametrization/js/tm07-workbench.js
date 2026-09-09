@@ -2724,10 +2724,10 @@
             { key: '8o1', label: '8O1', dataBits: 8, stopBits: 1, parity: 'odd' },
             { key: '8n2', label: '8N2', dataBits: 8, stopBits: 2, parity: 'none' }
         ];
-        const POLL_INTERVAL_MS = 1000;
+        const POLL_INTERVAL_MS = 5000;
         const MAX_SENSOR_PRESSURE_KPA = 100000;
-        const POLL_INTERVAL_MIN_MS = 200;
-        const POLL_INTERVAL_MAX_MS = 10000;
+        const POLL_INTERVAL_MIN_MS = 5000;
+        const POLL_INTERVAL_MAX_MS = 5000;
         const SENSOR_USB_VID = 0x0403; // FTDI (как у КАО)
         const SENSOR_USB_PID = 0x7523; // адаптер датчика
         const SENSOR_LINK_PROFILES = [
@@ -2792,6 +2792,7 @@
         let sensorTraceMuted = false;
         let pollTimer = null;
         let pollBusy = false;
+        let sensorManualBusy = false;
         let scanBusy = false;
         let autoBusy = false;
         /** Найденные адреса: addr -> { type:number, typeHex:string, via:string } */
@@ -2812,7 +2813,13 @@
         function setMsg(msg, isError) {
             if (!status) return;
             status.textContent = msg || '';
-            status.className = 'small mb-0 ' + (isError ? 'text-danger' : msg ? 'text-success' : 'text-body-secondary');
+            status.className =
+                'wb-sensor-status ' +
+                (isError
+                    ? 'wb-sensor-status-error'
+                    : msg
+                    ? 'wb-sensor-status-notice'
+                    : 'wb-sensor-status-idle');
         }
 
         function setComStatus(text, ok) {
@@ -3390,8 +3397,23 @@
             if (unitCurrent) {
                 unitCurrent.textContent = unitLabel;
             }
-            if (unitSelect && info && info.resultUnit >= 0 && info.resultUnit <= 6) {
-                unitSelect.value = String(info.resultUnit);
+            if (unitSelect) {
+                unitSelect.value = '1';
+            }
+            [1, 2].forEach(function (addr) {
+                const unit = sensorUnitByAddr.get(addr);
+                const range = sensorRangeByAddr.get(addr);
+                if (unit && range) {
+                    range.unitCode = unit.rangeUnit;
+                }
+            });
+            refreshRangeLabels();
+        }
+
+        async function waitForPollIdle(timeoutMs) {
+            const deadline = Date.now() + Math.max(0, timeoutMs | 0);
+            while (pollBusy && Date.now() < deadline) {
+                await sleepMs(30);
             }
             [1, 2].forEach(function (addr) {
                 const unit = sensorUnitByAddr.get(addr);
@@ -3408,21 +3430,31 @@
                 setMsg('Сначала подключите COM-порт.', true);
                 return;
             }
+            if (sensorManualBusy) {
+                setMsg('Операция изменения единиц уже выполняется.', true);
+                return;
+            }
             const addr = getUnitTargetAddr();
-            const nextResultUnit = clampInt((unitSelect && unitSelect.value) || '1', 0, 6, 1);
+            const nextResultUnit = 1;
+            const nextRangeUnit = 1;
             try {
+                sensorManualBusy = true;
+                if (unitSelect) unitSelect.value = '1';
+                await waitForPollIdle(3500);
                 sensorDev.address = addr;
-                const current = await readSensorUnitInfo(addr, true);
-                const rangeUnit =
-                    current && Number.isFinite(current.rangeUnit) ? current.rangeUnit : nextResultUnit;
-                const nextRaw = encodeMUnit(nextResultUnit, rangeUnit);
+                await readSensorUnitInfo(addr, true);
+                const nextRaw = encodeMUnit(nextResultUnit, nextRangeUnit);
                 await writeHoldingU16(SENSOR_MUNIT_REG, nextRaw, 1800);
                 cacheSensorUnit(addr, nextRaw);
+                const rangeInfo = sensorRangeByAddr.get(addr);
+                if (rangeInfo) {
+                    rangeInfo.unitCode = nextRangeUnit;
+                }
                 refreshUnitPanel();
                 setMsg(
                     'Единицы датчика ' +
                         addr +
-                        ' обновлены: ' +
+                        ' принудительно установлены: ' +
                         formatSensorUnitLabel(nextResultUnit) +
                         '.'
                 );
@@ -3432,12 +3464,17 @@
                         ' -> RES=' +
                         formatSensorUnitLabel(nextResultUnit) +
                         ', RNG=' +
-                        formatSensorUnitLabel(rangeUnit) +
+                        formatSensorUnitLabel(nextRangeUnit) +
                         '.'
                 );
+                if (pollTimer) {
+                    void pollOnce();
+                }
             } catch (e) {
                 setMsg('Ошибка смены единиц датчика: ' + errText(e), true);
                 plog('Датчик: ошибка записи MUnit — ' + errText(e));
+            } finally {
+                sensorManualBusy = false;
             }
         }
 
@@ -4837,7 +4874,7 @@
 
         /** Один опрос измерений в стиле Visualizer (Input 0x0001..0x0004). */
         async function pollOnce() {
-            if (pollBusy || !isConnected()) return;
+            if (pollBusy || sensorManualBusy || !isConnected()) return;
             pollBusy = true;
             try {
                 const ABS_ADDR = 1; // датчик абсолютного давления
@@ -5177,7 +5214,7 @@
                 sensorDev = d;
                 sensorBaud = baud;
                 setComStatus('подключено', true);
-                setMsg('USB-адаптер датчика подключён. Нажмите «Сканировать адреса».');
+                setMsg('USB-адаптер датчика подключён. Нажмите «Опрос показателей».');
                 plog(
                     'Датчик: USB-адаптер подключён (' +
                         baud +
@@ -5265,12 +5302,6 @@
         if (pollBtn) {
             pollBtn.addEventListener('click', function () {
                 void startPoll();
-            });
-        }
-        if (pollStopBtn) {
-            pollStopBtn.addEventListener('click', function () {
-                stopPoll();
-                setMsg('Опрос показателей остановлен.');
             });
         }
         if (pollStopBtn) {
