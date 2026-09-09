@@ -156,6 +156,13 @@
         }
     }
 
+    function setStep2SectionLocked(locked) {
+        const card = $('wbStep2Card');
+        if (card) {
+            card.classList.toggle('wb-step2-locked', !!locked);
+        }
+    }
+
     function paintAssemblyCard() {
         const events = window.TM07_BENCH_EVENTS;
         const active = events && events.hasActiveOrder && events.hasActiveOrder();
@@ -226,6 +233,7 @@
         // Запись только на этапе parametrization; опрос/КАО — также после completed.
         const canInspect = !!(active && (stage === 'parametrization' || stage === 'completed'));
         setParamSectionLocked(!canInspect);
+        setStep2SectionLocked(!active);
         if (active && stage === 'parametrization') {
             syncAssemblySerialToVal3();
         }
@@ -2629,8 +2637,10 @@
         const pollPanel = $('wbSensorPollPanel');
         const pollAbs = $('wbSensorPollAbs');
         const pollAbsState = $('wbSensorPollAbsState');
+        const pollAbsUnit = $('wbSensorPollAbsUnit');
         const pollDiff = $('wbSensorPollDiff');
         const pollDiffState = $('wbSensorPollDiffState');
+        const pollDiffUnit = $('wbSensorPollDiffUnit');
         const setPanel = $('wbSensorSetPanel');
         const setLabel = $('wbSensorSetLabel');
         const setValue = $('wbSensorSetValue');
@@ -2671,6 +2681,10 @@
         const regReadInputBtn = $('wbSensorRegReadInput');
         const regWriteBtn = $('wbSensorRegWrite');
         const pollIntervalInput = $('wbSensorPollInterval');
+        const unitTarget = $('wbSensorUnitTarget');
+        const unitCurrent = $('wbSensorUnitCurrent');
+        const unitSelect = $('wbSensorUnitSelect');
+        const unitApplyBtn = $('wbSensorUnitApply');
         const vizAdcPress = $('wbSensorVizAdcPress');
         const vizAdcTerm = $('wbSensorVizAdcTerm');
         const vizPressureRaw = $('wbSensorVizPressureRaw');
@@ -2754,6 +2768,16 @@
             6: 'мм рт. ст.',
             7: '% диапазона'
         };
+        const SENSOR_RESULT_UNIT_TO_KPA = {
+            0: 0.001, // Па -> кПа
+            1: 1, // кПа -> кПа
+            2: 1000, // МПа -> кПа
+            3: 100, // bar -> кПа
+            4: 6.894757293168, // psi -> кПа
+            5: 98.0665, // кгс/см² -> кПа
+            6: 0.133322368421 // мм рт. ст. -> кПа
+        };
+        const SENSOR_UNIT_CACHE_MS = 15000;
 
         /** @type {KorrektorDevice|null} */
         let sensorDev = null;
@@ -2775,6 +2799,8 @@
         const POLL_MUTE_MS = 30000;
         /** Последнее валидное давление по адресу для стабилизации авто-декодирования формата float. */
         const lastPressureRawByAddr = new Map();
+        /** Кэш MUnit по адресу: addr -> {raw,resultUnit,rangeUnit,fetchedAt}. */
+        const sensorUnitByAddr = new Map();
 
         function setMsg(msg, isError) {
             if (!status) return;
@@ -2887,35 +2913,74 @@
             return view.getFloat32(0, false);
         }
 
-        function decodePressureFromBytes(data4, prevValue) {
+        function decodePressureFromBytes(data4, prevValue, opts) {
             if (!data4 || data4.length < 4) return null;
             const b = new Uint8Array([data4[0] & 0xff, data4[1] & 0xff, data4[2] & 0xff, data4[3] & 0xff]);
             const swapped = new Uint8Array([b[2], b[3], b[0], b[1]]);
             const candidates = [
-                KorrektorDevice.parseFloat32LE(b),
-                parseFloat32BE(b),
-                KorrektorDevice.parseFloat32LE(swapped),
-                parseFloat32BE(swapped)
+                { value: parseFloat32BE(b), priority: 0 }, // штатный формат для Modbus-регистров
+                { value: parseFloat32BE(swapped), priority: 1 }, // обмен словами
+                { value: KorrektorDevice.parseFloat32LE(b), priority: 2 }, // fallback прошивок
+                { value: KorrektorDevice.parseFloat32LE(swapped), priority: 3 } // fallback прошивок
             ];
-            const variants = candidates.filter(function (v) {
-                return isPlausiblePressure(v);
+            const variants = [];
+            candidates.forEach(function (item) {
+                if (!isPlausiblePressure(item.value)) {
+                    return;
+                }
+                const duplicate = variants.some(function (v) {
+                    return Math.abs(v.value - item.value) < 1e-6;
+                });
+                if (!duplicate) {
+                    variants.push(item);
+                }
             });
             if (variants.length === 0) {
                 const infVariant = candidates.find(function (v) {
-                    return v === Infinity || v === -Infinity;
+                    return v.value === Infinity || v.value === -Infinity;
                 });
-                return infVariant != null ? infVariant : null;
+                return infVariant ? infVariant.value : null;
             }
+            const hasPrev = Number.isFinite(prevValue);
+            const adcEstimate = opts && Number.isFinite(opts.adcEstimate) ? Number(opts.adcEstimate) : null;
+            const addrHint = opts && Number.isFinite(opts.addr) ? Number(opts.addr) : 0;
+            const prevWeight =
+                hasPrev && Math.abs(prevValue) < 0.5 && !Number.isFinite(adcEstimate) ? 0.15 : 1;
             if (Number.isFinite(prevValue)) {
                 variants.sort(function (a, bVal) {
-                    return Math.abs(a - prevValue) - Math.abs(bVal - prevValue);
+                    const aScore =
+                        Math.abs(a.value - prevValue) * prevWeight +
+                        (Number.isFinite(adcEstimate) ? Math.abs(a.value - adcEstimate) * 0.45 : 0) +
+                        a.priority * 0.2;
+                    const bScore =
+                        Math.abs(bVal.value - prevValue) * prevWeight +
+                        (Number.isFinite(adcEstimate) ? Math.abs(bVal.value - adcEstimate) * 0.45 : 0) +
+                        bVal.priority * 0.2;
+                    return aScore - bScore;
                 });
-                return variants[0];
+                return variants[0].value;
             }
             variants.sort(function (a, bVal) {
-                return Math.abs(a) - Math.abs(bVal);
+                const aScore =
+                    (Number.isFinite(adcEstimate) ? Math.abs(a.value - adcEstimate) * 0.45 : 0) +
+                    a.priority * 0.2;
+                const bScore =
+                    (Number.isFinite(adcEstimate) ? Math.abs(bVal.value - adcEstimate) * 0.45 : 0) +
+                    bVal.priority * 0.2;
+                return aScore - bScore;
             });
-            return variants[0];
+            const chosen = variants[0];
+            // Для абсолютника (адрес 1): если стартовое значение «залипло» в 0, а есть внятная альтернатива,
+            // берём ненулевой кандидат — это устраняет типичный дрейф 0/-0 при неверном порядке слов.
+            if (addrHint === 1 && !Number.isFinite(adcEstimate) && Math.abs(chosen.value) < 0.5) {
+                const nonZero = variants.find(function (v) {
+                    return Math.abs(v.value) >= 1;
+                });
+                if (nonZero) {
+                    return nonZero.value;
+                }
+            }
+            return chosen.value;
         }
 
         function bytesToHex(bytes) {
@@ -3250,6 +3315,117 @@
             if (vizPressureKpa) vizPressureKpa.textContent = pressureToken(m.pressureKpa);
         }
 
+        function normalizeSignedZero(value) {
+            return Number.isFinite(value) && Math.abs(value) < 1e-9 ? 0 : value;
+        }
+
+        function formatSensorUnitLabel(unitCode) {
+            const code = Number(unitCode);
+            return MUNIT_RESULT_LABEL[code] || 'код ' + code;
+        }
+
+        function pressureToKpa(value, unitCode) {
+            if (!Number.isFinite(value)) return value;
+            const factor = SENSOR_RESULT_UNIT_TO_KPA[Number(unitCode)];
+            if (!Number.isFinite(factor)) return null;
+            return value * factor;
+        }
+
+        function formatPressureValue(value, digits) {
+            if (value == null) return '—';
+            if (value === Infinity) return '+INF';
+            if (value === -Infinity) return '-INF';
+            if (!Number.isFinite(value)) return '—';
+            const safeDigits = clampInt(digits, 0, 6, 3);
+            const normalized = normalizeSignedZero(value);
+            const text = normalized.toFixed(safeDigits);
+            return text === '-0' || text === '-0.0' || text === '-0.00' || text === '-0.000' ? text.replace('-', '') : text;
+        }
+
+        function getUnitTargetAddr() {
+            return clampInt((unitTarget && unitTarget.value) || '1', 1, 2, 1);
+        }
+
+        function cacheSensorUnit(addr, raw) {
+            const m = decodeMUnit(raw);
+            const info = {
+                raw: raw & 0xffff,
+                resultUnit: m.resultUnit,
+                rangeUnit: m.rangeUnit,
+                fetchedAt: Date.now()
+            };
+            sensorUnitByAddr.set(addr, info);
+            return info;
+        }
+
+        async function readSensorUnitInfo(addr, forceRefresh) {
+            const cached = sensorUnitByAddr.get(addr);
+            if (
+                !forceRefresh &&
+                cached &&
+                cached.fetchedAt &&
+                Date.now() - cached.fetchedAt < SENSOR_UNIT_CACHE_MS
+            ) {
+                return cached;
+            }
+            if (!sensorDev) {
+                return cached || null;
+            }
+            sensorDev.address = addr;
+            const raw = await readHoldingU16(SENSOR_MUNIT_REG, 1200);
+            return cacheSensorUnit(addr, raw);
+        }
+
+        function refreshUnitPanel() {
+            const targetAddr = getUnitTargetAddr();
+            const info = sensorUnitByAddr.get(targetAddr) || null;
+            const unitLabel = info ? formatSensorUnitLabel(info.resultUnit) : '—';
+            if (unitCurrent) {
+                unitCurrent.textContent = unitLabel;
+            }
+            if (unitSelect && info && info.resultUnit >= 0 && info.resultUnit <= 6) {
+                unitSelect.value = String(info.resultUnit);
+            }
+        }
+
+        async function applySensorUnitChange() {
+            if (!isConnected()) {
+                setMsg('Сначала подключите COM-порт.', true);
+                return;
+            }
+            const addr = getUnitTargetAddr();
+            const nextResultUnit = clampInt((unitSelect && unitSelect.value) || '1', 0, 6, 1);
+            try {
+                sensorDev.address = addr;
+                const current = await readSensorUnitInfo(addr, true);
+                const rangeUnit =
+                    current && Number.isFinite(current.rangeUnit) ? current.rangeUnit : nextResultUnit;
+                const nextRaw = encodeMUnit(nextResultUnit, rangeUnit);
+                await writeHoldingU16(SENSOR_MUNIT_REG, nextRaw, 1800);
+                cacheSensorUnit(addr, nextRaw);
+                refreshUnitPanel();
+                setMsg(
+                    'Единицы датчика ' +
+                        addr +
+                        ' обновлены: ' +
+                        formatSensorUnitLabel(nextResultUnit) +
+                        '.'
+                );
+                plog(
+                    'Датчик: MUnit обновлён на адресе ' +
+                        addr +
+                        ' -> RES=' +
+                        formatSensorUnitLabel(nextResultUnit) +
+                        ', RNG=' +
+                        formatSensorUnitLabel(rangeUnit) +
+                        '.'
+                );
+            } catch (e) {
+                setMsg('Ошибка смены единиц датчика: ' + errText(e), true);
+                plog('Датчик: ошибка записи MUnit — ' + errText(e));
+            }
+        }
+
         function isPlausiblePressure(raw) {
             return Number.isFinite(raw) && Math.abs(raw) <= MAX_SENSOR_PRESSURE_KPA;
         }
@@ -3494,6 +3670,8 @@
                 setMsg('Чтение конфигурации MIDA15 с адреса ' + addr + '…');
                 const interfaceRaw = await readHoldingU16(SENSOR_INTERFACE_REG, 1800);
                 const munitRaw = await readHoldingU16(SENSOR_MUNIT_REG, 1800);
+                cacheSensorUnit(addr, munitRaw);
+                refreshUnitPanel();
                 const pchRaw = await readHoldingU16(SENSOR_PCH_SETUP_REG, 1800);
                 const tchRaw = await readHoldingU16(SENSOR_TCH_SETUP_REG, 1800);
                 const dfRaw = await readHoldingU16(SENSOR_DFORDER_REG, 1800);
@@ -3600,6 +3778,7 @@
                     await writeHoldingU16(SENSOR_PASSWORD_REG, passNum);
                 }
                 await writeHoldingU16(SENSOR_MUNIT_REG, cfg.munitRaw);
+                cacheSensorUnit(currentAddr, cfg.munitRaw);
                 await writeHoldingU16(SENSOR_PCH_SETUP_REG, cfg.pchRaw);
                 await writeHoldingU16(SENSOR_TCH_SETUP_REG, cfg.tchRaw);
                 await writeHoldingU16(SENSOR_DFORDER_REG, cfg.dfOrder & 0xff);
@@ -3648,6 +3827,7 @@
                         hex2(cfg.munitRaw) +
                         '.'
                 );
+                refreshUnitPanel();
                 plog('Датчик: конфигурация MIDA15 записана (адрес ' + currentAddr + ' → ' + cfg.newAddr + ').');
             } catch (e) {
                 setMsg('Ошибка записи конфигурации: ' + errText(e), true);
@@ -3790,6 +3970,10 @@
                 cycle = await ensureMeasurementCycle(addr);
             } catch (_e) {}
             const prevPressure = lastPressureRawByAddr.get(addr);
+            let unitInfo = sensorUnitByAddr.get(addr) || null;
+            try {
+                unitInfo = await readSensorUnitInfo(addr, false);
+            } catch (_e0) {}
             let pressureRaw = null;
             let adcPress = null;
             let adcTerm = null;
@@ -3800,8 +3984,12 @@
                 adcPress = u16BEFromBytes(input[0], input[1]);
                 adcTerm = u16BEFromBytes(input[2], input[3]);
                 const pressureByteOffset = (SENSOR_PRESSURE_REG - SENSOR_INPUT_BLOCK_REG) * 2;
-                const pFromReg3 = decodePressureFromBytes(input.subarray(pressureByteOffset, pressureByteOffset + 4), prevPressure);
                 const pFromAdc = pressureFromAdcByRange(addr, adcPress);
+                const pFromReg3 = decodePressureFromBytes(
+                    input.subarray(pressureByteOffset, pressureByteOffset + 4),
+                    prevPressure,
+                    { addr: addr, adcEstimate: pFromAdc }
+                );
                 if (pFromReg3 === Infinity || pFromReg3 === -Infinity) {
                     pressureRaw = pFromReg3;
                     rangeAlarm = true;
@@ -3828,7 +4016,9 @@
                 wmode: cycle.wmode,
                 measurementStarted: cycle.started,
                 measurementCompleted: cycle.completed,
-                rangeAlarm: rangeAlarm
+                rangeAlarm: rangeAlarm,
+                resultUnit: unitInfo ? unitInfo.resultUnit : null,
+                rangeUnit: unitInfo ? unitInfo.rangeUnit : null
             };
         }
 
@@ -3871,20 +4061,20 @@
                     animation: false,
                     scales: {
                         x: { display: true, title: { display: true, text: 'время' } },
-                        y: { display: true, title: { display: true, text: 'давление' } }
+                        y: { display: true, title: { display: true, text: 'давление, кПа' } }
                     }
                 }
             });
         }
 
         /** Добавить точку в историю и обновить график. */
-        function pushChartPoint(absVal, diffVal) {
+        function pushChartPoint(absValKpa, diffValKpa) {
             if (!chartCanvas || typeof window.Chart === 'undefined') {
                 return;
             }
             const now = new Date();
             const t = now.toLocaleTimeString('ru-RU', { hour12: false });
-            chartHistory.push({ t: t, abs: absVal, diff: diffVal });
+            chartHistory.push({ t: t, abs: absValKpa, diff: diffValKpa });
             if (chartHistory.length > CHART_MAX_POINTS) {
                 chartHistory.shift();
             }
@@ -3894,17 +4084,14 @@
             if (!chart) {
                 return;
             }
-            const unitKey = 'kPa';
-            const absCfg = getSensorCfg(1);
-            const diffCfg = getSensorCfg(2);
             chart.data.labels = chartHistory.map(function (h) {
                 return h.t;
             });
             chart.data.datasets[0].data = chartHistory.map(function (h) {
-                return h.abs == null ? null : (h.abs - absCfg.zero) * absCfg.k * (PRESSURE_UNITS[unitKey] || PRESSURE_UNITS.kPa).factor;
+                return h.abs == null ? null : h.abs;
             });
             chart.data.datasets[1].data = chartHistory.map(function (h) {
-                return h.diff == null ? null : (h.diff - diffCfg.zero) * diffCfg.k * (PRESSURE_UNITS[unitKey] || PRESSURE_UNITS.kPa).factor;
+                return h.diff == null ? null : h.diff;
             });
             chart.update();
         }
@@ -4512,6 +4699,8 @@
                 const diffLive = pollDiffEnabled ? await readSensorLive(DIFF_ADDR) : null;
                 const absVal = absLive ? absLive.pressureRaw : null;
                 const diffVal = diffLive ? diffLive.pressureRaw : null;
+                const absUnitCode = absLive && absLive.resultUnit != null ? absLive.resultUnit : 1;
+                const diffUnitCode = diffLive && diffLive.resultUnit != null ? diffLive.resultUnit : 1;
                 if (pollAbsEnabled) {
                     if (absLive && (absLive.pressureRaw != null || absLive.adcPress != null || absLive.adcTerm != null)) {
                         clearPollHealth(ABS_ADDR);
@@ -4526,16 +4715,10 @@
                         markPollFailure(DIFF_ADDR);
                     }
                 }
-                const unitKey = 'kPa';
-                const absCfg = getSensorCfg(1);
-                const diffCfg = getSensorCfg(2);
-                const fmt = function (p, cfg) {
+                const fmt = function (p, unitCode) {
                     if (p == null) return '—';
-                    if (p === Infinity) return '+INF';
-                    if (p === -Infinity) return '-INF';
-                    const kPa = (p - cfg.zero) * cfg.k;
-                    const u = PRESSURE_UNITS[unitKey] || PRESSURE_UNITS.kPa;
-                    return (kPa * u.factor).toFixed(cfg.dfOrder) + ' ' + u.label;
+                    const label = formatSensorUnitLabel(unitCode);
+                    return formatPressureValue(p, 3) + ' ' + label;
                 };
                 const makeState = function (addr, enabled, live, rawVal) {
                     if (!enabled && found.size > 0 && !found.has(addr)) {
@@ -4553,34 +4736,42 @@
                     }
                     return { text: 'норма', cls: 'text-bg-success' };
                 };
-                if (pollAbs) pollAbs.textContent = fmt(absVal, absCfg);
+                if (pollAbs) pollAbs.textContent = fmt(absVal, absUnitCode);
                 if (pollAbsState) {
                     const st = makeState(ABS_ADDR, pollAbsEnabled, absLive, absVal);
                     pollAbsState.textContent = st.text;
                     pollAbsState.className = 'badge rounded-pill mt-1 ' + st.cls;
                 }
-                if (pollDiff) pollDiff.textContent = fmt(diffVal, diffCfg);
+                if (pollAbsUnit) {
+                    pollAbsUnit.textContent =
+                        'единицы: ' + (absLive && absLive.resultUnit != null ? formatSensorUnitLabel(absLive.resultUnit) : '—');
+                }
+                if (pollDiff) pollDiff.textContent = fmt(diffVal, diffUnitCode);
                 if (pollDiffState) {
                     const st = makeState(DIFF_ADDR, pollDiffEnabled, diffLive, diffVal);
                     pollDiffState.textContent = st.text;
                     pollDiffState.className = 'badge rounded-pill mt-1 ' + st.cls;
                 }
+                if (pollDiffUnit) {
+                    pollDiffUnit.textContent =
+                        'единицы: ' + (diffLive && diffLive.resultUnit != null ? formatSensorUnitLabel(diffLive.resultUnit) : '—');
+                }
                 const preferred = absLive && absLive.pressureRaw != null ? absLive : diffLive;
                 if (preferred && preferred.pressureRaw != null) {
-                    const cfg = preferred === absLive ? absCfg : diffCfg;
+                    const kpaValue = pressureToKpa(preferred.pressureRaw, preferred.resultUnit);
                     setVizRawMetrics({
                         adcPress: preferred.adcPress,
                         adcTerm: preferred.adcTerm,
                         pressureRaw: preferred.pressureRaw,
-                        pressureKpa:
-                            Number.isFinite(preferred.pressureRaw)
-                                ? ((preferred.pressureRaw - cfg.zero) * cfg.k).toFixed(cfg.dfOrder)
-                                : preferred.pressureRaw
+                        pressureKpa: Number.isFinite(kpaValue) ? formatPressureValue(kpaValue, 3) : preferred.pressureRaw
                     });
                 } else {
                     setVizRawMetrics(null);
                 }
-                pushChartPoint(Number.isFinite(absVal) ? absVal : null, Number.isFinite(diffVal) ? diffVal : null);
+                const absKpa = pressureToKpa(absVal, absUnitCode);
+                const diffKpa = pressureToKpa(diffVal, diffUnitCode);
+                pushChartPoint(Number.isFinite(absKpa) ? absKpa : null, Number.isFinite(diffKpa) ? diffKpa : null);
+                refreshUnitPanel();
             } finally {
                 pollBusy = false;
             }
@@ -4846,9 +5037,13 @@
             found.clear();
             pollNoReplyByAddr.clear();
             pollMuteUntilByAddr.clear();
+            sensorUnitByAddr.clear();
             if (scanResults) scanResults.classList.add('d-none');
             if (scanBadges) scanBadges.innerHTML = '';
             setComStatus('нет связи', false);
+            refreshUnitPanel();
+            if (pollAbsUnit) pollAbsUnit.textContent = 'единицы: —';
+            if (pollDiffUnit) pollDiffUnit.textContent = 'единицы: —';
             if (!silent) {
                 setMsg('COM-порт датчика закрыт.');
             }
@@ -4902,6 +5097,17 @@
                 void setZero();
             });
         }
+        if (unitTarget) {
+            unitTarget.addEventListener('change', function () {
+                refreshUnitPanel();
+            });
+        }
+        if (unitApplyBtn) {
+            unitApplyBtn.addEventListener('click', function () {
+                void applySensorUnitChange();
+            });
+        }
+        refreshUnitPanel();
     }
 
     function initWorkbench() {
