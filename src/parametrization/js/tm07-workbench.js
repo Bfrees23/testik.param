@@ -2637,10 +2637,44 @@
         const setApply = $('wbSensorSetApply');
         const cfgTarget = $('wbSensorCfgTarget');
         const cfgApply = $('wbSensorCfgApply');
+        const cfgReadDevice = $('wbSensorCfgReadDevice');
+        const cfgWriteDevice = $('wbSensorCfgWriteDevice');
+        const cfgK = $('wbSensorK');
+        const cfgZero = $('wbSensorZero');
         const cfgRangeUp = $('wbSensorRangeUp');
         const cfgRangeDown = $('wbSensorRangeDown');
         const cfgDFOrder = $('wbSensorDFOrder');
         const cfgFilter = $('wbSensorFilter');
+        const cfgModbusAddr = $('wbSensorModbusAddr');
+        const cfgBusBaud = $('wbSensorBusBaud');
+        const cfgParity = $('wbSensorParity');
+        const cfgMode = $('wbSensorMode');
+        const cfgRangeUnit = $('wbSensorRangeUnit');
+        const cfgResultUnit = $('wbSensorResultUnit');
+        const cfgPFilter = $('wbSensorPFilter');
+        const cfgPGain = $('wbSensorPGain');
+        const cfgPMode = $('wbSensorPMode');
+        const cfgTFilter = $('wbSensorTFilter');
+        const cfgTGain = $('wbSensorTGain');
+        const cfgTMode = $('wbSensorTMode');
+        const cfgRangeCheck = $('wbSensorRangeCheck');
+        const cfgWorkMode = $('wbSensorWorkMode');
+        const cfgDpShift = $('wbSensorDpShift');
+        const cfgWritePassword = $('wbSensorWritePassword');
+        const cfgStartBtn = $('wbSensorStartMeas');
+        const cfgStopBtn = $('wbSensorStopMeas');
+        const regAddr = $('wbSensorRegAddr');
+        const regCount = $('wbSensorRegCount');
+        const regData = $('wbSensorRegData');
+        const regOut = $('wbSensorRegOut');
+        const regReadHoldingBtn = $('wbSensorRegReadHolding');
+        const regReadInputBtn = $('wbSensorRegReadInput');
+        const regWriteBtn = $('wbSensorRegWrite');
+        const pollIntervalInput = $('wbSensorPollInterval');
+        const vizAdcPress = $('wbSensorVizAdcPress');
+        const vizAdcTerm = $('wbSensorVizAdcTerm');
+        const vizPressureRaw = $('wbSensorVizPressureRaw');
+        const vizPressureKpa = $('wbSensorVizPressureKpa');
         const chartCanvas = $('wbSensorChart');
         const vizTab = $('wbSensorVizTab');
         /** Параметры датчиков: addr -> {k, zero, unit, rangeUp, rangeDown, dfOrder, filter} */
@@ -2651,12 +2685,25 @@
         let chart = null;
 
         const SENSOR_TYPE_REG = 0x000a; // тип/версия карты датчика
-        const SENSOR_MEAS_REG = 0x0002; // входной регистр измерений
+        const SENSOR_INPUT_BLOCK_REG = 0x0001; // ADCPress, ADCTerm, Pressure(float32)
+        const SENSOR_MEAS_REG = 0x0002; // входной регистр измерений (float32)
+        const SENSOR_INTERFACE_REG = 0x0002; // holding Interface
+        const SENSOR_MUNIT_REG = 0x0007; // holding MUnit
+        const SENSOR_PCH_SETUP_REG = 0x0008; // holding PChSetup
+        const SENSOR_TCH_SETUP_REG = 0x0009; // holding TChSetup
+        const SENSOR_DFORDER_REG = 0x000a; // holding DFOrder
+        const SENSOR_RNGCHECK_REG = 0x000b; // holding RngCheck
+        const SENSOR_DP_REG = 0x000d; // holding dP(float32)
+        const SENSOR_WMODE_REG = 0x00f9; // holding WMode
+        const SENSOR_START_REG = 0x00fa; // holding Start
+        const SENSOR_PASSWORD_REG = 0x00fb; // holding Password
         const SCAN_ADDR_MIN = 1;
         const SCAN_ADDR_MAX = 16;
         const SCAN_TIMEOUT_MS = 420;
         const SCAN_FALLBACK_BAUDS = [19200, 9600, 14400, 28800, 4800, 2400, 1200];
         const POLL_INTERVAL_MS = 1000;
+        const POLL_INTERVAL_MIN_MS = 200;
+        const POLL_INTERVAL_MAX_MS = 10000;
         const SENSOR_USB_VID = 0x0403; // FTDI (как у КАО)
         const SENSOR_USB_PID = 0x7523; // адаптер датчика
         const SENSOR_LINK_PROFILES = [
@@ -2664,6 +2711,43 @@
             { key: 'rts-low', label: 'RTS(TX=0)', rs485Rts: true, rs485RtsTxHigh: false },
             { key: 'auto', label: 'Auto DE (без RTS)', rs485Rts: false, rs485RtsTxHigh: true }
         ];
+        const BAUD_TO_INTERFACE_CODE = {
+            1200: 0,
+            2400: 1,
+            4800: 2,
+            9600: 3,
+            14400: 4,
+            19200: 5,
+            28800: 6
+        };
+        const INTERFACE_CODE_TO_BAUD = {
+            0: 1200,
+            1: 2400,
+            2: 4800,
+            3: 9600,
+            4: 14400,
+            5: 19200,
+            6: 28800
+        };
+        const MUNIT_RANGE_LABEL = {
+            0: 'Па',
+            1: 'кПа',
+            2: 'МПа',
+            3: 'bar',
+            4: 'psi',
+            5: 'кгс/см²',
+            6: 'мм рт. ст.'
+        };
+        const MUNIT_RESULT_LABEL = {
+            0: 'Па',
+            1: 'кПа',
+            2: 'МПа',
+            3: 'bar',
+            4: 'psi',
+            5: 'кгс/см²',
+            6: 'мм рт. ст.',
+            7: '% диапазона'
+        };
 
         /** @type {KorrektorDevice|null} */
         let sensorDev = null;
@@ -2706,6 +2790,7 @@
                 pollDiffState.textContent = 'нет данных';
                 pollDiffState.className = 'badge rounded-pill text-bg-secondary mt-1';
             }
+            setVizRawMetrics(null);
         }
 
         function isConnected() {
@@ -2728,6 +2813,183 @@
 
         function errText(e) {
             return (e && e.message) || String(e || '');
+        }
+
+        function clampInt(v, min, max, fallback) {
+            const n = parseInt(v, 10);
+            if (!Number.isFinite(n)) return fallback;
+            if (n < min) return min;
+            if (n > max) return max;
+            return n;
+        }
+
+        function readSelectInt(el, fallback, min, max) {
+            if (!el) return fallback;
+            return clampInt(el.value, min, max, fallback);
+        }
+
+        function setSelectInt(el, value) {
+            if (!el) return;
+            el.value = String(value);
+        }
+
+        function u16LEFromBytes(b0, b1) {
+            return (b0 & 0xff) | ((b1 & 0xff) << 8);
+        }
+
+        function i16LEFromBytes(b0, b1) {
+            const u = u16LEFromBytes(b0, b1);
+            return u > 0x7fff ? u - 0x10000 : u;
+        }
+
+        function bytesToHex(bytes) {
+            return Array.from(bytes, function (b) {
+                return Number(b).toString(16).toUpperCase().padStart(2, '0');
+            }).join(' ');
+        }
+
+        function bytesToU16Text(bytes) {
+            if (!bytes || bytes.length < 2) return '';
+            const out = [];
+            for (let i = 0; i + 1 < bytes.length; i += 2) {
+                out.push(String(u16LEFromBytes(bytes[i], bytes[i + 1])));
+            }
+            return out.join(', ');
+        }
+
+        function parseHexByteString(text) {
+            const src = String(text || '')
+                .trim()
+                .replace(/0x/gi, '')
+                .replace(/[,\s;:|]+/g, ' ');
+            if (!src) return [];
+            const parts = src.split(' ').filter(Boolean);
+            const out = [];
+            for (let i = 0; i < parts.length; i += 1) {
+                const p = parts[i];
+                if (!/^[0-9a-fA-F]{1,2}$/.test(p)) {
+                    throw new Error('Некорректный hex-байт: "' + p + '"');
+                }
+                out.push(parseInt(p, 16) & 0xff);
+            }
+            return out;
+        }
+
+        function decodeInterface(raw) {
+            return {
+                raw: raw & 0xffff,
+                address: raw & 0xff,
+                mode: (raw >> 8) & 0x03,
+                baudCode: (raw >> 10) & 0x0f,
+                parity: (raw >> 14) & 0x03
+            };
+        }
+
+        function encodeInterface(address, mode, baudCode, parity) {
+            return (
+                (address & 0xff) |
+                ((mode & 0x03) << 8) |
+                ((baudCode & 0x0f) << 10) |
+                ((parity & 0x03) << 14)
+            );
+        }
+
+        function decodeMUnit(raw) {
+            return {
+                raw: raw & 0xffff,
+                resultUnit: raw & 0x0f,
+                rangeUnit: (raw >> 4) & 0x0f
+            };
+        }
+
+        function encodeMUnit(resultUnit, rangeUnit) {
+            return ((rangeUnit & 0x0f) << 4) | (resultUnit & 0x0f);
+        }
+
+        function decodeChannelSetup(raw) {
+            return {
+                raw: raw & 0xffff,
+                mode: raw & 0x01,
+                gain: (raw >> 1) & 0x07,
+                filter: (raw >> 4) & 0x03
+            };
+        }
+
+        function encodeChannelSetup(mode, gain, filter) {
+            return (mode & 0x01) | ((gain & 0x07) << 1) | ((filter & 0x03) << 4);
+        }
+
+        function selectedSensorAddr() {
+            return clampInt((cfgTarget && cfgTarget.value) || '1', 1, 247, 1);
+        }
+
+        function selectedBusAddr() {
+            return clampInt(
+                (cfgModbusAddr && cfgModbusAddr.value) || String(selectedSensorAddr()),
+                1,
+                247,
+                selectedSensorAddr()
+            );
+        }
+
+        function ensureSensorTargetOption(addr, selectValue) {
+            if (!cfgTarget) return;
+            const value = String(addr);
+            const exists = Array.prototype.some.call(cfgTarget.options, function (opt) {
+                return opt.value === value;
+            });
+            if (!exists) {
+                const opt = document.createElement('option');
+                opt.value = value;
+                opt.textContent = 'Пользовательский адрес ' + value;
+                cfgTarget.appendChild(opt);
+            }
+            if (selectValue !== false) {
+                cfgTarget.value = value;
+            }
+        }
+
+        async function readHoldingBytes(startReg, regCount, timeoutMs) {
+            if (!sensorDev) throw new Error('порт не подключён');
+            const resp = await sensorDev.readHolding(startReg, regCount, timeoutMs || 2000, 0);
+            const b = KorrektorDevice.modbusDataBytes(resp);
+            if (b.length < regCount * 2) {
+                throw new Error('короткий ответ: ожидалось ' + regCount * 2 + ' байт, получено ' + b.length);
+            }
+            return b;
+        }
+
+        async function readInputBytes(startReg, regCount, timeoutMs) {
+            if (!sensorDev) throw new Error('порт не подключён');
+            const resp = await sensorDev.readInputRegisters(startReg, regCount, timeoutMs || 2000, 0);
+            const b = KorrektorDevice.modbusDataBytes(resp);
+            if (b.length < regCount * 2) {
+                throw new Error('короткий ответ: ожидалось ' + regCount * 2 + ' байт, получено ' + b.length);
+            }
+            return b;
+        }
+
+        async function readHoldingU16(reg, timeoutMs) {
+            const b = await readHoldingBytes(reg, 1, timeoutMs);
+            return u16LEFromBytes(b[0], b[1]);
+        }
+
+        async function writeHoldingU16(reg, value) {
+            if (!sensorDev) throw new Error('порт не подключён');
+            const v = value & 0xffff;
+            await sensorDev.writeMultiple(reg, [v & 0xff, (v >> 8) & 0xff]);
+        }
+
+        function getPollIntervalMs() {
+            return clampInt((pollIntervalInput && pollIntervalInput.value) || POLL_INTERVAL_MS, POLL_INTERVAL_MIN_MS, POLL_INTERVAL_MAX_MS, POLL_INTERVAL_MS);
+        }
+
+        function setVizRawMetrics(metrics) {
+            const m = metrics || {};
+            if (vizAdcPress) vizAdcPress.textContent = m.adcPress == null ? '—' : String(m.adcPress);
+            if (vizAdcTerm) vizAdcTerm.textContent = m.adcTerm == null ? '—' : String(m.adcTerm);
+            if (vizPressureRaw) vizPressureRaw.textContent = m.pressureRaw == null ? '—' : String(m.pressureRaw);
+            if (vizPressureKpa) vizPressureKpa.textContent = m.pressureKpa == null ? '—' : String(m.pressureKpa);
         }
 
         async function switchSensorBaud(baud) {
@@ -2810,22 +3072,23 @@
 
         /** Заполнить поля конфигуратора из сохранённых параметров выбранного датчика. */
         function loadCfgIntoForm() {
-            const addr = parseInt((cfgTarget && cfgTarget.value) || '1', 10);
+            const addr = selectedSensorAddr();
             const c = getSensorCfg(addr);
-            if ($('wbSensorK')) $('wbSensorK').value = c.k;
-            if ($('wbSensorZero')) $('wbSensorZero').value = c.zero;
+            if (cfgK) cfgK.value = c.k;
+            if (cfgZero) cfgZero.value = c.zero;
             if (cfgRangeUp) cfgRangeUp.value = c.rangeUp;
             if (cfgRangeDown) cfgRangeDown.value = c.rangeDown;
             if (cfgDFOrder) cfgDFOrder.value = c.dfOrder;
             if (cfgFilter) cfgFilter.value = c.filter;
+            if (cfgModbusAddr) cfgModbusAddr.value = String(addr);
         }
 
         /** Сохранить параметры выбранного датчика из формы. */
         function saveCfgFromForm() {
-            const addr = parseInt((cfgTarget && cfgTarget.value) || '1', 10);
+            const addr = selectedSensorAddr();
             const c = getSensorCfg(addr);
-            c.k = parseFloat(($('wbSensorK') && $('wbSensorK').value) || '1');
-            c.zero = parseFloat(($('wbSensorZero') && $('wbSensorZero').value) || '0');
+            c.k = parseFloat((cfgK && cfgK.value) || '1');
+            c.zero = parseFloat((cfgZero && cfgZero.value) || '0');
             c.unit = 'kPa'; // единицы давления всегда кПа
             c.rangeUp = parseFloat((cfgRangeUp && cfgRangeUp.value) || '0');
             c.rangeDown = parseFloat((cfgRangeDown && cfgRangeDown.value) || '0');
@@ -2836,6 +3099,303 @@
                 localStorage.setItem('wb_sensor_cfg', JSON.stringify(sensorCfg));
             } catch (_e) {}
             return c;
+        }
+
+        function applyDeviceCfgToForm(addr, data) {
+            if (!data) return;
+            const iface = decodeInterface(data.interfaceRaw || 0);
+            const munit = decodeMUnit(data.munitRaw || 0);
+            const pch = decodeChannelSetup(data.pchRaw || 0);
+            const tch = decodeChannelSetup(data.tchRaw || 0);
+
+            if (cfgModbusAddr) cfgModbusAddr.value = String(iface.address || addr || 1);
+            if (cfgBusBaud) cfgBusBaud.value = String(INTERFACE_CODE_TO_BAUD[iface.baudCode] || 19200);
+            setSelectInt(cfgParity, iface.parity);
+            setSelectInt(cfgMode, iface.mode > 1 ? 0 : iface.mode);
+            setSelectInt(cfgResultUnit, munit.resultUnit);
+            setSelectInt(cfgRangeUnit, munit.rangeUnit);
+            setSelectInt(cfgPFilter, pch.filter > 2 ? 0 : pch.filter);
+            setSelectInt(cfgPGain, pch.gain);
+            setSelectInt(cfgPMode, pch.mode);
+            setSelectInt(cfgTFilter, tch.filter > 2 ? 0 : tch.filter);
+            setSelectInt(cfgTGain, tch.gain);
+            setSelectInt(cfgTMode, tch.mode);
+            setSelectInt(cfgRangeCheck, data.rngCheck ? 1 : 0);
+            setSelectInt(cfgWorkMode, data.wmode ? 1 : 0);
+            if (cfgDpShift) cfgDpShift.value = Number.isFinite(data.dpShift) ? String(data.dpShift) : '0';
+            if (cfgDFOrder) cfgDFOrder.value = String(clampInt(data.dfOrder, 0, 6, 3));
+            if (regOut) {
+                const lines = [
+                    'Interface=' + hex2(data.interfaceRaw || 0),
+                    'MUnit=' + hex2(data.munitRaw || 0) + ' (RES=' + (MUNIT_RESULT_LABEL[munit.resultUnit] || munit.resultUnit) + ', RNG=' + (MUNIT_RANGE_LABEL[munit.rangeUnit] || munit.rangeUnit) + ')',
+                    'PChSetup=' + hex2(data.pchRaw || 0),
+                    'TChSetup=' + hex2(data.tchRaw || 0),
+                    'DFOrder=' + String(data.dfOrder),
+                    'RngCheck=' + String(data.rngCheck),
+                    'dP=' + (Number.isFinite(data.dpShift) ? String(data.dpShift) : '0'),
+                    'WMode=' + String(data.wmode),
+                    'Start=' + hex2(data.startRaw || 0)
+                ];
+                regOut.textContent = lines.join('\n');
+            }
+        }
+
+        async function readSensorConfigurator() {
+            if (!isConnected()) {
+                setMsg('Сначала подключите USB-адаптер датчика.', true);
+                return;
+            }
+            const addr = selectedBusAddr();
+            sensorDev.address = addr;
+            try {
+                setMsg('Чтение конфигурации MIDA15 с адреса ' + addr + '…');
+                const interfaceRaw = await readHoldingU16(SENSOR_INTERFACE_REG, 1800);
+                const munitRaw = await readHoldingU16(SENSOR_MUNIT_REG, 1800);
+                const pchRaw = await readHoldingU16(SENSOR_PCH_SETUP_REG, 1800);
+                const tchRaw = await readHoldingU16(SENSOR_TCH_SETUP_REG, 1800);
+                const dfRaw = await readHoldingU16(SENSOR_DFORDER_REG, 1800);
+                const rngRaw = await readHoldingU16(SENSOR_RNGCHECK_REG, 1800);
+                const dpBytes = await readHoldingBytes(SENSOR_DP_REG, 2, 1800);
+                const wmodeRaw = await readHoldingU16(SENSOR_WMODE_REG, 1800);
+                const startRaw = await readHoldingU16(SENSOR_START_REG, 1800);
+                const data = {
+                    interfaceRaw: interfaceRaw,
+                    munitRaw: munitRaw,
+                    pchRaw: pchRaw,
+                    tchRaw: tchRaw,
+                    dfOrder: dfRaw & 0xff,
+                    rngCheck: rngRaw & 0xff,
+                    dpShift: KorrektorDevice.parseFloat32LE(dpBytes.subarray(0, 4)),
+                    wmode: wmodeRaw & 0xff,
+                    startRaw: startRaw
+                };
+                applyDeviceCfgToForm(addr, data);
+                const iface = decodeInterface(interfaceRaw);
+                setMsg(
+                    'Конфигурация считана: адрес ' +
+                        addr +
+                        ' → Interface=' +
+                        hex2(interfaceRaw) +
+                        ', baud=' +
+                        (INTERFACE_CODE_TO_BAUD[iface.baudCode] || 'неизв.') +
+                        ', parity=' +
+                        iface.parity +
+                        '.'
+                );
+                plog('Датчик: считана конфигурация MIDA15, адрес ' + addr + '.');
+            } catch (e) {
+                setMsg('Ошибка чтения конфигурации: ' + errText(e), true);
+                plog('Датчик: ошибка чтения конфигурации — ' + errText(e));
+            }
+        }
+
+        function collectDeviceCfgFromForm(currentAddr) {
+            const addr = clampInt((cfgModbusAddr && cfgModbusAddr.value) || currentAddr, 1, 247, currentAddr);
+            const mode = readSelectInt(cfgMode, 0, 0, 1);
+            const parity = readSelectInt(cfgParity, 0, 0, 2);
+            const baud = clampInt((cfgBusBaud && cfgBusBaud.value) || sensorBaud, 1200, 28800, 19200);
+            const baudCode = BAUD_TO_INTERFACE_CODE[baud];
+            if (!Number.isFinite(baudCode)) {
+                throw new Error('Недопустимая скорость шины: ' + baud);
+            }
+            const resultUnit = readSelectInt(cfgResultUnit, 1, 0, 15);
+            const rangeUnit = readSelectInt(cfgRangeUnit, 1, 0, 15);
+            const pFilter = readSelectInt(cfgPFilter, 1, 0, 3);
+            const pGain = readSelectInt(cfgPGain, 0, 0, 7);
+            const pMode = readSelectInt(cfgPMode, 0, 0, 1);
+            const tFilter = readSelectInt(cfgTFilter, 1, 0, 3);
+            const tGain = readSelectInt(cfgTGain, 0, 0, 7);
+            const tMode = readSelectInt(cfgTMode, 0, 0, 1);
+            const dfOrder = clampInt((cfgDFOrder && cfgDFOrder.value) || '3', 0, 6, 3);
+            const rngCheck = readSelectInt(cfgRangeCheck, 0, 0, 1);
+            const wmode = readSelectInt(cfgWorkMode, 0, 0, 1);
+            const dpShift = parseFloat((cfgDpShift && cfgDpShift.value) || '0');
+            if (!Number.isFinite(dpShift)) {
+                throw new Error('Некорректное значение dP.');
+            }
+            const startRaw = 0;
+            return {
+                newAddr: addr,
+                baud: baud,
+                interfaceRaw: encodeInterface(addr, mode, baudCode, parity),
+                munitRaw: encodeMUnit(resultUnit, rangeUnit),
+                pchRaw: encodeChannelSetup(pMode, pGain, pFilter),
+                tchRaw: encodeChannelSetup(tMode, tGain, tFilter),
+                dfOrder: dfOrder,
+                rngCheck: rngCheck,
+                dpShift: dpShift,
+                wmode: wmode,
+                startRaw: startRaw
+            };
+        }
+
+        async function writeSensorConfigurator() {
+            if (!isConnected()) {
+                setMsg('Сначала подключите USB-адаптер датчика.', true);
+                return;
+            }
+            const currentAddr = selectedBusAddr();
+            let cfg;
+            try {
+                cfg = collectDeviceCfgFromForm(currentAddr);
+            } catch (e) {
+                setMsg(errText(e), true);
+                return;
+            }
+            sensorDev.address = currentAddr;
+            try {
+                const pwd = cfgWritePassword ? cfgWritePassword.value.trim() : '';
+                setMsg('Запись конфигурации MIDA15 в датчик (адрес ' + currentAddr + ')…');
+                if (pwd) {
+                    const passNum = clampInt(pwd, 0, 65535, 0);
+                    await writeHoldingU16(SENSOR_PASSWORD_REG, passNum);
+                }
+                await writeHoldingU16(SENSOR_MUNIT_REG, cfg.munitRaw);
+                await writeHoldingU16(SENSOR_PCH_SETUP_REG, cfg.pchRaw);
+                await writeHoldingU16(SENSOR_TCH_SETUP_REG, cfg.tchRaw);
+                await writeHoldingU16(SENSOR_DFORDER_REG, cfg.dfOrder & 0xff);
+                await writeHoldingU16(SENSOR_RNGCHECK_REG, cfg.rngCheck & 0xff);
+                await sensorDev.writeMultiple(SENSOR_DP_REG, Array.from(KorrektorDevice.floatBytesLE(cfg.dpShift)));
+                await writeHoldingU16(SENSOR_WMODE_REG, cfg.wmode & 0xff);
+                await writeHoldingU16(SENSOR_START_REG, cfg.startRaw);
+                await writeHoldingU16(SENSOR_INTERFACE_REG, cfg.interfaceRaw);
+
+                if (cfg.newAddr !== currentAddr) {
+                    ensureSensorTargetOption(cfg.newAddr);
+                    sensorDev.address = cfg.newAddr;
+                    if (cfgModbusAddr) cfgModbusAddr.value = String(cfg.newAddr);
+                }
+                if (cfg.baud !== sensorBaud) {
+                    await switchSensorBaud(cfg.baud);
+                }
+                setMsg(
+                    'Конфигурация записана: адрес=' +
+                        cfg.newAddr +
+                        ', Interface=' +
+                        hex2(cfg.interfaceRaw) +
+                        ', MUnit=' +
+                        hex2(cfg.munitRaw) +
+                        '.'
+                );
+                plog('Датчик: конфигурация MIDA15 записана (адрес ' + currentAddr + ' → ' + cfg.newAddr + ').');
+            } catch (e) {
+                setMsg('Ошибка записи конфигурации: ' + errText(e), true);
+                plog('Датчик: ошибка записи конфигурации — ' + errText(e));
+            }
+        }
+
+        async function writeSensorStartCommand(startValue) {
+            if (!isConnected()) {
+                setMsg('Сначала подключите USB-адаптер датчика.', true);
+                return;
+            }
+            const addr = selectedBusAddr();
+            sensorDev.address = addr;
+            try {
+                await writeHoldingU16(SENSOR_START_REG, startValue ? 0xff00 : 0x0000);
+                setMsg(
+                    'Команда ' +
+                        (startValue ? 'Start' : 'Stop') +
+                        ' отправлена на адрес ' +
+                        addr +
+                        ' (reg 250 = ' +
+                        hex2(startValue ? 0xff00 : 0x0000) +
+                        ').'
+                );
+            } catch (e) {
+                setMsg('Ошибка команды Start/Stop: ' + errText(e), true);
+            }
+        }
+
+        async function runManualRegRead(isHolding) {
+            if (!isConnected()) {
+                setMsg('Сначала подключите USB-адаптер датчика.', true);
+                return;
+            }
+            const addr = selectedBusAddr();
+            const start = clampInt((regAddr && regAddr.value) || '2', 0, 65535, 2);
+            const count = clampInt((regCount && regCount.value) || '1', 1, 32, 1);
+            sensorDev.address = addr;
+            try {
+                const bytes = isHolding
+                    ? await readHoldingBytes(start, count, 1800)
+                    : await readInputBytes(start, count, 1800);
+                const lines = [
+                    (isHolding ? 'Holding' : 'Input') + ' addr=' + addr + ' reg=' + start + ' count=' + count,
+                    'HEX: ' + bytesToHex(bytes),
+                    'U16: ' + bytesToU16Text(bytes)
+                ];
+                if (count >= 2) {
+                    lines.push('F32[0]: ' + String(KorrektorDevice.parseFloat32LE(bytes.subarray(0, 4))));
+                }
+                if (regOut) regOut.textContent = lines.join('\n');
+                setMsg('Прочитано ' + count + ' рег. с адреса ' + addr + ' (' + (isHolding ? '0x03' : '0x04') + ').');
+            } catch (e) {
+                setMsg('Ошибка чтения регистров: ' + errText(e), true);
+                if (regOut) regOut.textContent = 'Ошибка: ' + errText(e);
+            }
+        }
+
+        async function runManualRegWrite() {
+            if (!isConnected()) {
+                setMsg('Сначала подключите USB-адаптер датчика.', true);
+                return;
+            }
+            const addr = selectedBusAddr();
+            const start = clampInt((regAddr && regAddr.value) || '2', 0, 65535, 2);
+            let bytes;
+            try {
+                bytes = parseHexByteString((regData && regData.value) || '');
+            } catch (e) {
+                setMsg(errText(e), true);
+                return;
+            }
+            if (!bytes.length || bytes.length % 2 !== 0) {
+                setMsg('Для записи нужны hex-данные чётной длины (по 2 байта на регистр).', true);
+                return;
+            }
+            sensorDev.address = addr;
+            try {
+                await sensorDev.writeMultiple(start, bytes);
+                if (regOut) {
+                    regOut.textContent =
+                        'Write 0x10 addr=' +
+                        addr +
+                        ' reg=' +
+                        start +
+                        ' regs=' +
+                        bytes.length / 2 +
+                        '\nHEX: ' +
+                        bytesToHex(bytes);
+                }
+                setMsg('Запись выполнена: ' + bytes.length / 2 + ' рег. на адрес ' + addr + '.');
+            } catch (e) {
+                setMsg('Ошибка записи регистров: ' + errText(e), true);
+            }
+        }
+
+        async function readSensorLive(addr) {
+            if (!sensorDev) return null;
+            sensorDev.address = addr;
+            try {
+                const input = await readInputBytes(SENSOR_INPUT_BLOCK_REG, 4, 1200);
+                const adcPress = i16LEFromBytes(input[0], input[1]);
+                const adcTerm = i16LEFromBytes(input[2], input[3]);
+                const pressureRaw = KorrektorDevice.parseFloat32LE(input.subarray(4, 8));
+                return {
+                    adcPress: adcPress,
+                    adcTerm: adcTerm,
+                    pressureRaw: pressureRaw
+                };
+            } catch (_e) {
+                try {
+                    const meas = await readInputBytes(SENSOR_MEAS_REG, 2, 1200);
+                    const pressureRaw = KorrektorDevice.parseFloat32LE(meas.subarray(0, 4));
+                    return { adcPress: null, adcTerm: null, pressureRaw: pressureRaw };
+                } catch (_e2) {
+                    return null;
+                }
+            }
         }
 
         /** Инициализировать график (canvas). */
@@ -2939,6 +3499,17 @@
                     (info.via ? '; ответ через ' + info.via : '');
                 scanBadges.appendChild(span);
             });
+        }
+
+        function syncTargetsFromScan() {
+            if (!cfgTarget || found.size === 0) return;
+            Array.from(found.keys())
+                .sort(function (a, b) {
+                    return a - b;
+                })
+                .forEach(function (addr) {
+                    ensureSensorTargetOption(addr, false);
+                });
         }
 
         /** Пробный опрос адреса: 0x03/0x000A, затем 0x04/0x000A (если нужно). */
@@ -3075,6 +3646,7 @@
                 }
                 if (scanResults) scanResults.classList.remove('d-none');
                 paintScanBadges();
+                syncTargetsFromScan();
                 if (found.size === 0) {
                     let msg =
                         'Сканирование завершено: датчики не ответили на адресах 1–16 ' +
@@ -3154,24 +3726,17 @@
             }
         }
 
-        /** Один опрос измерений (0x04, регистр 0x0002) на всех найденных адресах. */
+        /** Один опрос измерений в стиле Visualizer (0x0001..0x0004), с fallback на 0x0002. */
         async function pollOnce() {
             if (pollBusy || !isConnected()) return;
             pollBusy = true;
             try {
                 const ABS_ADDR = 1; // датчик абсолютного давления
                 const DIFF_ADDR = 2; // датчик перепада
-                const readVal = async function (addr) {
-                    sensorDev.address = addr;
-                    try {
-                        const resp = await sensorDev.readInputRegisters(SENSOR_MEAS_REG, 2);
-                        const b = KorrektorDevice.modbusDataBytes(resp);
-                        if (b.length >= 4) return KorrektorDevice.parseFloat32LE(b.subarray(0, 4));
-                    } catch (_e) {}
-                    return null;
-                };
-                const absVal = await readVal(ABS_ADDR);
-                const diffVal = await readVal(DIFF_ADDR);
+                const absLive = await readSensorLive(ABS_ADDR);
+                const diffLive = await readSensorLive(DIFF_ADDR);
+                const absVal = absLive ? absLive.pressureRaw : null;
+                const diffVal = diffLive ? diffLive.pressureRaw : null;
                 const unitKey = 'kPa';
                 const absCfg = getSensorCfg(1);
                 const diffCfg = getSensorCfg(2);
@@ -3193,6 +3758,18 @@
                     pollDiffState.className =
                         'badge rounded-pill mt-1 ' + (diffVal == null ? 'text-bg-secondary' : 'text-bg-success');
                 }
+                const preferred = absLive && absLive.pressureRaw != null ? absLive : diffLive;
+                if (preferred && preferred.pressureRaw != null) {
+                    const cfg = preferred === absLive ? absCfg : diffCfg;
+                    setVizRawMetrics({
+                        adcPress: preferred.adcPress,
+                        adcTerm: preferred.adcTerm,
+                        pressureRaw: preferred.pressureRaw,
+                        pressureKpa: ((preferred.pressureRaw - cfg.zero) * cfg.k).toFixed(cfg.dfOrder)
+                    });
+                } else {
+                    setVizRawMetrics(null);
+                }
                 pushChartPoint(absVal, diffVal);
             } finally {
                 pollBusy = false;
@@ -3205,12 +3782,13 @@
                 return;
             }
             if (pollPanel) pollPanel.classList.remove('d-none');
-            setMsg('Живой опрос измерений (0x04, регистр 0x0002)…');
+            const periodMs = getPollIntervalMs();
+            setMsg('Живой опрос измерений MIDA15 (' + periodMs + ' мс)…');
             void pollOnce();
             if (pollTimer) clearInterval(pollTimer);
             pollTimer = setInterval(function () {
                 void pollOnce();
-            }, POLL_INTERVAL_MS);
+            }, periodMs);
         }
 
         /** Записать значение датчика в регистр 0x0002 на указанном адресе. */
@@ -3244,7 +3822,7 @@
                 setMsg('Сначала подключите USB-адаптер датчика.', true);
                 return;
             }
-            const addr = parseInt((cfgTarget && cfgTarget.value) || '1', 10);
+            const addr = selectedSensorAddr();
             const name = addr === 1 ? 'датчик абсолютного давления' : 'датчик перепада';
             sensorDev.address = addr;
             try {
@@ -3310,10 +3888,45 @@
         if (cfgApply) {
             cfgApply.addEventListener('click', function () {
                 const c = saveCfgFromForm();
-                const addr = parseInt((cfgTarget && cfgTarget.value) || '1', 10);
+                const addr = selectedSensorAddr();
                 const name = addr === 1 ? 'датчик абсолютного давления' : 'датчик перепада';
                 setMsg('Параметры ' + name + ' (адрес ' + addr + ') сохранены: K=' + c.k + ', сдвиг=' + c.zero + ', ед.=' + PRESSURE_UNITS[c.unit].label + '.');
                 plog('Датчик: сохранены параметры ' + name + ' (адрес ' + addr + '): K=' + c.k + ', сдвиг=' + c.zero + ', ед.=' + c.unit + ', диапазон ' + c.rangeDown + '…' + c.rangeUp + ', разрядность=' + c.dfOrder + ', фильтр=' + c.filter + '.');
+            });
+        }
+        if (cfgReadDevice) {
+            cfgReadDevice.addEventListener('click', function () {
+                void readSensorConfigurator();
+            });
+        }
+        if (cfgWriteDevice) {
+            cfgWriteDevice.addEventListener('click', function () {
+                void writeSensorConfigurator();
+            });
+        }
+        if (cfgStartBtn) {
+            cfgStartBtn.addEventListener('click', function () {
+                void writeSensorStartCommand(true);
+            });
+        }
+        if (cfgStopBtn) {
+            cfgStopBtn.addEventListener('click', function () {
+                void writeSensorStartCommand(false);
+            });
+        }
+        if (regReadHoldingBtn) {
+            regReadHoldingBtn.addEventListener('click', function () {
+                void runManualRegRead(true);
+            });
+        }
+        if (regReadInputBtn) {
+            regReadInputBtn.addEventListener('click', function () {
+                void runManualRegRead(false);
+            });
+        }
+        if (regWriteBtn) {
+            regWriteBtn.addEventListener('click', function () {
+                void runManualRegWrite();
             });
         }
         // Визуализатор: инициализация графика при открытии вкладки

@@ -215,13 +215,195 @@
                                     <label class="form-label small mb-1" for="wbSensorFilter">Фильтр (глубина сглаживания)</label>
                                     <input type="number" class="form-control form-control-sm" id="wbSensorFilter" value="1" min="1" max="20" step="1" placeholder="1">
                                 </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorModbusAddr">Modbus-адрес (Interface.I7..I0)</label>
+                                    <input type="number" class="form-control form-control-sm" id="wbSensorModbusAddr" value="1" min="1" max="247" step="1">
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorBusBaud">Скорость шины (Interface.BR)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorBusBaud">
+                                        <option value="1200">1200</option>
+                                        <option value="2400">2400</option>
+                                        <option value="4800">4800</option>
+                                        <option value="9600">9600</option>
+                                        <option value="14400">14400</option>
+                                        <option value="19200" selected>19200</option>
+                                        <option value="28800">28800</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorParity">Чётность (Interface.PAR)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorParity">
+                                        <option value="0" selected>Нет</option>
+                                        <option value="1">Нечётная</option>
+                                        <option value="2">Чётная</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorMode">Режим протокола (Interface.M)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorMode">
+                                        <option value="0" selected>RTU</option>
+                                        <option value="1">ASCII</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorResultUnit">Ед. результата (MUnit.RES)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorResultUnit">
+                                        <option value="0">Па</option>
+                                        <option value="1" selected>кПа</option>
+                                        <option value="2">МПа</option>
+                                        <option value="3">bar</option>
+                                        <option value="4">psi</option>
+                                        <option value="5">кгс/см²</option>
+                                        <option value="6">мм рт. ст.</option>
+                                        <option value="7">% диапазона</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorRangeUnit">Ед. диапазона (MUnit.RNG)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorRangeUnit">
+                                        <option value="0">Па</option>
+                                        <option value="1" selected>кПа</option>
+                                        <option value="2">МПа</option>
+                                        <option value="3">bar</option>
+                                        <option value="4">psi</option>
+                                        <option value="5">кгс/см²</option>
+                                        <option value="6">мм рт. ст.</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorPFilter">P-канал фильтр (PChSetup.F)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorPFilter">
+                                        <option value="0">нет</option>
+                                        <option value="1" selected>50 Гц</option>
+                                        <option value="2">60 Гц</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorPGain">P-канал усиление (PChSetup.G)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorPGain">
+                                        <option value="0" selected>1</option>
+                                        <option value="1">2</option>
+                                        <option value="2">4</option>
+                                        <option value="3">8</option>
+                                        <option value="4">16</option>
+                                        <option value="5">32</option>
+                                        <option value="6">64</option>
+                                        <option value="7">128</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorPMode">P-канал режим (PChSetup.B/U)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorPMode">
+                                        <option value="0" selected>Униполярный</option>
+                                        <option value="1">Биполярный</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorTFilter">T-канал фильтр (TChSetup.F)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorTFilter">
+                                        <option value="0">нет</option>
+                                        <option value="1" selected>50 Гц</option>
+                                        <option value="2">60 Гц</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorTGain">T-канал усиление (TChSetup.G)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorTGain">
+                                        <option value="0" selected>1</option>
+                                        <option value="1">2</option>
+                                        <option value="2">4</option>
+                                        <option value="3">8</option>
+                                        <option value="4">16</option>
+                                        <option value="5">32</option>
+                                        <option value="6">64</option>
+                                        <option value="7">128</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorTMode">T-канал режим (TChSetup.B/U)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorTMode">
+                                        <option value="0" selected>Униполярный</option>
+                                        <option value="1">Биполярный</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorRangeCheck">Контроль диапазона (RngCheck)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorRangeCheck">
+                                        <option value="0" selected>Выключен</option>
+                                        <option value="1">Включен</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorWorkMode">Режим работы (WMode)</label>
+                                    <select class="form-select form-select-sm" id="wbSensorWorkMode">
+                                        <option value="0" selected>Нормальный</option>
+                                        <option value="1">Пониженное энергопотребление</option>
+                                    </select>
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorDpShift">Смещение нуля dP (FP32)</label>
+                                    <input type="number" class="form-control form-control-sm" id="wbSensorDpShift" value="0" step="any">
+                                </div>
+                                <div class="col-sm-4 col-md-3">
+                                    <label class="form-label small mb-1" for="wbSensorWritePassword">Пароль записи (reg 251, опц.)</label>
+                                    <input type="number" class="form-control form-control-sm" id="wbSensorWritePassword" value="" min="0" max="65535" step="1" placeholder="например 0">
+                                </div>
                                 <div class="col-sm-auto">
                                     <button type="button" class="btn btn-primary btn-sm" id="wbSensorCfgApply" title="Сохранить параметры датчика">
                                         <i class="bi bi-check2 me-1"></i>Применить
                                     </button>
                                 </div>
+                                <div class="col-sm-auto">
+                                    <button type="button" class="btn btn-outline-secondary btn-sm" id="wbSensorCfgReadDevice" title="Считать регистры датчика в форму">
+                                        <i class="bi bi-download me-1"></i>Считать из датчика
+                                    </button>
+                                </div>
+                                <div class="col-sm-auto">
+                                    <button type="button" class="btn btn-outline-primary btn-sm" id="wbSensorCfgWriteDevice" title="Записать параметры формы в регистры датчика">
+                                        <i class="bi bi-upload me-1"></i>Записать в датчик
+                                    </button>
+                                </div>
+                                <div class="col-sm-auto">
+                                    <button type="button" class="btn btn-outline-success btn-sm" id="wbSensorStartMeas" title="Команда Start=0xFF00 (reg 250)">
+                                        <i class="bi bi-play-fill me-1"></i>Start
+                                    </button>
+                                </div>
+                                <div class="col-sm-auto">
+                                    <button type="button" class="btn btn-outline-warning btn-sm" id="wbSensorStopMeas" title="Команда Start=0x0000 (reg 250)">
+                                        <i class="bi bi-stop-fill me-1"></i>Stop
+                                    </button>
+                                </div>
                             </div>
                             <div class="small text-body-secondary">P = (ADC − сдвиг) × K · параметры хранятся локально и применяются к пересчёту и анализу</div>
+                            <div class="card mt-2">
+                                <div class="card-body py-2">
+                                    <div class="row g-2 align-items-end">
+                                        <div class="col-sm-3 col-md-2">
+                                            <label class="form-label small mb-1" for="wbSensorRegAddr">Регистр</label>
+                                            <input type="number" class="form-control form-control-sm" id="wbSensorRegAddr" min="0" max="65535" value="2">
+                                        </div>
+                                        <div class="col-sm-3 col-md-2">
+                                            <label class="form-label small mb-1" for="wbSensorRegCount">Кол-во</label>
+                                            <input type="number" class="form-control form-control-sm" id="wbSensorRegCount" min="1" max="32" value="1">
+                                        </div>
+                                        <div class="col-sm-6 col-md-5">
+                                            <label class="form-label small mb-1" for="wbSensorRegData">Данные для записи (hex байты)</label>
+                                            <input type="text" class="form-control form-control-sm font-monospace" id="wbSensorRegData" placeholder="например: 01 00">
+                                        </div>
+                                        <div class="col-sm-auto">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="wbSensorRegReadHolding">Read Holding</button>
+                                        </div>
+                                        <div class="col-sm-auto">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" id="wbSensorRegReadInput">Read Input</button>
+                                        </div>
+                                        <div class="col-sm-auto">
+                                            <button type="button" class="btn btn-outline-primary btn-sm" id="wbSensorRegWrite">Write 0x10</button>
+                                        </div>
+                                    </div>
+                                    <pre class="small mt-2 mb-0 p-2 bg-body-tertiary border rounded font-monospace" id="wbSensorRegOut">—</pre>
+                                </div>
+                            </div>
                         </div>
 
                         <div class="tab-pane fade" id="wbSensorVizPane" role="tabpanel">
@@ -250,6 +432,32 @@
                                     <div class="card-body">
                                         <div class="fw-semibold mb-2">График изменения давления</div>
                                         <canvas id="wbSensorChart" height="220" style="width:100%;height:220px;"></canvas>
+                                    </div>
+                                </div>
+                                <div class="card mt-2">
+                                    <div class="card-body py-2">
+                                        <div class="row g-2 align-items-end">
+                                            <div class="col-sm-4 col-md-2">
+                                                <label class="form-label small mb-1" for="wbSensorPollInterval">Интервал опроса, мс</label>
+                                                <input type="number" class="form-control form-control-sm" id="wbSensorPollInterval" min="200" max="10000" step="100" value="1000">
+                                            </div>
+                                            <div class="col-sm-auto">
+                                                <div class="small text-body-secondary mb-1">ADCPress</div>
+                                                <div class="fw-semibold font-monospace" id="wbSensorVizAdcPress">—</div>
+                                            </div>
+                                            <div class="col-sm-auto">
+                                                <div class="small text-body-secondary mb-1">ADCTerm</div>
+                                                <div class="fw-semibold font-monospace" id="wbSensorVizAdcTerm">—</div>
+                                            </div>
+                                            <div class="col-sm-auto">
+                                                <div class="small text-body-secondary mb-1">Pressure (raw)</div>
+                                                <div class="fw-semibold font-monospace" id="wbSensorVizPressureRaw">—</div>
+                                            </div>
+                                            <div class="col-sm-auto">
+                                                <div class="small text-body-secondary mb-1">Pressure (kPa)</div>
+                                                <div class="fw-semibold font-monospace" id="wbSensorVizPressureKpa">—</div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                                 <div class="small text-body-secondary mt-2">Регистр: <span class="font-monospace">0x0002</span> · обновление раз в секунду</div>
