@@ -150,13 +150,13 @@
                         <button type="button" class="btn btn-primary btn-sm" id="wbSensorAuto2" title="Жёсткий мастер: записывает сетевой идентификатор Interface.I=2 (перепадник), затем требует перезапуск питания и подтверждение">
                             <i class="bi bi-2-circle me-1"></i>Настроить датчик 2
                         </button>
-                        <button type="button" class="btn btn-outline-primary btn-sm" id="wbSensorScan" title="Сканировать адреса 1–16 (чтение 0x000A)">
+                        <button type="button" class="btn btn-outline-primary btn-sm d-none" id="wbSensorScan" title="Сканировать адреса 1–16 (чтение 0x000A)">
                             <i class="bi bi-radar me-1"></i>Сканировать адреса
                         </button>
                         <button type="button" class="btn btn-outline-success btn-sm" id="wbSensorPoll" title="Живой опрос измерений (0x04, Input 0x0001..0x0004; для WMode=1 автоматически отправляется Start)">
                             <i class="bi bi-activity me-1"></i>Живой опрос
                         </button>
-                        <button type="button" class="btn btn-outline-warning btn-sm" id="wbSensorSetZero" title="Калибровка нуля: текущее значение ADC выбранного датчика становится сдвигом нуля (давление → 0)">
+                        <button type="button" class="btn btn-outline-warning btn-sm d-none" id="wbSensorSetZero" title="Калибровка нуля: текущее значение ADC выбранного датчика становится сдвигом нуля (давление → 0)">
                             <i class="bi bi-bullseye me-1"></i>Установить ноль
                         </button>
                     </div>
@@ -164,21 +164,21 @@
                         <div class="d-flex flex-wrap gap-1" id="wbSensorScanBadges"></div>
                     </div>
 
-                    <ul class="nav nav-tabs mt-3" role="tablist">
+                    <ul class="nav nav-tabs mt-3 d-none" role="tablist">
                         <li class="nav-item" role="presentation">
-                            <button class="nav-link active" id="wbSensorCfgTab" data-bs-toggle="tab" data-bs-target="#wbSensorCfgPane" type="button" role="tab">
+                            <button class="nav-link" id="wbSensorCfgTab" data-bs-toggle="tab" data-bs-target="#wbSensorCfgPane" type="button" role="tab">
                                 <i class="bi bi-sliders me-1"></i>Конфигуратор
                             </button>
                         </li>
                         <li class="nav-item" role="presentation">
-                            <button class="nav-link" id="wbSensorVizTab" data-bs-toggle="tab" data-bs-target="#wbSensorVizPane" type="button" role="tab">
+                            <button class="nav-link active" id="wbSensorVizTab" data-bs-toggle="tab" data-bs-target="#wbSensorVizPane" type="button" role="tab">
                                 <i class="bi bi-graph-up me-1"></i>Визуализатор
                             </button>
                         </li>
                     </ul>
 
                     <div class="tab-content mt-2">
-                        <div class="tab-pane fade show active" id="wbSensorCfgPane" role="tabpanel">
+                        <div class="tab-pane fade d-none" id="wbSensorCfgPane" role="tabpanel">
                             <div class="row g-2 align-items-end mb-2">
                                 <div class="col-sm-4 col-md-3">
                                     <label class="form-label small mb-1" for="wbSensorCfgTarget">Датчик</label>
@@ -406,7 +406,7 @@
                             </div>
                         </div>
 
-                        <div class="tab-pane fade" id="wbSensorVizPane" role="tabpanel">
+                        <div class="tab-pane fade show active" id="wbSensorVizPane" role="tabpanel">
                             <div id="wbSensorPollPanel" class="mt-1">
                                 <div class="row g-3">
                                     <div class="col-md-6">
