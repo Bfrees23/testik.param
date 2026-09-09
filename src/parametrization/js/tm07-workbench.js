@@ -2760,6 +2760,8 @@
         let autoBusy = false;
         /** Найденные адреса: addr -> { type:number, typeHex:string, via:string } */
         const found = new Map();
+        /** Последнее валидное давление по адресу для стабилизации авто-декодирования формата float. */
+        const lastPressureRawByAddr = new Map();
 
         function setMsg(msg, isError) {
             if (!status) return;
@@ -2843,6 +2845,48 @@
             return u > 0x7fff ? u - 0x10000 : u;
         }
 
+        function u16BEFromBytes(b0, b1) {
+            return ((b0 & 0xff) << 8) | (b1 & 0xff);
+        }
+
+        function i16BEFromBytes(b0, b1) {
+            const u = u16BEFromBytes(b0, b1);
+            return u > 0x7fff ? u - 0x10000 : u;
+        }
+
+        function parseFloat32BE(data4) {
+            if (!data4 || data4.length < 4) throw new Error('Нужно 4 байта float');
+            const buf = new ArrayBuffer(4);
+            const view = new DataView(buf);
+            for (let i = 0; i < 4; i += 1) view.setUint8(i, data4[i] & 0xff);
+            return view.getFloat32(0, false);
+        }
+
+        function decodePressureFromBytes(data4, prevValue) {
+            if (!data4 || data4.length < 4) return null;
+            const b = new Uint8Array([data4[0] & 0xff, data4[1] & 0xff, data4[2] & 0xff, data4[3] & 0xff]);
+            const swapped = new Uint8Array([b[2], b[3], b[0], b[1]]);
+            const variants = [
+                KorrektorDevice.parseFloat32LE(b),
+                parseFloat32BE(b),
+                KorrektorDevice.parseFloat32LE(swapped),
+                parseFloat32BE(swapped)
+            ].filter(function (v) {
+                return isPlausiblePressure(v);
+            });
+            if (variants.length === 0) return null;
+            if (Number.isFinite(prevValue)) {
+                variants.sort(function (a, bVal) {
+                    return Math.abs(a - prevValue) - Math.abs(bVal - prevValue);
+                });
+                return variants[0];
+            }
+            variants.sort(function (a, bVal) {
+                return Math.abs(a) - Math.abs(bVal);
+            });
+            return variants[0];
+        }
+
         function bytesToHex(bytes) {
             return Array.from(bytes, function (b) {
                 return Number(b).toString(16).toUpperCase().padStart(2, '0');
@@ -2853,7 +2897,7 @@
             if (!bytes || bytes.length < 2) return '';
             const out = [];
             for (let i = 0; i + 1 < bytes.length; i += 2) {
-                out.push(String(u16LEFromBytes(bytes[i], bytes[i + 1])));
+                out.push(String(u16BEFromBytes(bytes[i], bytes[i + 1])));
             }
             return out.join(', ');
         }
@@ -2972,13 +3016,13 @@
 
         async function readHoldingU16(reg, timeoutMs) {
             const b = await readHoldingBytes(reg, 1, timeoutMs);
-            return u16LEFromBytes(b[0], b[1]);
+            return u16BEFromBytes(b[0], b[1]);
         }
 
         async function writeHoldingU16(reg, value) {
             if (!sensorDev) throw new Error('порт не подключён');
             const v = value & 0xffff;
-            await sensorDev.writeMultiple(reg, [v & 0xff, (v >> 8) & 0xff]);
+            await sensorDev.writeMultiple(reg, [(v >> 8) & 0xff, v & 0xff]);
         }
 
         function getPollIntervalMs() {
@@ -3385,23 +3429,24 @@
             let pressureRaw = null;
             let adcPress = null;
             let adcTerm = null;
+            const prevPressure = lastPressureRawByAddr.get(addr);
 
-            // Базовый (наиболее совместимый) путь как в MIDA: чтение float32 с входного регистра 0x0002.
+            // Базовый путь: чтение пары входных регистров 0x0002..0x0003.
             try {
                 const meas = await readInputBytes(SENSOR_MEAS_REG, 2, 1200);
-                const p = KorrektorDevice.parseFloat32LE(meas.subarray(0, 4));
+                const p = decodePressureFromBytes(meas.subarray(0, 4), prevPressure);
                 if (isPlausiblePressure(p)) {
                     pressureRaw = p;
                 }
             } catch (_e) {}
 
-            // Расширенный блок visualizer: читаем ADC метрики и альтернативные варианты расположения pressure.
+            // Расширенный блок: 0x0001..0x0004 с ADC-метриками и альтернативным размещением pressure.
             try {
                 const input = await readInputBytes(SENSOR_INPUT_BLOCK_REG, 4, 1200);
-                adcPress = i16LEFromBytes(input[0], input[1]);
-                adcTerm = i16LEFromBytes(input[2], input[3]);
-                const pFromReg3 = KorrektorDevice.parseFloat32LE(input.subarray(4, 8));
-                const pFromReg2 = KorrektorDevice.parseFloat32LE(input.subarray(2, 6));
+                adcPress = i16BEFromBytes(input[0], input[1]);
+                adcTerm = i16BEFromBytes(input[2], input[3]);
+                const pFromReg3 = decodePressureFromBytes(input.subarray(4, 8), prevPressure);
+                const pFromReg2 = decodePressureFromBytes(input.subarray(2, 6), prevPressure);
                 if (pressureRaw == null) {
                     if (isPlausiblePressure(pFromReg3)) {
                         pressureRaw = pFromReg3;
@@ -3410,6 +3455,10 @@
                     }
                 }
             } catch (_e2) {}
+
+            if (pressureRaw != null && Number.isFinite(pressureRaw)) {
+                lastPressureRawByAddr.set(addr, pressureRaw);
+            }
 
             if (pressureRaw == null && adcPress == null && adcTerm == null) {
                 return null;
@@ -3726,13 +3775,8 @@
                 const c = getSensorCfg(addr);
                 c.unit = 'kPa'; // единицы всегда кПа
                 sensorCfg[addr] = c;
-                let raw = null;
-                sensorDev.address = addr;
-                try {
-                    const resp = await sensorDev.readInputRegisters(SENSOR_MEAS_REG, 2);
-                    const b = KorrektorDevice.modbusDataBytes(resp);
-                    if (b.length >= 4) raw = KorrektorDevice.parseFloat32LE(b.subarray(0, 4));
-                } catch (_e) {}
+                const live = await readSensorLive(addr);
+                const raw = live ? live.pressureRaw : null;
                 const kPa = raw == null ? null : (raw - c.zero) * c.k;
                 try {
                     localStorage.setItem('wb_sensor_cfg', JSON.stringify(sensorCfg));
@@ -3814,29 +3858,20 @@
             }, periodMs);
         }
 
-        /** Записать значение датчика в регистр 0x0002 на указанном адресе. */
+        /** Ручная запись значения отключена: у MIDA15 регистр 0x0002 является Interface-регистром. */
         async function applySensorValue(addr, name) {
             if (!isConnected()) {
                 setMsg('Сначала подключите USB-адаптер датчика.', true);
                 return;
             }
-            if (!setValue) return;
-            const raw = parseFloat(setValue.value);
-            if (!Number.isFinite(raw)) {
-                setMsg('Введите число (кПа).', true);
-                return;
-            }
-            sensorDev.address = addr;
-            const bytes = Array.from(KorrektorDevice.floatBytesLE(raw));
-            try {
-                setMsg('Запись значения ' + raw + ' в ' + name + ' (адрес ' + addr + ')…');
-                await sensorDev.writeMultiple(SENSOR_MEAS_REG, bytes);
-                setMsg('Значение ' + raw + ' записано в ' + name + ' (адрес ' + addr + ').');
-                plog('Датчик: ' + name + ' (адрес ' + addr + '): записано ' + raw + ' (float32) в 0x0002.');
-            } catch (e) {
-                setMsg('Ошибка записи: ' + (e.message || String(e)), true);
-                plog('Датчик: ошибка записи — ' + (e.message || String(e)));
-            }
+            setMsg('Запись значения отключена: регистр 0x0002 управляет адресом/интерфейсом MIDA15.', true);
+            plog(
+                'Датчик: запись значения в ' +
+                    name +
+                    ' (адрес ' +
+                    addr +
+                    ') отклонена — 0x0002 является Interface-регистром.'
+            );
         }
 
         /** Калибровка нуля: текущее значение (кПа) выбранного датчика становится сдвигом нуля. */
@@ -3849,13 +3884,12 @@
             const name = addr === 1 ? 'датчик абсолютного давления' : 'датчик перепада';
             sensorDev.address = addr;
             try {
-                const resp = await sensorDev.readInputRegisters(SENSOR_MEAS_REG, 2);
-                const b = KorrektorDevice.modbusDataBytes(resp);
-                if (b.length < 4) {
+                const live = await readSensorLive(addr);
+                const raw = live ? live.pressureRaw : null;
+                if (raw == null || !Number.isFinite(raw)) {
                     setMsg('Не удалось прочитать текущее значение ' + name + ' (адрес ' + addr + ').', true);
                     return;
                 }
-                const raw = KorrektorDevice.parseFloat32LE(b.subarray(0, 4));
                 const c = getSensorCfg(addr);
                 c.zero = raw;
                 sensorCfg[addr] = c;
