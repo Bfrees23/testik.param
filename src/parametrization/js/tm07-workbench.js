@@ -3958,10 +3958,10 @@
         }
 
         /** Пробный опрос адреса: сначала Interface (0x03/0x0002), затем тип датчика (0x000A). */
-        async function probeAddress(addr) {
+        async function probeAddress(addr, fastOnly) {
             if (!sensorDev) return { ok: false, error: 'порт не подключён' };
             sensorDev.address = addr;
-            const probes = [
+            const allProbes = [
                 {
                     via: '0x03/0x0002',
                     run: function () {
@@ -3981,6 +3981,7 @@
                     }
                 }
             ];
+            const probes = fastOnly ? [allProbes[0]] : allProbes;
             let lastErr = 'нет ответа';
             for (let i = 0; i < probes.length; i += 1) {
                 const p = probes[i];
@@ -4227,18 +4228,86 @@
             if (targetAddr === 2 && pollDiff) pollDiff.textContent = pressureText;
         }
 
-        async function waitWizardReaddressConfirm(targetAddr, name, timeoutMs) {
+        function buildWizardProbeSweep(preferInterfaceRaw) {
+            const initialProfile = profileByKey(sensorLinkProfile && sensorLinkProfile.key);
+            const activeSerial = serialProfileByKey(sensorSerialProfile && sensorSerialProfile.key);
+            const hasInterfaceRaw = Number.isFinite(preferInterfaceRaw);
+            const iface = hasInterfaceRaw ? decodeInterface(preferInterfaceRaw) : null;
+            const preferBaud = (iface && INTERFACE_CODE_TO_BAUD[iface.baudCode]) || sensorBaud || getSelectedBaud();
+            const preferSerial = iface ? recommendedSerialProfileForParity(iface.parity) : activeSerial;
+            return {
+                scanProfiles: profileOrder(initialProfile),
+                scanSerialProfiles: serialProfileOrder(preferSerial),
+                scanBauds: [preferBaud].concat(
+                    SCAN_FALLBACK_BAUDS.filter(function (b) {
+                        return b !== preferBaud;
+                    })
+                )
+            };
+        }
+
+        async function probeWizardTargetBySweep(targetAddr, preferInterfaceRaw) {
+            const sweep = buildWizardProbeSweep(preferInterfaceRaw);
+            for (let p = 0; p < sweep.scanProfiles.length; p += 1) {
+                const linkProfile = sweep.scanProfiles[p];
+                const switchedLink = await switchSensorLinkProfile(linkProfile);
+                if (!switchedLink) continue;
+                for (let s = 0; s < sweep.scanSerialProfiles.length; s += 1) {
+                    const serialProfile = sweep.scanSerialProfiles[s];
+                    for (let b = 0; b < sweep.scanBauds.length; b += 1) {
+                        const baud = sweep.scanBauds[b];
+                        const switchedSerial = await switchSensorSerialProfile(serialProfile, baud);
+                        if (!switchedSerial) continue;
+                        const probe = await probeAddress(targetAddr, true);
+                        if (probe && probe.ok) {
+                            return {
+                                probe: probe,
+                                linkProfile: linkProfile,
+                                serialProfile: serialProfile,
+                                baud: baud
+                            };
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        async function waitWizardReaddressConfirm(targetAddr, name, timeoutMs, options) {
+            const opts = options || {};
             const timeout = Math.max(1500, Number(timeoutMs) || 15000);
             const deadline = Date.now() + timeout;
-            while (Date.now() <= deadline) {
-                const targetProbe = await probeAddress(targetAddr);
+            const preferInterfaceRaw = Number.isFinite(opts.preferInterfaceRaw) ? opts.preferInterfaceRaw : NaN;
+            const quickDeadline = Math.min(deadline, Date.now() + Math.min(3000, timeout));
+            while (Date.now() <= quickDeadline) {
+                const targetProbe = await probeAddress(targetAddr, true);
                 if (targetProbe && targetProbe.ok) {
                     await finishWizardReaddress(targetAddr, name, targetProbe);
                     return true;
                 }
+                if (Date.now() + 750 > quickDeadline) break;
                 await new Promise(function (resolve) {
                     setTimeout(resolve, 700);
                 });
+            }
+            if (opts.deepScan === false) {
+                return false;
+            }
+            const deepProbe = await probeWizardTargetBySweep(targetAddr, preferInterfaceRaw);
+            if (deepProbe && deepProbe.probe && deepProbe.probe.ok) {
+                plog(
+                    'Датчик: подтверждение адреса ' +
+                        targetAddr +
+                        ' через ' +
+                        deepProbe.linkProfile.label +
+                        ', ' +
+                        deepProbe.serialProfile.label +
+                        ', ' +
+                        deepProbe.baud +
+                        ' бод.'
+                );
+                await finishWizardReaddress(targetAddr, name, deepProbe.probe);
+                return true;
             }
             return false;
         }
@@ -4246,17 +4315,12 @@
         async function broadcastReaddressWizard(targetAddr, name) {
             if (!sensorDev) throw new Error('порт не подключён');
             const target = buildWizardTargetInterface(targetAddr);
-            const initialProfile = profileByKey(sensorLinkProfile && sensorLinkProfile.key);
-            const initialSerialProfile = serialProfileByKey(sensorSerialProfile && sensorSerialProfile.key);
-            const initialBaud = sensorBaud || getSelectedBaud();
-            const scanBauds = [initialBaud].concat(
-                SCAN_FALLBACK_BAUDS.filter(function (b) {
-                    return b !== initialBaud;
-                })
-            );
-            const scanProfiles = profileOrder(initialProfile);
-            const scanSerialProfiles = serialProfileOrder(initialSerialProfile);
+            const sweep = buildWizardProbeSweep(NaN);
+            const scanBauds = sweep.scanBauds;
+            const scanProfiles = sweep.scanProfiles;
+            const scanSerialProfiles = sweep.scanSerialProfiles;
             let lastErr = '';
+            let sentCount = 0;
             setMsg('Мастер ' + targetAddr + ': шаг 2/6 — широковещательная запись Interface (адрес 0, без поиска адреса)…');
             for (let p = 0; p < scanProfiles.length; p += 1) {
                 const linkProfile = scanProfiles[p];
@@ -4271,57 +4335,59 @@
                         try {
                             sensorDev.address = 0;
                             await writeHoldingU16(SENSOR_INTERFACE_REG, target.interfaceRaw);
-                            pendingReaddressByTarget.set(targetAddr, {
-                                fromAddr: 0,
-                                toAddr: targetAddr,
-                                interfaceRaw: target.interfaceRaw,
-                                broadcast: true
-                            });
-                            await switchSensorSerialProfile(target.serialProfile, target.targetBaud);
-                            if (cfgBusBaud) cfgBusBaud.value = String(target.targetBaud);
-                            setSelectedBaud(target.targetBaud);
-                            plog(
-                                'Датчик: мастер ' +
-                                    targetAddr +
-                                    ' сделал broadcast 0x06 Interface=' +
-                                    hex2(target.interfaceRaw) +
-                                    ' через ' +
-                                    linkProfile.label +
-                                    ', ' +
-                                    serialProfile.label +
-                                    ', ' +
-                                    baud +
-                                    ' бод.'
-                            );
-                            if (!wizardPowerCycleConfirm(targetAddr, name)) {
-                                setMsg(
-                                    'Мастер ' +
-                                        targetAddr +
-                                        ': запись выполнена. После перезапуска питания нажмите эту же кнопку ещё раз для подтверждения.'
-                                );
-                                return true;
-                            }
-                            setMsg('Мастер ' + targetAddr + ': ожидаю перезапуск питания, проверяю ответ на адресе ' + targetAddr + '…');
-                            const confirmed = await waitWizardReaddressConfirm(targetAddr, name, 20000);
-                            if (!confirmed) {
-                                setMsg(
-                                    'Мастер ' +
-                                        targetAddr +
-                                        ': после записи датчик пока не найден на адресе ' +
-                                        targetAddr +
-                                        '. Выполните перезапуск питания и нажмите кнопку ещё раз.',
-                                    true
-                                );
-                            }
-                            return true;
+                            sentCount += 1;
                         } catch (e) {
                             lastErr = errText(e);
                         }
                     }
                 }
             }
-            setMsg('Широковещательная запись Interface не выполнена: ' + (lastErr || 'нет ответа на всех профилях.'), true);
-            return false;
+            if (sentCount <= 0) {
+                setMsg('Широковещательная запись Interface не выполнена: ' + (lastErr || 'нет ответа на всех профилях.'), true);
+                return false;
+            }
+            pendingReaddressByTarget.set(targetAddr, {
+                fromAddr: 0,
+                toAddr: targetAddr,
+                interfaceRaw: target.interfaceRaw,
+                broadcast: true
+            });
+            await switchSensorSerialProfile(target.serialProfile, target.targetBaud);
+            if (cfgBusBaud) cfgBusBaud.value = String(target.targetBaud);
+            setSelectedBaud(target.targetBaud);
+            plog(
+                'Датчик: мастер ' +
+                    targetAddr +
+                    ' отправил broadcast 0x06 Interface=' +
+                    hex2(target.interfaceRaw) +
+                    ' по ' +
+                    sentCount +
+                    ' комбинациям профиля.'
+            );
+            if (!wizardPowerCycleConfirm(targetAddr, name)) {
+                setMsg(
+                    'Мастер ' +
+                        targetAddr +
+                        ': запись выполнена. После перезапуска питания нажмите эту же кнопку ещё раз для подтверждения.'
+                );
+                return true;
+            }
+            setMsg('Мастер ' + targetAddr + ': ожидаю перезапуск питания, проверяю ответ на адресе ' + targetAddr + '…');
+            const confirmed = await waitWizardReaddressConfirm(targetAddr, name, 30000, {
+                preferInterfaceRaw: target.interfaceRaw,
+                deepScan: true
+            });
+            if (!confirmed) {
+                setMsg(
+                    'Мастер ' +
+                        targetAddr +
+                        ': после записи датчик пока не найден на адресе ' +
+                        targetAddr +
+                        '. Выполните перезапуск питания и нажмите кнопку ещё раз.',
+                    true
+                );
+            }
+            return true;
         }
 
         /** Жёсткий мастер: датчик 1 => Interface.I=1, датчик 2 => Interface.I=2. */
@@ -4344,7 +4410,10 @@
                 if (pending) {
                     // 2. Подтверждение после перезапуска питания.
                     setMsg('Мастер ' + addr + ': шаг 2/6 — проверка после перезапуска питания…');
-                    const confirmed = await waitWizardReaddressConfirm(addr, name, 6000);
+                    const confirmed = await waitWizardReaddressConfirm(addr, name, 12000, {
+                        preferInterfaceRaw: pending.interfaceRaw,
+                        deepScan: true
+                    });
                     if (!confirmed) {
                         let oldProbe = null;
                         if (pending.fromAddr > 0) {
