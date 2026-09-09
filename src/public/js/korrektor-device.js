@@ -24,6 +24,10 @@ class KorrektorDevice {
         this._rs485RtsTxHigh = true;
         /** Текущая скорость порта для оценки времени полной отправки кадра. */
         this._baudRate = 9600;
+        /** Параметры линии последовательного порта. */
+        this._dataBits = 8;
+        this._stopBits = 1;
+        this._parity = 'none';
         /** 1 старт + 8 данных + стоп (без parity). */
         this._serialBitsPerChar = 10;
     }
@@ -109,6 +113,24 @@ class KorrektorDevice {
         await new Promise((r) => setTimeout(r, n));
     }
 
+    _normalizeSerialSettings(baudRate, options = {}) {
+        const dataBits = [7, 8].includes(Number(options.dataBits)) ? Number(options.dataBits) : this._dataBits || 8;
+        const stopBits = Number(options.stopBits) === 2 ? 2 : 1;
+        const parityRaw = String(options.parity || this._parity || 'none').toLowerCase();
+        const parity = parityRaw === 'even' || parityRaw === 'odd' ? parityRaw : 'none';
+        return {
+            baudRate: Number(baudRate) || 9600,
+            dataBits: dataBits,
+            stopBits: stopBits,
+            parity: parity
+        };
+    }
+
+    _recomputeSerialBitsPerChar() {
+        const parityBits = this._parity === 'none' ? 0 : 1;
+        this._serialBitsPerChar = 1 + this._dataBits + this._stopBits + parityBits;
+    }
+
     /**
      * Горячее переключение профиля RS485 без переоткрытия порта.
      * Полезно для адаптеров с инверсией DE или автонаправлением.
@@ -149,7 +171,7 @@ class KorrektorDevice {
             if (buf.length < 5) return null;
             return { total: 5 };
         }
-        if (fn === 0x10) {
+        if (fn === 0x10 || fn === 0x06) {
             if (buf.length < 8) return null;
             return { total: 8 };
         }
@@ -186,13 +208,18 @@ class KorrektorDevice {
         if (options.rs485Rts !== undefined) this._rs485Rts = !!options.rs485Rts;
         if (options.rs485RtsTxHigh !== undefined) this._rs485RtsTxHigh = !!options.rs485RtsTxHigh;
         if (options.turnaroundMs !== undefined) this._turnaroundMs = Number(options.turnaroundMs) || 0;
-        this._baudRate = Number(baudRate) || 9600;
+        const serial = this._normalizeSerialSettings(baudRate, options);
+        this._baudRate = serial.baudRate;
+        this._dataBits = serial.dataBits;
+        this._stopBits = serial.stopBits;
+        this._parity = serial.parity;
+        this._recomputeSerialBitsPerChar();
         this.port = port;
         await this.port.open({
-            baudRate,
-            dataBits: 8,
-            stopBits: 1,
-            parity: 'none',
+            baudRate: this._baudRate,
+            dataBits: this._dataBits,
+            stopBits: this._stopBits,
+            parity: this._parity,
             flowControl: 'none'
         });
         this.reader = this.port.readable.getReader();
@@ -200,6 +227,9 @@ class KorrektorDevice {
         await this._rs485SetReceive();
         this._emitExchangeEvent('port-opened', {
             baudRate: this._baudRate,
+            dataBits: this._dataBits,
+            stopBits: this._stopBits,
+            parity: this._parity,
             rs485Rts: this._rs485Rts,
             rs485RtsTxHigh: this._rs485RtsTxHigh,
             turnaroundMs: this._turnaroundMs,
@@ -220,12 +250,53 @@ class KorrektorDevice {
                 rs485Rts: this._rs485Rts,
                 rs485RtsTxHigh: this._rs485RtsTxHigh,
                 turnaroundMs: this._turnaroundMs,
+                dataBits: this._dataBits,
+                stopBits: this._stopBits,
+                parity: this._parity,
             });
             await this._sleep(150);
             await this._drainRxBufferInner(400);
             this._emitExchangeEvent('baud-switch', {
                 fromBaud: fromBaud,
                 toBaud: this._baudRate,
+            });
+        });
+    }
+
+    async switchSerialProfile(options = {}) {
+        const port = this.port;
+        if (!port) throw new Error('Порт не открыт');
+        return this._withIoLock(async () => {
+            const from = {
+                baudRate: this._baudRate,
+                dataBits: this._dataBits,
+                stopBits: this._stopBits,
+                parity: this._parity,
+            };
+            const targetBaud = options.baudRate !== undefined ? Number(options.baudRate) || this._baudRate : this._baudRate;
+            await this._closeStreams();
+            try {
+                await port.close();
+            } catch (_e) {}
+            await this.openSelectedPort(port, targetBaud, {
+                rs485Rts: this._rs485Rts,
+                rs485RtsTxHigh: this._rs485RtsTxHigh,
+                turnaroundMs: this._turnaroundMs,
+                dataBits: options.dataBits !== undefined ? options.dataBits : this._dataBits,
+                stopBits: options.stopBits !== undefined ? options.stopBits : this._stopBits,
+                parity: options.parity !== undefined ? options.parity : this._parity,
+            });
+            await this._sleep(150);
+            await this._drainRxBufferInner(400);
+            this._emitExchangeEvent('serial-profile-switch', {
+                fromBaud: from.baudRate,
+                toBaud: this._baudRate,
+                fromDataBits: from.dataBits,
+                toDataBits: this._dataBits,
+                fromStopBits: from.stopBits,
+                toStopBits: this._stopBits,
+                fromParity: from.parity,
+                toParity: this._parity,
             });
         });
     }
@@ -242,6 +313,9 @@ class KorrektorDevice {
             rs485Rts: options.rs485Rts !== false,
             rs485RtsTxHigh: options.rs485RtsTxHigh !== false,
             turnaroundMs: options.turnaroundMs,
+            dataBits: options.dataBits,
+            stopBits: options.stopBits,
+            parity: options.parity,
         });
         await new Promise((r) => setTimeout(r, 150));
         await this.drainRxBuffer(400);
@@ -272,6 +346,9 @@ class KorrektorDevice {
                 rs485Rts: options.rs485Rts !== false,
                 rs485RtsTxHigh: options.rs485RtsTxHigh !== false,
                 turnaroundMs: options.turnaroundMs,
+                dataBits: options.dataBits,
+                stopBits: options.stopBits,
+                parity: options.parity,
             });
             await new Promise((r) => setTimeout(r, 150));
             await this.drainRxBuffer(400);
@@ -438,6 +515,9 @@ class KorrektorDevice {
                     fn: frame && frame.length > 1 ? frame[1] & 0xff : null,
                     frameLength: frame ? frame.length : 0,
                     baudRate: this._baudRate,
+                        dataBits: this._dataBits,
+                        stopBits: this._stopBits,
+                        parity: this._parity,
                     rs485Rts: this._rs485Rts,
                     rs485RtsTxHigh: this._rs485RtsTxHigh,
                 });
@@ -762,6 +842,12 @@ class KorrektorDevice {
             ...dataBytes
         ];
         return this.sendFrame(this.buildFrame(0x10, p), timeoutMs, retries);
+    }
+
+    async writeSingleRegister(reg, value, timeoutMs = 2000, retries = 1) {
+        const v = value & 0xffff;
+        const p = [(reg >> 8) & 0xff, reg & 0xff, (v >> 8) & 0xff, v & 0xff];
+        return this.sendFrame(this.buildFrame(0x06, p), timeoutMs, retries);
     }
 
     /**

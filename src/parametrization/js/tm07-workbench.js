@@ -2685,8 +2685,8 @@
         let chart = null;
 
         const SENSOR_TYPE_REG = 0x000a; // тип/версия карты датчика
-        const SENSOR_INPUT_BLOCK_REG = 0x0001; // ADCPress, ADCTerm, Pressure(float32)
-        const SENSOR_MEAS_REG = 0x0002; // входной регистр измерений (float32)
+        const SENSOR_INPUT_BLOCK_REG = 0x0001; // расширенный входной блок (ADC/pressure зависит от версии)
+        const SENSOR_MEAS_REG = 0x0002; // базовый входной блок измерений (2 регистра)
         const SENSOR_INTERFACE_REG = 0x0002; // holding Interface
         const SENSOR_MUNIT_REG = 0x0007; // holding MUnit
         const SENSOR_PCH_SETUP_REG = 0x0008; // holding PChSetup
@@ -2701,8 +2701,13 @@
         const SCAN_ADDR_MAX = 16;
         const SCAN_TIMEOUT_MS = 420;
         const SCAN_FALLBACK_BAUDS = [19200, 9600, 14400, 28800, 4800, 2400, 1200];
+        const SENSOR_SERIAL_PROFILES = [
+            { key: '8n1', label: '8N1', dataBits: 8, stopBits: 1, parity: 'none' },
+            { key: '8e1', label: '8E1', dataBits: 8, stopBits: 1, parity: 'even' },
+            { key: '8n2', label: '8N2', dataBits: 8, stopBits: 2, parity: 'none' }
+        ];
         const POLL_INTERVAL_MS = 1000;
-        const MAX_SENSOR_PRESSURE_KPA = 1000000;
+        const MAX_SENSOR_PRESSURE_KPA = 100000;
         const POLL_INTERVAL_MIN_MS = 200;
         const POLL_INTERVAL_MAX_MS = 10000;
         const SENSOR_USB_VID = 0x0403; // FTDI (как у КАО)
@@ -2754,6 +2759,7 @@
         let sensorDev = null;
         let sensorBaud = 19200;
         let sensorLinkProfile = SENSOR_LINK_PROFILES[0];
+        let sensorSerialProfile = SENSOR_SERIAL_PROFILES[0];
         let pollTimer = null;
         let pollBusy = false;
         let scanBusy = false;
@@ -2945,6 +2951,10 @@
                             p.timeoutMs +
                             'ms baud=' +
                             p.baudRate +
+                            ' line=' +
+                            String(p.dataBits || 8) +
+                            String(p.parity || 'none').slice(0, 1).toUpperCase() +
+                            String(p.stopBits || 1) +
                             ' rts=' +
                             (p.rs485Rts ? 'on' : 'off') +
                             ' rtsTxHigh=' +
@@ -2972,6 +2982,10 @@
                     logSensorExchangeToConsole(
                         'PORT OPEN baud=' +
                             p.baudRate +
+                            ' line=' +
+                            String(p.dataBits || 8) +
+                            String(p.parity || 'none').slice(0, 1).toUpperCase() +
+                            String(p.stopBits || 1) +
                             ' rts=' +
                             (p.rs485Rts ? 'on' : 'off') +
                             ' rtsTxHigh=' +
@@ -2988,6 +3002,23 @@
                 }
                 if (event === 'baud-switch') {
                     logSensorExchangeToConsole('BAUD SWITCH ' + p.fromBaud + ' -> ' + p.toBaud);
+                    return;
+                }
+                if (event === 'serial-profile-switch') {
+                    logSensorExchangeToConsole(
+                        'LINE SWITCH ' +
+                            p.fromBaud +
+                            '/' +
+                            p.fromDataBits +
+                            String(p.fromParity || 'none').slice(0, 1).toUpperCase() +
+                            p.fromStopBits +
+                            ' -> ' +
+                            p.toBaud +
+                            '/' +
+                            p.toDataBits +
+                            String(p.toParity || 'none').slice(0, 1).toUpperCase() +
+                            p.toStopBits
+                    );
                     return;
                 }
                 if (event === 'rs485-mode') {
@@ -3148,7 +3179,11 @@
         async function writeHoldingU16(reg, value) {
             if (!sensorDev) throw new Error('порт не подключён');
             const v = value & 0xffff;
-            await sensorDev.writeMultiple(reg, [(v >> 8) & 0xff, v & 0xff]);
+            if (typeof sensorDev.writeSingleRegister === 'function') {
+                await sensorDev.writeSingleRegister(reg, v, 2000, 0);
+            } else {
+                await sensorDev.writeMultiple(reg, [(v >> 8) & 0xff, v & 0xff]);
+            }
         }
 
         function getPollIntervalMs() {
@@ -3167,6 +3202,28 @@
             return Number.isFinite(raw) && Math.abs(raw) <= MAX_SENSOR_PRESSURE_KPA;
         }
 
+        function pressureFromAdcByRange(addr, adcPress) {
+            if (!Number.isFinite(adcPress)) return null;
+            const cfg = getSensorCfg(addr);
+            const down = Number(cfg.rangeDown);
+            const up = Number(cfg.rangeUp);
+            if (!Number.isFinite(down) || !Number.isFinite(up) || up === down) return null;
+            const ratio = Math.max(0, Math.min(1, (adcPress + 32768) / 65535));
+            return down + ratio * (up - down);
+        }
+
+        function pressureInConfiguredRange(addr, raw) {
+            if (!Number.isFinite(raw)) return false;
+            const cfg = getSensorCfg(addr);
+            const down = Number(cfg.rangeDown);
+            const up = Number(cfg.rangeUp);
+            if (!Number.isFinite(down) || !Number.isFinite(up) || up === down) return true;
+            const low = Math.min(down, up);
+            const high = Math.max(down, up);
+            const margin = Math.max(5, (high - low) * 0.25);
+            return raw >= low - margin && raw <= high + margin;
+        }
+
         async function switchSensorBaud(baud) {
             if (!sensorDev) return false;
             if (sensorBaud === baud) return true;
@@ -3178,6 +3235,65 @@
                 return true;
             } catch (e) {
                 plog('Датчик: ошибка переключения скорости на ' + baud + ' бод — ' + errText(e));
+                return false;
+            }
+        }
+
+        function serialProfileByKey(key) {
+            for (let i = 0; i < SENSOR_SERIAL_PROFILES.length; i += 1) {
+                if (SENSOR_SERIAL_PROFILES[i].key === key) return SENSOR_SERIAL_PROFILES[i];
+            }
+            return SENSOR_SERIAL_PROFILES[0];
+        }
+
+        function serialProfileOrder(startProfile) {
+            const first = startProfile || SENSOR_SERIAL_PROFILES[0];
+            return [first].concat(
+                SENSOR_SERIAL_PROFILES.filter(function (p) {
+                    return p.key !== first.key;
+                })
+            );
+        }
+
+        async function switchSensorSerialProfile(nextProfile, baudOverride) {
+            if (!sensorDev || !nextProfile) return false;
+            const targetBaud = Number(baudOverride) || sensorBaud || getSelectedBaud();
+            const sameProfile = sensorSerialProfile && sensorSerialProfile.key === nextProfile.key;
+            const sameBaud = sensorBaud === targetBaud;
+            if (sameProfile && sameBaud) return true;
+            try {
+                if (typeof sensorDev.switchSerialProfile === 'function') {
+                    await sensorDev.switchSerialProfile({
+                        baudRate: targetBaud,
+                        dataBits: nextProfile.dataBits,
+                        stopBits: nextProfile.stopBits,
+                        parity: nextProfile.parity
+                    });
+                } else if (targetBaud !== sensorBaud) {
+                    await sensorDev.switchBaudRate(targetBaud);
+                } else {
+                    return false;
+                }
+                sensorBaud = targetBaud;
+                sensorSerialProfile = nextProfile;
+                setSelectedBaud(targetBaud);
+                plog(
+                    'Датчик: профиль линии переключён на ' +
+                        nextProfile.label +
+                        ' (' +
+                        targetBaud +
+                        ' бод).'
+                );
+                return true;
+            } catch (e) {
+                plog(
+                    'Датчик: ошибка переключения профиля линии ' +
+                        nextProfile.label +
+                        ' (' +
+                        targetBaud +
+                        ' бод) — ' +
+                        errText(e)
+                );
                 return false;
             }
         }
@@ -3531,10 +3647,17 @@
             }
             sensorDev.address = addr;
             try {
-                await sensorDev.writeMultiple(start, bytes);
+                if (bytes.length === 2 && typeof sensorDev.writeSingleRegister === 'function') {
+                    const v = u16BEFromBytes(bytes[0], bytes[1]);
+                    await sensorDev.writeSingleRegister(start, v, 2000, 0);
+                } else {
+                    await sensorDev.writeMultiple(start, bytes);
+                }
                 if (regOut) {
                     regOut.textContent =
-                        'Write 0x10 addr=' +
+                        'Write ' +
+                        (bytes.length === 2 ? '0x06' : '0x10') +
+                        ' addr=' +
                         addr +
                         ' reg=' +
                         start +
@@ -3557,24 +3680,38 @@
             let adcTerm = null;
             const prevPressure = lastPressureRawByAddr.get(addr);
 
-            // Базовый путь: чтение пары входных регистров 0x0002..0x0003.
+            // Базовый путь: чтение 0x0002..0x0003 (как у Visualizer).
             try {
                 const meas = await readInputBytes(SENSOR_MEAS_REG, 2, 1200);
-                const p = decodePressureFromBytes(meas.subarray(0, 4), prevPressure);
-                if (isPlausiblePressure(p)) {
-                    pressureRaw = p;
+                adcPress = i16BEFromBytes(meas[0], meas[1]);
+                adcTerm = i16BEFromBytes(meas[2], meas[3]);
+                const pFloat = decodePressureFromBytes(meas.subarray(0, 4), prevPressure);
+                const pFromAdc = pressureFromAdcByRange(addr, adcPress);
+                if (isPlausiblePressure(pFloat) && pressureInConfiguredRange(addr, pFloat)) {
+                    pressureRaw = pFloat;
+                } else if (isPlausiblePressure(pFromAdc)) {
+                    pressureRaw = pFromAdc;
+                } else if (isPlausiblePressure(pFloat)) {
+                    pressureRaw = pFloat;
                 }
             } catch (_e) {}
 
             // Расширенный блок: 0x0001..0x0004 с ADC-метриками и альтернативным размещением pressure.
             try {
                 const input = await readInputBytes(SENSOR_INPUT_BLOCK_REG, 4, 1200);
-                adcPress = i16BEFromBytes(input[0], input[1]);
-                adcTerm = i16BEFromBytes(input[2], input[3]);
+                if (adcPress == null) adcPress = i16BEFromBytes(input[0], input[1]);
+                if (adcTerm == null) adcTerm = i16BEFromBytes(input[2], input[3]);
                 const pFromReg3 = decodePressureFromBytes(input.subarray(4, 8), prevPressure);
                 const pFromReg2 = decodePressureFromBytes(input.subarray(2, 6), prevPressure);
-                if (pressureRaw == null) {
-                    if (isPlausiblePressure(pFromReg3)) {
+                const pFromAdc = pressureFromAdcByRange(addr, adcPress);
+                if (pressureRaw == null || !pressureInConfiguredRange(addr, pressureRaw)) {
+                    if (isPlausiblePressure(pFromReg3) && pressureInConfiguredRange(addr, pFromReg3)) {
+                        pressureRaw = pFromReg3;
+                    } else if (isPlausiblePressure(pFromReg2) && pressureInConfiguredRange(addr, pFromReg2)) {
+                        pressureRaw = pFromReg2;
+                    } else if (isPlausiblePressure(pFromAdc)) {
+                        pressureRaw = pFromAdc;
+                    } else if (isPlausiblePressure(pFromReg3)) {
                         pressureRaw = pFromReg3;
                     } else if (isPlausiblePressure(pFromReg2)) {
                         pressureRaw = pFromReg2;
@@ -3710,11 +3847,17 @@
                 });
         }
 
-        /** Пробный опрос адреса: 0x03/0x000A, затем 0x04/0x000A (если нужно). */
+        /** Пробный опрос адреса: сначала Interface (0x03/0x0002), затем тип датчика (0x000A). */
         async function probeAddress(addr) {
             if (!sensorDev) return { ok: false, error: 'порт не подключён' };
             sensorDev.address = addr;
             const probes = [
+                {
+                    via: '0x03/0x0002',
+                    run: function () {
+                        return sensorDev.readHolding(SENSOR_INTERFACE_REG, 1, SCAN_TIMEOUT_MS, 0);
+                    }
+                },
                 {
                     via: '0x03/0x000A',
                     run: function () {
@@ -3738,7 +3881,7 @@
                         lastErr = p.via + ': короткий ответ';
                         continue;
                     }
-                    const type = b[0] | (b[1] << 8);
+                    const type = u16BEFromBytes(b[0], b[1]);
                     return { ok: true, data: { addr: addr, type: type, typeHex: hex2(type), via: p.via } };
                 } catch (e) {
                     lastErr = p.via + ': ' + errText(e);
@@ -3764,7 +3907,9 @@
                             r.data.via +
                             ', ' +
                             baud +
-                            ' бод).'
+                            ' бод, ' +
+                            (sensorSerialProfile ? sensorSerialProfile.label : '8N1') +
+                            ').'
                     );
                     continue;
                 }
@@ -3786,6 +3931,7 @@
             }
             scanBusy = true;
             const initialProfile = profileByKey(sensorLinkProfile && sensorLinkProfile.key);
+            const initialSerialProfile = serialProfileByKey(sensorSerialProfile && sensorSerialProfile.key);
             const initialBaud = sensorBaud || getSelectedBaud();
             const scanBauds = [initialBaud].concat(
                 SCAN_FALLBACK_BAUDS.filter(function (b) {
@@ -3793,12 +3939,22 @@
                 })
             );
             const scanProfiles = profileOrder(initialProfile);
+            const scanSerialProfiles = serialProfileOrder(initialSerialProfile);
             const scanBaudText = scanBauds.join('/');
             let stats = { noReply: 0, firstError: '' };
             let successBaud = null;
             let successProfile = null;
+            let successSerialProfile = null;
             let foundAny = false;
-            setMsg('Сканирование адресов 1–16 (' + initialBaud + ' бод, ' + initialProfile.label + ')…');
+            setMsg(
+                'Сканирование адресов 1–16 (' +
+                    initialBaud +
+                    ' бод, ' +
+                    initialProfile.label +
+                    ', ' +
+                    initialSerialProfile.label +
+                    ')…'
+            );
             try {
                 for (let p = 0; p < scanProfiles.length; p += 1) {
                     const profile = scanProfiles[p];
@@ -3809,35 +3965,59 @@
                             continue;
                         }
                     }
-                    for (let i = 0; i < scanBauds.length; i += 1) {
-                        const baud = scanBauds[i];
-                        if (sensorBaud !== baud) {
+                    for (let s = 0; s < scanSerialProfiles.length; s += 1) {
+                        const serialProfile = scanSerialProfiles[s];
+                        if (!sensorSerialProfile || sensorSerialProfile.key !== serialProfile.key) {
                             setMsg(
                                 'Профиль ' +
                                     profile.label +
-                                    ': нет ответа на ' +
-                                    sensorBaud +
-                                    ' бод, пробую ' +
-                                    baud +
+                                    ': пробую формат линии ' +
+                                    serialProfile.label +
                                     '…'
                             );
-                            const switched = await switchSensorBaud(baud);
-                            if (!switched) {
-                                continue;
+                            const switchedSerial = await switchSensorSerialProfile(serialProfile, sensorBaud);
+                            if (!switchedSerial) continue;
+                        }
+                        for (let i = 0; i < scanBauds.length; i += 1) {
+                            const baud = scanBauds[i];
+                            if (sensorBaud !== baud) {
+                                setMsg(
+                                    'Профиль ' +
+                                        profile.label +
+                                        ', ' +
+                                        serialProfile.label +
+                                        ': нет ответа на ' +
+                                        sensorBaud +
+                                        ' бод, пробую ' +
+                                        baud +
+                                        '…'
+                                );
+                                const switched = await switchSensorSerialProfile(serialProfile, baud);
+                                if (!switched) {
+                                    continue;
+                                }
+                            }
+                            stats = await scanPass(baud);
+                            if (found.size > 0) {
+                                successBaud = baud;
+                                successProfile = profile;
+                                successSerialProfile = serialProfile;
+                                foundAny = true;
+                                break;
                             }
                         }
-                        stats = await scanPass(baud);
-                        if (found.size > 0) {
-                            successBaud = baud;
-                            successProfile = profile;
-                            foundAny = true;
-                            break;
-                        }
+                        if (foundAny) break;
                     }
                     if (foundAny) break;
                 }
                 if (found.size === 0 && sensorBaud !== initialBaud) {
                     await switchSensorBaud(initialBaud);
+                }
+                if (
+                    found.size === 0 &&
+                    (!sensorSerialProfile || sensorSerialProfile.key !== initialSerialProfile.key)
+                ) {
+                    await switchSensorSerialProfile(initialSerialProfile, initialBaud);
                 }
                 if (found.size === 0 && sensorLinkProfile.key !== initialProfile.key) {
                     await switchSensorLinkProfile(initialProfile);
@@ -3850,7 +4030,7 @@
                         'Сканирование завершено: датчики не ответили на адресах 1–16 ' +
                         '(проверены ' +
                         scanBaudText +
-                        ' бод, профили RTS/инверсия/Auto DE).';
+                        ' бод, профили RTS/инверсия/Auto DE и форматы 8N1/8E1/8N2).';
                     if (stats.firstError) {
                         msg += ' ' + stats.firstError;
                     } else if (stats.noReply > 0) {
@@ -3861,7 +4041,15 @@
                     setMsg(
                         'Сканирование завершено: найдено устройств — ' +
                             found.size +
-                            (successBaud ? ' (скорость ' + successBaud + ' бод, ' + successProfile.label + ').' : '.')
+                            (successBaud
+                                ? ' (скорость ' +
+                                  successBaud +
+                                  ' бод, ' +
+                                  successProfile.label +
+                                  ', ' +
+                                  (successSerialProfile ? successSerialProfile.label : initialSerialProfile.label) +
+                                  ').'
+                                : '.')
                     );
                 }
             } finally {
@@ -4141,7 +4329,7 @@
             if (isConnected()) {
                 if (sensorBaud !== baud) {
                     setMsg('USB-адаптер уже подключён, меняю скорость на ' + baud + ' бод…');
-                    const switched = await switchSensorBaud(baud);
+                    const switched = await switchSensorSerialProfile(sensorSerialProfile || SENSOR_SERIAL_PROFILES[0], baud);
                     if (switched) {
                         setMsg('Скорость датчика переключена на ' + baud + ' бод.');
                     } else {
@@ -4149,7 +4337,15 @@
                     }
                     return;
                 }
-                setMsg('USB-адаптер уже подключён (' + sensorBaud + ' бод, ' + sensorLinkProfile.label + ').');
+                setMsg(
+                    'USB-адаптер уже подключён (' +
+                        sensorBaud +
+                        ' бод, ' +
+                        sensorLinkProfile.label +
+                        ', ' +
+                        (sensorSerialProfile ? sensorSerialProfile.label : SENSOR_SERIAL_PROFILES[0].label) +
+                        ').'
+                );
                 return;
             }
             const K = window.KorrektorDevice;
@@ -4159,6 +4355,9 @@
             }
             const opts = {
                 baudRate: baud,
+                dataBits: (sensorSerialProfile && sensorSerialProfile.dataBits) || 8,
+                stopBits: (sensorSerialProfile && sensorSerialProfile.stopBits) || 1,
+                parity: (sensorSerialProfile && sensorSerialProfile.parity) || 'none',
                 rs485Rts: sensorLinkProfile.rs485Rts !== false,
                 rs485RtsTxHigh: sensorLinkProfile.rs485RtsTxHigh !== false
             };
@@ -4177,7 +4376,15 @@
                 sensorBaud = baud;
                 setComStatus('подключено', true);
                 setMsg('USB-адаптер датчика подключён. Нажмите «Сканировать адреса».');
-                plog('Датчик: USB-адаптер подключён (' + baud + ' бод, ' + sensorLinkProfile.label + ').');
+                plog(
+                    'Датчик: USB-адаптер подключён (' +
+                        baud +
+                        ' бод, ' +
+                        sensorLinkProfile.label +
+                        ', ' +
+                        (sensorSerialProfile ? sensorSerialProfile.label : SENSOR_SERIAL_PROFILES[0].label) +
+                        ').'
+                );
             } catch (e) {
                 setComStatus('нет связи', false);
                 let msg = e.message || String(e);
