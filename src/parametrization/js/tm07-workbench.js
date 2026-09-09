@@ -4172,52 +4172,11 @@
             }
         }
 
-        function pickWizardSourceAddress(targetAddr) {
-            const sorted = Array.from(found.keys()).sort(function (a, b) {
-                return a - b;
-            });
-            if (sorted.length === 0) {
-                return null;
-            }
-            if (sorted.indexOf(targetAddr) >= 0) {
-                return targetAddr;
-            }
-            if (sorted.length === 1) {
-                return sorted[0];
-            }
-            const pairedAddr = targetAddr === 1 ? 2 : 1;
-            const preferred = sorted.filter(function (addr) {
-                return addr !== pairedAddr;
-            });
-            if (preferred.length === 1) {
-                return preferred[0];
-            }
-            return null;
-        }
-
         function formatWizardPressure(addr, rawValue) {
             if (rawValue == null) return 'нет данных';
             if (!Number.isFinite(rawValue)) return pressureToken(rawValue);
             const cfg = getSensorCfg(addr);
             return ((rawValue - cfg.zero) * cfg.k).toFixed(cfg.dfOrder) + ' кПа';
-        }
-
-        async function findSourceAddressForWizard(targetAddr) {
-            const pairedAddr = targetAddr === 1 ? 2 : 1;
-            const selectedAddr = selectedBusAddr();
-            const candidateSet = [targetAddr, pairedAddr, selectedAddr]
-                .filter(function (addr, idx, arr) {
-                    return Number.isFinite(addr) && arr.indexOf(addr) === idx;
-                });
-            for (let i = 0; i < candidateSet.length; i += 1) {
-                const addr = candidateSet[i];
-                const quick = await probeAddress(addr);
-                if (quick && quick.ok) {
-                    return addr;
-                }
-            }
-            await doScan();
-            return pickWizardSourceAddress(targetAddr);
         }
 
         function buildWizardTargetInterface(targetAddr) {
@@ -4235,6 +4194,53 @@
                 interfaceRaw: encodeInterface(targetAddr, mode, baudCode, parity),
                 serialProfile: recommendedSerialProfileForParity(parity)
             };
+        }
+
+        function wizardPowerCycleConfirm(targetAddr, name) {
+            const text =
+                'Мастер ' +
+                targetAddr +
+                ' (' +
+                name +
+                '):\n\n' +
+                '1) Выключите и включите питание датчика.\n' +
+                '2) Нажмите "ОК" после включения, чтобы мастер автоматически проверил ответ.\n\n' +
+                'Нажмите "Отмена", если хотите подтвердить позже повторным нажатием кнопки.';
+            if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+                return window.confirm(text);
+            }
+            return true;
+        }
+
+        async function finishWizardReaddress(targetAddr, name, targetProbe) {
+            found.set(targetAddr, targetProbe.data);
+            paintScanBadges();
+            pendingReaddressByTarget.delete(targetAddr);
+            ensureSensorTargetOption(targetAddr);
+            if (cfgTarget) cfgTarget.value = String(targetAddr);
+            if (cfgModbusAddr) cfgModbusAddr.value = String(targetAddr);
+            const live = await readSensorLive(targetAddr);
+            const pressureText = formatWizardPressure(targetAddr, live ? live.pressureRaw : null);
+            setMsg('Мастер ' + targetAddr + ' завершён: ' + name + ' закреплён на адресе ' + targetAddr + ', давление: ' + pressureText + '.');
+            plog('Датчик: мастер ' + targetAddr + ' подтверждён после перезапуска, адрес ' + targetAddr + '.');
+            if (targetAddr === 1 && pollAbs) pollAbs.textContent = pressureText;
+            if (targetAddr === 2 && pollDiff) pollDiff.textContent = pressureText;
+        }
+
+        async function waitWizardReaddressConfirm(targetAddr, name, timeoutMs) {
+            const timeout = Math.max(1500, Number(timeoutMs) || 15000);
+            const deadline = Date.now() + timeout;
+            while (Date.now() <= deadline) {
+                const targetProbe = await probeAddress(targetAddr);
+                if (targetProbe && targetProbe.ok) {
+                    await finishWizardReaddress(targetAddr, name, targetProbe);
+                    return true;
+                }
+                await new Promise(function (resolve) {
+                    setTimeout(resolve, 700);
+                });
+            }
+            return false;
         }
 
         async function broadcastReaddressWizard(targetAddr, name) {
@@ -4271,17 +4277,9 @@
                                 interfaceRaw: target.interfaceRaw,
                                 broadcast: true
                             });
-                            sensorSerialProfile = target.serialProfile;
+                            await switchSensorSerialProfile(target.serialProfile, target.targetBaud);
                             if (cfgBusBaud) cfgBusBaud.value = String(target.targetBaud);
                             setSelectedBaud(target.targetBaud);
-                            await disconnectSensorUsb(true);
-                            setMsg(
-                                'Мастер ' +
-                                    targetAddr +
-                                    ': широковещательная запись выполнена для ' +
-                                    name +
-                                    '. Выключите/включите питание датчика и нажмите эту же кнопку ещё раз для подтверждения.'
-                            );
                             plog(
                                 'Датчик: мастер ' +
                                     targetAddr +
@@ -4295,6 +4293,26 @@
                                     baud +
                                     ' бод.'
                             );
+                            if (!wizardPowerCycleConfirm(targetAddr, name)) {
+                                setMsg(
+                                    'Мастер ' +
+                                        targetAddr +
+                                        ': запись выполнена. После перезапуска питания нажмите эту же кнопку ещё раз для подтверждения.'
+                                );
+                                return true;
+                            }
+                            setMsg('Мастер ' + targetAddr + ': ожидаю перезапуск питания, проверяю ответ на адресе ' + targetAddr + '…');
+                            const confirmed = await waitWizardReaddressConfirm(targetAddr, name, 20000);
+                            if (!confirmed) {
+                                setMsg(
+                                    'Мастер ' +
+                                        targetAddr +
+                                        ': после записи датчик пока не найден на адресе ' +
+                                        targetAddr +
+                                        '. Выполните перезапуск питания и нажмите кнопку ещё раз.',
+                                    true
+                                );
+                            }
                             return true;
                         } catch (e) {
                             lastErr = errText(e);
@@ -4326,8 +4344,8 @@
                 if (pending) {
                     // 2. Подтверждение после перезапуска питания.
                     setMsg('Мастер ' + addr + ': шаг 2/6 — проверка после перезапуска питания…');
-                    const targetProbe = await probeAddress(addr);
-                    if (!(targetProbe && targetProbe.ok)) {
+                    const confirmed = await waitWizardReaddressConfirm(addr, name, 6000);
+                    if (!confirmed) {
                         let oldProbe = null;
                         if (pending.fromAddr > 0) {
                             oldProbe = await probeAddress(pending.fromAddr);
@@ -4349,18 +4367,6 @@
                         }
                         return;
                     }
-                    found.set(addr, targetProbe.data);
-                    paintScanBadges();
-                    pendingReaddressByTarget.delete(addr);
-                    ensureSensorTargetOption(addr);
-                    if (cfgTarget) cfgTarget.value = String(addr);
-                    if (cfgModbusAddr) cfgModbusAddr.value = String(addr);
-                    const live = await readSensorLive(addr);
-                    const pressureText = formatWizardPressure(addr, live ? live.pressureRaw : null);
-                    setMsg('Мастер ' + addr + ' завершён: ' + name + ' закреплён на адресе ' + addr + ', давление: ' + pressureText + '.');
-                    plog('Датчик: мастер ' + addr + ' подтверждён после перезапуска, адрес ' + addr + '.');
-                    if (addr === 1 && pollAbs) pollAbs.textContent = pressureText;
-                    if (addr === 2 && pollDiff) pollDiff.textContent = pressureText;
                     return;
                 }
 
