@@ -2654,15 +2654,21 @@
         const SENSOR_MEAS_REG = 0x0002; // входной регистр измерений
         const SCAN_ADDR_MIN = 1;
         const SCAN_ADDR_MAX = 16;
-        const SCAN_TIMEOUT_MS = 650;
-        const SCAN_FALLBACK_BAUDS = [19200, 9600, 38400];
+        const SCAN_TIMEOUT_MS = 420;
+        const SCAN_FALLBACK_BAUDS = [19200, 9600, 14400, 28800, 4800, 2400, 1200];
         const POLL_INTERVAL_MS = 1000;
         const SENSOR_USB_VID = 0x0403; // FTDI (как у КАО)
         const SENSOR_USB_PID = 0x7523; // адаптер датчика
+        const SENSOR_LINK_PROFILES = [
+            { key: 'rts-high', label: 'RTS(TX=1)', rs485Rts: true, rs485RtsTxHigh: true },
+            { key: 'rts-low', label: 'RTS(TX=0)', rs485Rts: true, rs485RtsTxHigh: false },
+            { key: 'auto', label: 'Auto DE (без RTS)', rs485Rts: false, rs485RtsTxHigh: true }
+        ];
 
         /** @type {KorrektorDevice|null} */
         let sensorDev = null;
         let sensorBaud = 19200;
+        let sensorLinkProfile = SENSOR_LINK_PROFILES[0];
         let pollTimer = null;
         let pollBusy = false;
         let scanBusy = false;
@@ -2735,6 +2741,40 @@
                 return true;
             } catch (e) {
                 plog('Датчик: ошибка переключения скорости на ' + baud + ' бод — ' + errText(e));
+                return false;
+            }
+        }
+
+        function profileByKey(key) {
+            for (let i = 0; i < SENSOR_LINK_PROFILES.length; i += 1) {
+                if (SENSOR_LINK_PROFILES[i].key === key) return SENSOR_LINK_PROFILES[i];
+            }
+            return SENSOR_LINK_PROFILES[0];
+        }
+
+        function profileOrder(startProfile) {
+            const first = startProfile || SENSOR_LINK_PROFILES[0];
+            return [first].concat(
+                SENSOR_LINK_PROFILES.filter(function (p) {
+                    return p.key !== first.key;
+                })
+            );
+        }
+
+        async function switchSensorLinkProfile(nextProfile) {
+            if (!sensorDev || !nextProfile) return false;
+            if (sensorLinkProfile && sensorLinkProfile.key === nextProfile.key) return true;
+            if (typeof sensorDev.setRs485Mode !== 'function') return false;
+            try {
+                await sensorDev.setRs485Mode({
+                    rs485Rts: nextProfile.rs485Rts !== false,
+                    rs485RtsTxHigh: nextProfile.rs485RtsTxHigh !== false
+                });
+                sensorLinkProfile = nextProfile;
+                plog('Датчик: профиль RS485 переключён на ' + nextProfile.label + '.');
+                return true;
+            } catch (e) {
+                plog('Датчик: ошибка переключения профиля RS485 — ' + errText(e));
                 return false;
             }
         }
@@ -2976,40 +3016,71 @@
                 return;
             }
             scanBusy = true;
+            const initialProfile = profileByKey(sensorLinkProfile && sensorLinkProfile.key);
             const initialBaud = sensorBaud || getSelectedBaud();
             const scanBauds = [initialBaud].concat(
                 SCAN_FALLBACK_BAUDS.filter(function (b) {
                     return b !== initialBaud;
                 })
             );
+            const scanProfiles = profileOrder(initialProfile);
+            const scanBaudText = scanBauds.join('/');
             let stats = { noReply: 0, firstError: '' };
             let successBaud = null;
-            setMsg('Сканирование адресов 1–16 (' + initialBaud + ' бод)…');
+            let successProfile = null;
+            let foundAny = false;
+            setMsg('Сканирование адресов 1–16 (' + initialBaud + ' бод, ' + initialProfile.label + ')…');
             try {
-                for (let i = 0; i < scanBauds.length; i += 1) {
-                    const baud = scanBauds[i];
-                    if (i > 0) {
-                        setMsg('Нет ответа на ' + sensorBaud + ' бод, пробую ' + baud + ' бод…');
-                        const switched = await switchSensorBaud(baud);
-                        if (!switched) {
+                for (let p = 0; p < scanProfiles.length; p += 1) {
+                    const profile = scanProfiles[p];
+                    if (p > 0) {
+                        setMsg('Нет ответа, пробую профиль RS485: ' + profile.label + '…');
+                        const switchedProfile = await switchSensorLinkProfile(profile);
+                        if (!switchedProfile) {
                             continue;
                         }
                     }
-                    stats = await scanPass(baud);
-                    if (found.size > 0) {
-                        successBaud = baud;
-                        break;
+                    for (let i = 0; i < scanBauds.length; i += 1) {
+                        const baud = scanBauds[i];
+                        if (sensorBaud !== baud) {
+                            setMsg(
+                                'Профиль ' +
+                                    profile.label +
+                                    ': нет ответа на ' +
+                                    sensorBaud +
+                                    ' бод, пробую ' +
+                                    baud +
+                                    '…'
+                            );
+                            const switched = await switchSensorBaud(baud);
+                            if (!switched) {
+                                continue;
+                            }
+                        }
+                        stats = await scanPass(baud);
+                        if (found.size > 0) {
+                            successBaud = baud;
+                            successProfile = profile;
+                            foundAny = true;
+                            break;
+                        }
                     }
+                    if (foundAny) break;
                 }
                 if (found.size === 0 && sensorBaud !== initialBaud) {
                     await switchSensorBaud(initialBaud);
+                }
+                if (found.size === 0 && sensorLinkProfile.key !== initialProfile.key) {
+                    await switchSensorLinkProfile(initialProfile);
                 }
                 if (scanResults) scanResults.classList.remove('d-none');
                 paintScanBadges();
                 if (found.size === 0) {
                     let msg =
                         'Сканирование завершено: датчики не ответили на адресах 1–16 ' +
-                        '(проверены 19200/9600/38400 бод).';
+                        '(проверены ' +
+                        scanBaudText +
+                        ' бод, профили RTS/инверсия/Auto DE).';
                     if (stats.firstError) {
                         msg += ' ' + stats.firstError;
                     } else if (stats.noReply > 0) {
@@ -3020,7 +3091,7 @@
                     setMsg(
                         'Сканирование завершено: найдено устройств — ' +
                             found.size +
-                            (successBaud ? ' (скорость ' + successBaud + ' бод).' : '.')
+                            (successBaud ? ' (скорость ' + successBaud + ' бод, ' + successProfile.label + ').' : '.')
                     );
                 }
             } finally {
@@ -3282,7 +3353,7 @@
                     }
                     return;
                 }
-                setMsg('USB-адаптер уже подключён (' + sensorBaud + ' бод).');
+                setMsg('USB-адаптер уже подключён (' + sensorBaud + ' бод, ' + sensorLinkProfile.label + ').');
                 return;
             }
             const K = window.KorrektorDevice;
@@ -3290,7 +3361,11 @@
                 setMsg('Модуль KorrektorDevice не загружен.', true);
                 return;
             }
-            const opts = { baudRate: baud, rs485Rts: true };
+            const opts = {
+                baudRate: baud,
+                rs485Rts: sensorLinkProfile.rs485Rts !== false,
+                rs485RtsTxHigh: sensorLinkProfile.rs485RtsTxHigh !== false
+            };
             if (filterKao) {
                 opts.filters = [{ usbVendorId: SENSOR_USB_VID, usbProductId: SENSOR_USB_PID }];
             }
@@ -3305,7 +3380,7 @@
                 sensorBaud = baud;
                 setComStatus('подключено', true);
                 setMsg('USB-адаптер датчика подключён. Нажмите «Сканировать адреса».');
-                plog('Датчик: USB-адаптер подключён (' + baud + ' бод).');
+                plog('Датчик: USB-адаптер подключён (' + baud + ' бод, ' + sensorLinkProfile.label + ').');
             } catch (e) {
                 setComStatus('нет связи', false);
                 let msg = e.message || String(e);

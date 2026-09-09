@@ -20,6 +20,10 @@ class KorrektorDevice {
         this._rs485Rts = true;
         /** true — RTS=1 при передаче; false — инвертированная линия DE. */
         this._rs485RtsTxHigh = true;
+        /** Текущая скорость порта для оценки времени полной отправки кадра. */
+        this._baudRate = 9600;
+        /** 1 старт + 8 данных + стоп (без parity). */
+        this._serialBitsPerChar = 10;
     }
 
     /** @throws {Error} если Web Serial недоступен (HTTP по LAN, не Chrome/Edge и т.д.) */
@@ -82,6 +86,34 @@ class KorrektorDevice {
         await this._rs485SetTransmit(false);
     }
 
+    _txDrainDelayMs(frameLen) {
+        const bytes = Math.max(1, Number(frameLen) || 1);
+        const baud = Math.max(300, Number(this._baudRate) || 9600);
+        const bitsPerChar = Math.max(10, Number(this._serialBitsPerChar) || 10);
+        // Держим RTS в TX чуть дольше времени фактической передачи всего кадра.
+        return Math.max(2, Math.ceil((bytes * bitsPerChar * 1000) / baud) + 2);
+    }
+
+    async _sleep(ms) {
+        const n = Number(ms) || 0;
+        if (n <= 0) return;
+        await new Promise((r) => setTimeout(r, n));
+    }
+
+    /**
+     * Горячее переключение профиля RS485 без переоткрытия порта.
+     * Полезно для адаптеров с инверсией DE или автонаправлением.
+     */
+    async setRs485Mode(options = {}) {
+        if (options.rs485Rts !== undefined) {
+            this._rs485Rts = !!options.rs485Rts;
+        }
+        if (options.rs485RtsTxHigh !== undefined) {
+            this._rs485RtsTxHigh = !!options.rs485RtsTxHigh;
+        }
+        await this._rs485SetReceive();
+    }
+
     _withIoLock(fn) {
         const run = this._ioLock.then(fn, fn);
         this._ioLock = run.then(
@@ -135,6 +167,7 @@ class KorrektorDevice {
         if (options.rs485Rts !== undefined) this._rs485Rts = !!options.rs485Rts;
         if (options.rs485RtsTxHigh !== undefined) this._rs485RtsTxHigh = !!options.rs485RtsTxHigh;
         if (options.turnaroundMs !== undefined) this._turnaroundMs = Number(options.turnaroundMs) || 0;
+        this._baudRate = Number(baudRate) || 9600;
         this.port = port;
         await this.port.open({
             baudRate,
@@ -162,7 +195,7 @@ class KorrektorDevice {
                 rs485RtsTxHigh: this._rs485RtsTxHigh,
                 turnaroundMs: this._turnaroundMs,
             });
-            await new Promise((r) => setTimeout(r, 150));
+            await this._sleep(150);
             await this._drainRxBufferInner(400);
         });
     }
@@ -370,10 +403,11 @@ class KorrektorDevice {
                     if (this.onFrameExchange) this.onFrameExchange('tx', frame);
                     await this._rs485SetTransmit(true);
                     await this.writer.write(frame);
-                    await this._rs485SetReceive();
-                    if (this._turnaroundMs > 0) {
-                        await new Promise((r) => setTimeout(r, this._turnaroundMs));
+                    if (this._rs485Rts) {
+                        await this._sleep(this._txDrainDelayMs(frame.length));
                     }
+                    await this._rs485SetReceive();
+                    await this._sleep(this._turnaroundMs);
                     const response = await this.readFrame(timeoutMs);
                     if (this.onFrameExchange) this.onFrameExchange('rx', response);
                     this.assertCrc(response);
@@ -384,7 +418,7 @@ class KorrektorDevice {
                     if (attempt < retries && /нет ответа/i.test(String(e.message || e))) {
                         this._rxCarry = [];
                         await this._drainRxBufferInner(200);
-                        await new Promise((r) => setTimeout(r, 60));
+                        await this._sleep(60);
                         continue;
                     }
                     throw e;
