@@ -2638,9 +2638,11 @@
         const pollAbs = $('wbSensorPollAbs');
         const pollAbsState = $('wbSensorPollAbsState');
         const pollAbsUnit = $('wbSensorPollAbsUnit');
+        const pollAbsRange = $('wbSensorPollAbsRange');
         const pollDiff = $('wbSensorPollDiff');
         const pollDiffState = $('wbSensorPollDiffState');
         const pollDiffUnit = $('wbSensorPollDiffUnit');
+        const pollDiffRange = $('wbSensorPollDiffRange');
         const setPanel = $('wbSensorSetPanel');
         const setLabel = $('wbSensorSetLabel');
         const setValue = $('wbSensorSetValue');
@@ -2703,6 +2705,8 @@
         const SENSOR_PRESSURE_REG = 0x0003; // input: Pressure FP32 (2 регистра)
         const SENSOR_INTERFACE_REG = 0x0002; // holding Interface
         const SENSOR_MUNIT_REG = 0x0007; // holding MUnit
+        const SENSOR_LLIMIT_REG = 0x0003; // holding LLimit (BCD, 2 регистра)
+        const SENSOR_HLIMIT_REG = 0x0005; // holding HLimit (BCD, 2 регистра)
         const SENSOR_PCH_SETUP_REG = 0x0008; // holding PChSetup
         const SENSOR_TCH_SETUP_REG = 0x0009; // holding TChSetup
         const SENSOR_DFORDER_REG = 0x000a; // holding DFOrder
@@ -2778,6 +2782,7 @@
             6: 0.133322368421 // мм рт. ст. -> кПа
         };
         const SENSOR_UNIT_CACHE_MS = 15000;
+        const SENSOR_RANGE_CACHE_MS = 60000;
 
         /** @type {KorrektorDevice|null} */
         let sensorDev = null;
@@ -2801,6 +2806,8 @@
         const lastPressureRawByAddr = new Map();
         /** Кэш MUnit по адресу: addr -> {raw,resultUnit,rangeUnit,fetchedAt}. */
         const sensorUnitByAddr = new Map();
+        /** Кэш диапазона по адресу: addr -> {low,high,unitCode,layout,startReg,fetchedAt}. */
+        const sensorRangeByAddr = new Map();
 
         function setMsg(msg, isError) {
             if (!status) return;
@@ -3386,6 +3393,14 @@
             if (unitSelect && info && info.resultUnit >= 0 && info.resultUnit <= 6) {
                 unitSelect.value = String(info.resultUnit);
             }
+            [1, 2].forEach(function (addr) {
+                const unit = sensorUnitByAddr.get(addr);
+                const range = sensorRangeByAddr.get(addr);
+                if (unit && range) {
+                    range.unitCode = unit.rangeUnit;
+                }
+            });
+            refreshRangeLabels();
         }
 
         async function applySensorUnitChange() {
@@ -3424,6 +3439,141 @@
                 setMsg('Ошибка смены единиц датчика: ' + errText(e), true);
                 plog('Датчик: ошибка записи MUnit — ' + errText(e));
             }
+        }
+
+        function bcdByteToInt(byte) {
+            const hi = (byte >> 4) & 0x0f;
+            const lo = byte & 0x0f;
+            if (hi > 9 || lo > 9) return null;
+            return hi * 10 + lo;
+        }
+
+        function decodeBcdLimitByLayout(bytes4, layout) {
+            if (!bytes4 || bytes4.length < 4 || !layout) return null;
+            const exp8 = bytes4[layout.exp] & 0xff;
+            const bcd2 = bytes4[layout.bcd2] & 0xff;
+            const bcd1 = bytes4[layout.bcd1] & 0xff;
+            const bcd0 = bytes4[layout.bcd0] & 0xff;
+            const d2 = bcdByteToInt(bcd2);
+            const d1 = bcdByteToInt(bcd1);
+            const d0 = bcdByteToInt(bcd0);
+            if (d2 == null || d1 == null || d0 == null) return null;
+            if (((bcd2 >> 4) & 0x0f) !== 0) return null;
+            if (exp8 > 0x0f) return null;
+            const exponent = exp8 - 8;
+            const mantissa = (d2 * 10000 + d1 * 100 + d0) / 10000;
+            if (!Number.isFinite(mantissa) || mantissa < 0 || mantissa >= 10) return null;
+            const value = mantissa * Math.pow(10, exponent);
+            if (!Number.isFinite(value)) return null;
+            return { value: value, exp8: exp8, exponent: exponent, mantissa: mantissa };
+        }
+
+        const BCD_LIMIT_LAYOUTS = [
+            // Документация М.17: [EXP8, BCD0, BCD2, BCD1] по байтам ответа
+            { key: 'exp-b0-b2-b1', exp: 0, bcd0: 1, bcd2: 2, bcd1: 3 },
+            // Fallback: инверсия байт внутри слов
+            { key: 'b0-exp-b1-b2', exp: 1, bcd0: 0, bcd2: 3, bcd1: 2 },
+            // Fallback: перестановка слов
+            { key: 'b2-b1-exp-b0', exp: 2, bcd0: 3, bcd2: 0, bcd1: 1 },
+            // Fallback: перестановка слов + инверсия байт
+            { key: 'b1-b2-b0-exp', exp: 3, bcd0: 2, bcd2: 1, bcd1: 0 }
+        ];
+
+        function decodeSensorRangeFromBytes(bytes8) {
+            if (!bytes8 || bytes8.length < 8) return null;
+            const lowerBytes = bytes8.subarray(0, 4);
+            const upperBytes = bytes8.subarray(4, 8);
+            const candidates = [];
+            BCD_LIMIT_LAYOUTS.forEach(function (layout) {
+                const low = decodeBcdLimitByLayout(lowerBytes, layout);
+                const high = decodeBcdLimitByLayout(upperBytes, layout);
+                if (!low || !high) return;
+                let score = 0;
+                if (high.value < low.value) score += 100;
+                if (high.value === low.value) score += 20;
+                if (low.value < 0 || high.value < 0) score += 50;
+                if (high.value > 1e9) score += 30;
+                candidates.push({
+                    score: score,
+                    layout: layout.key,
+                    low: low.value,
+                    high: high.value
+                });
+            });
+            if (!candidates.length) return null;
+            candidates.sort(function (a, b) {
+                return a.score - b.score;
+            });
+            return candidates[0];
+        }
+
+        function formatRangeText(info) {
+            if (!info || !Number.isFinite(info.low) || !Number.isFinite(info.high)) {
+                return 'диапазон: —';
+            }
+            const label = formatSensorUnitLabel(info.unitCode);
+            return (
+                'диапазон: ' +
+                formatPressureValue(info.low, 3) +
+                ' … ' +
+                formatPressureValue(info.high, 3) +
+                ' ' +
+                label
+            );
+        }
+
+        function refreshRangeLabels() {
+            const abs = sensorRangeByAddr.get(1) || null;
+            const diff = sensorRangeByAddr.get(2) || null;
+            if (pollAbsRange) pollAbsRange.textContent = formatRangeText(abs);
+            if (pollDiffRange) pollDiffRange.textContent = formatRangeText(diff);
+        }
+
+        async function readSensorRangeInfo(addr, forceRefresh) {
+            const cached = sensorRangeByAddr.get(addr);
+            if (
+                !forceRefresh &&
+                cached &&
+                cached.fetchedAt &&
+                Date.now() - cached.fetchedAt < SENSOR_RANGE_CACHE_MS
+            ) {
+                return cached;
+            }
+            if (!sensorDev) {
+                return cached || null;
+            }
+            sensorDev.address = addr;
+            const rangeRegCount = SENSOR_HLIMIT_REG - SENSOR_LLIMIT_REG + 2;
+            const starts = [SENSOR_LLIMIT_REG, SENSOR_LLIMIT_REG + 1];
+            let lastErr = null;
+            for (let i = 0; i < starts.length; i += 1) {
+                const startReg = starts[i];
+                try {
+                    const bytes = await readHoldingBytes(startReg, rangeRegCount, 1400);
+                    const parsed = decodeSensorRangeFromBytes(bytes);
+                    if (!parsed) {
+                        lastErr = new Error('не удалось декодировать BCD-диапазон');
+                        continue;
+                    }
+                    const unitInfo = await readSensorUnitInfo(addr, false);
+                    const info = {
+                        low: parsed.low,
+                        high: parsed.high,
+                        unitCode: unitInfo ? unitInfo.rangeUnit : 1,
+                        layout: parsed.layout,
+                        startReg: startReg,
+                        fetchedAt: Date.now()
+                    };
+                    sensorRangeByAddr.set(addr, info);
+                    return info;
+                } catch (e) {
+                    lastErr = e;
+                }
+            }
+            if (cached) {
+                return cached;
+            }
+            throw lastErr || new Error('не удалось прочитать диапазон');
         }
 
         function isPlausiblePressure(raw) {
@@ -4777,7 +4927,26 @@
             }
         }
 
-        function startPoll() {
+        async function preloadPollMeta(targets) {
+            const list = Array.isArray(targets) ? targets : [];
+            for (let i = 0; i < list.length; i += 1) {
+                const addr = list[i];
+                try {
+                    await readSensorUnitInfo(addr, true);
+                } catch (e) {
+                    plog('Датчик: не удалось прочитать единицы адреса ' + addr + ' — ' + errText(e));
+                }
+                try {
+                    await readSensorRangeInfo(addr, true);
+                } catch (e) {
+                    plog('Датчик: не удалось прочитать диапазон адреса ' + addr + ' — ' + errText(e));
+                }
+            }
+            refreshUnitPanel();
+            refreshRangeLabels();
+        }
+
+        async function startPoll() {
             if (!isConnected()) {
                 setMsg('Сначала подключите COM-порт.', true);
                 return;
@@ -4785,6 +4954,12 @@
             if (pollPanel) pollPanel.classList.remove('d-none');
             const periodMs = getPollIntervalMs();
             const targets = getPollTargetAddresses();
+            if (pollTimer) {
+                clearInterval(pollTimer);
+                pollTimer = null;
+            }
+            setMsg('Опрос показателей: читаю единицы и диапазоны датчиков…');
+            await preloadPollMeta(targets);
             setMsg(
                 'Опрос показателей MIDA15 (' +
                     periodMs +
@@ -4793,7 +4968,6 @@
                     ')…'
             );
             void pollOnce();
-            if (pollTimer) clearInterval(pollTimer);
             pollTimer = setInterval(function () {
                 void pollOnce();
             }, periodMs);
@@ -5039,10 +5213,12 @@
             pollNoReplyByAddr.clear();
             pollMuteUntilByAddr.clear();
             sensorUnitByAddr.clear();
+            sensorRangeByAddr.clear();
             if (scanResults) scanResults.classList.add('d-none');
             if (scanBadges) scanBadges.innerHTML = '';
             setComStatus('нет связи', false);
             refreshUnitPanel();
+            refreshRangeLabels();
             if (pollAbsUnit) pollAbsUnit.textContent = 'единицы: —';
             if (pollDiffUnit) pollDiffUnit.textContent = 'единицы: —';
             if (!silent) {
@@ -5088,7 +5264,13 @@
         }
         if (pollBtn) {
             pollBtn.addEventListener('click', function () {
-                startPoll();
+                void startPoll();
+            });
+        }
+        if (pollStopBtn) {
+            pollStopBtn.addEventListener('click', function () {
+                stopPoll();
+                setMsg('Опрос показателей остановлен.');
             });
         }
         if (pollStopBtn) {
