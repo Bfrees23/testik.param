@@ -2893,6 +2893,132 @@
             }).join(' ');
         }
 
+        function modbusFnLabel(frame) {
+            if (!frame || frame.length < 2) return 'fn=?';
+            const fn = frame[1] & 0xff;
+            if (fn & 0x80) {
+                const code = frame.length >= 3 ? frame[2] & 0xff : 0;
+                return 'exc 0x' + code.toString(16).toUpperCase().padStart(2, '0');
+            }
+            const names = {
+                0x03: 'read 0x03',
+                0x04: 'input 0x04',
+                0x06: 'write 0x06',
+                0x10: 'write 0x10',
+                0x11: 'ident 0x11',
+                0x17: 'rw 0x17'
+            };
+            return names[fn] || 'fn 0x' + fn.toString(16).toUpperCase().padStart(2, '0');
+        }
+
+        function logSensorExchangeToConsole(line, details) {
+            if (typeof console === 'undefined' || typeof console.log !== 'function') return;
+            const prefix = '[WB:SENSOR]';
+            if (details !== undefined) {
+                console.log(prefix + ' ' + line, details);
+            } else {
+                console.log(prefix + ' ' + line);
+            }
+        }
+
+        function attachSensorTrace(device) {
+            if (!device) return;
+            device.onFrameExchange = function (dir, frame) {
+                const tag = dir === 'tx' ? 'TX' : 'RX';
+                const fn = modbusFnLabel(frame);
+                logSensorExchangeToConsole(tag + ' ' + fn + ' addr=' + (frame && frame.length ? frame[0] : '?') + ' hex=' + bytesToHex(frame || []));
+            };
+            device.onExchangeEvent = function (event, payload) {
+                const p = payload || {};
+                if (event === 'tx' || event === 'rx') return;
+                if (event === 'attempt-start') {
+                    logSensorExchangeToConsole(
+                        'ATTEMPT ' +
+                            p.attempt +
+                            '/' +
+                            p.attemptsTotal +
+                            ' addr=' +
+                            p.address +
+                            ' ' +
+                            (p.fn == null ? 'fn=?' : 'fn=0x' + Number(p.fn).toString(16).toUpperCase().padStart(2, '0')) +
+                            ' timeout=' +
+                            p.timeoutMs +
+                            'ms baud=' +
+                            p.baudRate +
+                            ' rts=' +
+                            (p.rs485Rts ? 'on' : 'off') +
+                            ' rtsTxHigh=' +
+                            (p.rs485RtsTxHigh ? '1' : '0')
+                    );
+                    return;
+                }
+                if (event === 'attempt-success') {
+                    logSensorExchangeToConsole('ATTEMPT OK #' + p.attempt);
+                    return;
+                }
+                if (event === 'attempt-error') {
+                    logSensorExchangeToConsole('ATTEMPT ERROR #' + p.attempt + ': ' + (p.error || 'unknown'));
+                    return;
+                }
+                if (event === 'attempt-retry') {
+                    logSensorExchangeToConsole('RETRY ' + p.attempt + ' -> ' + p.nextAttempt);
+                    return;
+                }
+                if (event === 'crc-ok') {
+                    logSensorExchangeToConsole('CRC OK #' + p.attempt);
+                    return;
+                }
+                if (event === 'port-opened') {
+                    logSensorExchangeToConsole(
+                        'PORT OPEN baud=' +
+                            p.baudRate +
+                            ' rts=' +
+                            (p.rs485Rts ? 'on' : 'off') +
+                            ' rtsTxHigh=' +
+                            (p.rs485RtsTxHigh ? '1' : '0') +
+                            ' turnaround=' +
+                            p.turnaroundMs +
+                            'ms'
+                    );
+                    return;
+                }
+                if (event === 'port-closed') {
+                    logSensorExchangeToConsole('PORT CLOSED');
+                    return;
+                }
+                if (event === 'baud-switch') {
+                    logSensorExchangeToConsole('BAUD SWITCH ' + p.fromBaud + ' -> ' + p.toBaud);
+                    return;
+                }
+                if (event === 'rs485-mode') {
+                    logSensorExchangeToConsole(
+                        'RS485 MODE rts:' +
+                            (p.prevRs485Rts ? 'on' : 'off') +
+                            '->' +
+                            (p.rs485Rts ? 'on' : 'off') +
+                            ' rtsTxHigh:' +
+                            (p.prevRs485RtsTxHigh ? '1' : '0') +
+                            '->' +
+                            (p.rs485RtsTxHigh ? '1' : '0')
+                    );
+                    return;
+                }
+                if (event === 'attempt-failed') {
+                    logSensorExchangeToConsole('REQUEST FAILED: ' + (p.error || 'Нет ответа'));
+                    return;
+                }
+                logSensorExchangeToConsole('EVENT ' + event, p);
+            };
+            logSensorExchangeToConsole('TRACE ENABLED');
+        }
+
+        function detachSensorTrace(device) {
+            if (!device) return;
+            device.onFrameExchange = null;
+            device.onExchangeEvent = null;
+            logSensorExchangeToConsole('TRACE DISABLED');
+        }
+
         function bytesToU16Text(bytes) {
             if (!bytes || bytes.length < 2) return '';
             const out = [];
@@ -4040,6 +4166,7 @@
                 opts.filters = [{ usbVendorId: SENSOR_USB_VID, usbProductId: SENSOR_USB_PID }];
             }
             const d = new K(1);
+            attachSensorTrace(d);
             try {
                 setMsg('Подключение USB-адаптера датчика (' + baud + ' бод)…');
                 const reopened = await d.reconnectGranted(opts);
@@ -4059,6 +4186,7 @@
                 }
                 setMsg('Ошибка подключения: ' + msg, true);
                 plog('Датчик: ошибка подключения — ' + msg);
+                detachSensorTrace(d);
             }
         }
 
@@ -4080,6 +4208,7 @@
                 stopPoll();
                 if (sensorDev) {
                     try {
+                        detachSensorTrace(sensorDev);
                         await sensorDev.disconnect();
                     } catch (_e) {}
                     sensorDev = null;

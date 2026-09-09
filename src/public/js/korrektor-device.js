@@ -10,6 +10,8 @@ class KorrektorDevice {
         this.writer = null;
         /** @type {((dir: 'tx' | 'rx', frame: Uint8Array) => void) | null} */
         this.onFrameExchange = null;
+        /** @type {((event: string, payload: Record<string, any>) => void) | null} */
+        this.onExchangeEvent = null;
         /** @type {number[]} байты следующего кадра, пришедшие раньше времени */
         this._rxCarry = [];
         /** Очередь Modbus: один reader.read() / writer.write() на порт. */
@@ -24,6 +26,13 @@ class KorrektorDevice {
         this._baudRate = 9600;
         /** 1 старт + 8 данных + стоп (без parity). */
         this._serialBitsPerChar = 10;
+    }
+
+    _emitExchangeEvent(event, payload = {}) {
+        if (typeof this.onExchangeEvent !== 'function') return;
+        try {
+            this.onExchangeEvent(event, payload);
+        } catch (_e) {}
     }
 
     /** @throws {Error} если Web Serial недоступен (HTTP по LAN, не Chrome/Edge и т.д.) */
@@ -105,6 +114,10 @@ class KorrektorDevice {
      * Полезно для адаптеров с инверсией DE или автонаправлением.
      */
     async setRs485Mode(options = {}) {
+        const prev = {
+            rs485Rts: this._rs485Rts,
+            rs485RtsTxHigh: this._rs485RtsTxHigh,
+        };
         if (options.rs485Rts !== undefined) {
             this._rs485Rts = !!options.rs485Rts;
         }
@@ -112,6 +125,12 @@ class KorrektorDevice {
             this._rs485RtsTxHigh = !!options.rs485RtsTxHigh;
         }
         await this._rs485SetReceive();
+        this._emitExchangeEvent('rs485-mode', {
+            prevRs485Rts: prev.rs485Rts,
+            prevRs485RtsTxHigh: prev.rs485RtsTxHigh,
+            rs485Rts: this._rs485Rts,
+            rs485RtsTxHigh: this._rs485RtsTxHigh,
+        });
     }
 
     _withIoLock(fn) {
@@ -179,6 +198,12 @@ class KorrektorDevice {
         this.reader = this.port.readable.getReader();
         this.writer = this.port.writable.getWriter();
         await this._rs485SetReceive();
+        this._emitExchangeEvent('port-opened', {
+            baudRate: this._baudRate,
+            rs485Rts: this._rs485Rts,
+            rs485RtsTxHigh: this._rs485RtsTxHigh,
+            turnaroundMs: this._turnaroundMs,
+        });
     }
 
     /** Смена скорости без повторного выбора порта в диалоге. */
@@ -186,6 +211,7 @@ class KorrektorDevice {
         const port = this.port;
         if (!port) throw new Error('Порт не открыт');
         return this._withIoLock(async () => {
+            const fromBaud = this._baudRate;
             await this._closeStreams();
             try {
                 await port.close();
@@ -197,6 +223,10 @@ class KorrektorDevice {
             });
             await this._sleep(150);
             await this._drainRxBufferInner(400);
+            this._emitExchangeEvent('baud-switch', {
+                fromBaud: fromBaud,
+                toBaud: this._baudRate,
+            });
         });
     }
 
@@ -258,6 +288,7 @@ class KorrektorDevice {
         } catch (_e) {}
         this.port = null;
         this._rxCarry = [];
+        this._emitExchangeEvent('port-closed', {});
     }
 
     /**
@@ -399,8 +430,23 @@ class KorrektorDevice {
         return this._withIoLock(async () => {
             let lastErr;
             for (let attempt = 0; attempt <= retries; attempt += 1) {
+                this._emitExchangeEvent('attempt-start', {
+                    attempt: attempt + 1,
+                    attemptsTotal: retries + 1,
+                    timeoutMs: timeoutMs,
+                    address: this.address & 0xff,
+                    fn: frame && frame.length > 1 ? frame[1] & 0xff : null,
+                    frameLength: frame ? frame.length : 0,
+                    baudRate: this._baudRate,
+                    rs485Rts: this._rs485Rts,
+                    rs485RtsTxHigh: this._rs485RtsTxHigh,
+                });
                 try {
                     if (this.onFrameExchange) this.onFrameExchange('tx', frame);
+                    this._emitExchangeEvent('tx', {
+                        attempt: attempt + 1,
+                        frame: frame,
+                    });
                     await this._rs485SetTransmit(true);
                     await this.writer.write(frame);
                     if (this._rs485Rts) {
@@ -410,20 +456,41 @@ class KorrektorDevice {
                     await this._sleep(this._turnaroundMs);
                     const response = await this.readFrame(timeoutMs);
                     if (this.onFrameExchange) this.onFrameExchange('rx', response);
+                    this._emitExchangeEvent('rx', {
+                        attempt: attempt + 1,
+                        frame: response,
+                    });
                     this.assertCrc(response);
+                    this._emitExchangeEvent('crc-ok', {
+                        attempt: attempt + 1,
+                    });
                     this.parseException(response);
+                    this._emitExchangeEvent('attempt-success', {
+                        attempt: attempt + 1,
+                    });
                     return response;
                 } catch (e) {
                     lastErr = e;
+                    this._emitExchangeEvent('attempt-error', {
+                        attempt: attempt + 1,
+                        error: (e && e.message) || String(e),
+                    });
                     if (attempt < retries && /нет ответа/i.test(String(e.message || e))) {
                         this._rxCarry = [];
                         await this._drainRxBufferInner(200);
                         await this._sleep(60);
+                        this._emitExchangeEvent('attempt-retry', {
+                            attempt: attempt + 1,
+                            nextAttempt: attempt + 2,
+                        });
                         continue;
                     }
                     throw e;
                 }
             }
+            this._emitExchangeEvent('attempt-failed', {
+                error: (lastErr && lastErr.message) || String(lastErr || 'Нет ответа'),
+            });
             throw lastErr || new Error('Нет ответа');
         });
     }
