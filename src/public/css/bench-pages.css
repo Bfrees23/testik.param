@@ -657,6 +657,42 @@
     user-select: none;
 }
 
+.wb-sensor-status {
+    margin: 0;
+    padding: 0.6rem 0.8rem;
+    border-radius: 0.5rem;
+    border: 1px solid transparent;
+    font-size: 1rem;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+.wb-sensor-status-idle {
+    color: #334155;
+    background: #eef2f7;
+    border-color: #cfd8e3;
+}
+
+.wb-sensor-status-notice {
+    color: #065f46;
+    background: #ecfdf5;
+    border-color: #34d399;
+}
+
+.wb-sensor-status-error {
+    color: #991b1b;
+    background: #fef2f2;
+    border-color: #f87171;
+}
+
+.wb-sensor-range {
+    display: block;
+    font-size: 1.4rem;
+    font-weight: 700;
+    line-height: 1.15;
+    color: #1f2937;
+}
+
 /* После завершения: полная «Параметризовать» недоступна; дозапись счётчика — да */
 .wb-param-section.wb-param-verify-mode #paramWriteAll {
     opacity: 0.55;
