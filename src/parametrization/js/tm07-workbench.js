@@ -2768,6 +2768,10 @@
         const found = new Map();
         /** Ожидаемое подтверждение смены адреса: targetAddr -> {fromAddr,toAddr,interfaceRaw}. */
         const pendingReaddressByTarget = new Map();
+        const pollNoReplyByAddr = new Map();
+        const pollMuteUntilByAddr = new Map();
+        const POLL_MUTE_AFTER_ERRORS = 3;
+        const POLL_MUTE_MS = 30000;
         /** Последнее валидное давление по адресу для стабилизации авто-декодирования формата float. */
         const lastPressureRawByAddr = new Map();
 
@@ -3927,6 +3931,32 @@
                 });
         }
 
+        function getPollTargetAddresses() {
+            const expected = [1, 2];
+            const discovered = expected.filter(function (addr) {
+                return found.has(addr);
+            });
+            return discovered.length > 0 ? discovered : expected;
+        }
+
+        function clearPollHealth(addr) {
+            pollNoReplyByAddr.delete(addr);
+            pollMuteUntilByAddr.delete(addr);
+        }
+
+        function markPollFailure(addr) {
+            const next = (pollNoReplyByAddr.get(addr) || 0) + 1;
+            pollNoReplyByAddr.set(addr, next);
+            if (next >= POLL_MUTE_AFTER_ERRORS) {
+                pollMuteUntilByAddr.set(addr, Date.now() + POLL_MUTE_MS);
+            }
+        }
+
+        function isPollMuted(addr) {
+            const until = pollMuteUntilByAddr.get(addr) || 0;
+            return until > Date.now();
+        }
+
         /** Пробный опрос адреса: сначала Interface (0x03/0x0002), затем тип датчика (0x000A). */
         async function probeAddress(addr) {
             if (!sensorDev) return { ok: false, error: 'порт не подключён' };
@@ -4105,6 +4135,11 @@
                 if (scanResults) scanResults.classList.remove('d-none');
                 paintScanBadges();
                 syncTargetsFromScan();
+                [1, 2].forEach(function (addr) {
+                    if (found.has(addr)) {
+                        clearPollHealth(addr);
+                    }
+                });
                 if (found.size === 0) {
                     let msg =
                         'Сканирование завершено: датчики не ответили на адресах 1–16 ' +
@@ -4317,10 +4352,27 @@
             try {
                 const ABS_ADDR = 1; // датчик абсолютного давления
                 const DIFF_ADDR = 2; // датчик перепада
-                const absLive = await readSensorLive(ABS_ADDR);
-                const diffLive = await readSensorLive(DIFF_ADDR);
+                const targets = getPollTargetAddresses();
+                const pollAbsEnabled = targets.indexOf(ABS_ADDR) >= 0 && !isPollMuted(ABS_ADDR);
+                const pollDiffEnabled = targets.indexOf(DIFF_ADDR) >= 0 && !isPollMuted(DIFF_ADDR);
+                const absLive = pollAbsEnabled ? await readSensorLive(ABS_ADDR) : null;
+                const diffLive = pollDiffEnabled ? await readSensorLive(DIFF_ADDR) : null;
                 const absVal = absLive ? absLive.pressureRaw : null;
                 const diffVal = diffLive ? diffLive.pressureRaw : null;
+                if (pollAbsEnabled) {
+                    if (absLive && (absLive.pressureRaw != null || absLive.adcPress != null || absLive.adcTerm != null)) {
+                        clearPollHealth(ABS_ADDR);
+                    } else {
+                        markPollFailure(ABS_ADDR);
+                    }
+                }
+                if (pollDiffEnabled) {
+                    if (diffLive && (diffLive.pressureRaw != null || diffLive.adcPress != null || diffLive.adcTerm != null)) {
+                        clearPollHealth(DIFF_ADDR);
+                    } else {
+                        markPollFailure(DIFF_ADDR);
+                    }
+                }
                 const unitKey = 'kPa';
                 const absCfg = getSensorCfg(1);
                 const diffCfg = getSensorCfg(2);
@@ -4332,7 +4384,13 @@
                     const u = PRESSURE_UNITS[unitKey] || PRESSURE_UNITS.kPa;
                     return (kPa * u.factor).toFixed(cfg.dfOrder) + ' ' + u.label;
                 };
-                const makeState = function (live, rawVal) {
+                const makeState = function (addr, enabled, live, rawVal) {
+                    if (!enabled && found.size > 0 && !found.has(addr)) {
+                        return { text: 'не найден', cls: 'text-bg-secondary' };
+                    }
+                    if (!enabled && isPollMuted(addr)) {
+                        return { text: 'нет ответа', cls: 'text-bg-danger' };
+                    }
                     if (!live || rawVal == null) return { text: 'нет данных', cls: 'text-bg-secondary' };
                     if (rawVal === Infinity || rawVal === -Infinity || live.rangeAlarm) {
                         return { text: 'вне диапазона', cls: 'text-bg-warning' };
@@ -4344,13 +4402,13 @@
                 };
                 if (pollAbs) pollAbs.textContent = fmt(absVal, absCfg);
                 if (pollAbsState) {
-                    const st = makeState(absLive, absVal);
+                    const st = makeState(ABS_ADDR, pollAbsEnabled, absLive, absVal);
                     pollAbsState.textContent = st.text;
                     pollAbsState.className = 'badge rounded-pill mt-1 ' + st.cls;
                 }
                 if (pollDiff) pollDiff.textContent = fmt(diffVal, diffCfg);
                 if (pollDiffState) {
-                    const st = makeState(diffLive, diffVal);
+                    const st = makeState(DIFF_ADDR, pollDiffEnabled, diffLive, diffVal);
                     pollDiffState.textContent = st.text;
                     pollDiffState.className = 'badge rounded-pill mt-1 ' + st.cls;
                 }
@@ -4382,7 +4440,14 @@
             }
             if (pollPanel) pollPanel.classList.remove('d-none');
             const periodMs = getPollIntervalMs();
-            setMsg('Живой опрос измерений MIDA15 (' + periodMs + ' мс)…');
+            const targets = getPollTargetAddresses();
+            setMsg(
+                'Живой опрос измерений MIDA15 (' +
+                    periodMs +
+                    ' мс, адреса: ' +
+                    targets.join(', ') +
+                    ')…'
+            );
             void pollOnce();
             if (pollTimer) clearInterval(pollTimer);
             pollTimer = setInterval(function () {
@@ -4626,6 +4691,8 @@
             }
             sensorBaud = getSelectedBaud();
             found.clear();
+            pollNoReplyByAddr.clear();
+            pollMuteUntilByAddr.clear();
             if (scanResults) scanResults.classList.add('d-none');
             if (scanBadges) scanBadges.innerHTML = '';
             setComStatus('нет связи', false);
