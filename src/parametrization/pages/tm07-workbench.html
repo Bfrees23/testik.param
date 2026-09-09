@@ -104,12 +104,15 @@
         </div>
 
         <!-- Пункт 2: настройка датчиков → QR → S/N корректора -->
-        <div class="card bench-card mb-4 border-warning border-opacity-50" id="wbStep2Card">
+        <div class="card bench-card mb-4 border-warning border-opacity-50 wb-step2-locked" id="wbStep2Card">
             <div class="card-header fw-semibold d-flex flex-wrap align-items-center gap-2">
                 <span><i class="bi bi-2-circle me-1"></i>Пункт 2 · Датчики и сборка</span>
                 <span id="wbSessionStageBadge" class="badge rounded-pill text-bg-secondary ms-auto">—</span>
             </div>
             <div class="card-body">
+                <div id="wbStep2LockBanner" class="alert alert-info py-2 px-3 mb-3 wb-step2-lock-banner" role="status">
+                    <i class="bi bi-lock me-1"></i>Пункт 2 будет доступен после открытия активной сессии заказа в пункте 1.
+                </div>
 
                 <div id="wbSensorConfigCard" class="mb-4 pb-4 border-bottom">
                     <h3 class="h6 fw-semibold mb-2"><i class="bi bi-sliders me-1"></i>1. Настройка датчиков</h3>
@@ -408,6 +411,40 @@
 
                         <div class="tab-pane fade show active" id="wbSensorVizPane" role="tabpanel">
                             <div id="wbSensorPollPanel" class="mt-1">
+                                <div class="card mb-2">
+                                    <div class="card-body py-2">
+                                        <div class="row g-2 align-items-end">
+                                            <div class="col-sm-4 col-md-3">
+                                                <label class="form-label small mb-1" for="wbSensorUnitTarget">Датчик</label>
+                                                <select class="form-select form-select-sm" id="wbSensorUnitTarget">
+                                                    <option value="1">Абсолютное давление (адрес 1)</option>
+                                                    <option value="2">Датчик перепада (адрес 2)</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-sm-4 col-md-3">
+                                                <label class="form-label small mb-1">Текущие единицы датчика</label>
+                                                <div class="form-control form-control-sm text-body-secondary" id="wbSensorUnitCurrent">—</div>
+                                            </div>
+                                            <div class="col-sm-4 col-md-3">
+                                                <label class="form-label small mb-1" for="wbSensorUnitSelect">Новые единицы</label>
+                                                <select class="form-select form-select-sm" id="wbSensorUnitSelect">
+                                                    <option value="1" selected>кПа</option>
+                                                    <option value="0">Па</option>
+                                                    <option value="2">МПа</option>
+                                                    <option value="3">bar</option>
+                                                    <option value="4">psi</option>
+                                                    <option value="5">кгс/см²</option>
+                                                    <option value="6">мм рт. ст.</option>
+                                                </select>
+                                            </div>
+                                            <div class="col-sm-auto">
+                                                <button type="button" class="btn btn-outline-primary btn-sm" id="wbSensorUnitApply">
+                                                    <i class="bi bi-check2 me-1"></i>Применить единицы
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                                 <div class="row g-3">
                                     <div class="col-md-6">
                                         <div class="card h-100">
@@ -415,6 +452,7 @@
                                                 <div class="fw-semibold mb-1">Абсолютное давление (адрес 1)</div>
                                                 <div class="display-4 fw-bold font-monospace" id="wbSensorPollAbs">—</div>
                                                 <div class="badge rounded-pill text-bg-secondary mt-1" id="wbSensorPollAbsState">нет данных</div>
+                                                <div class="small text-body-secondary mt-1" id="wbSensorPollAbsUnit">единицы: —</div>
                                             </div>
                                         </div>
                                     </div>
@@ -424,6 +462,7 @@
                                                 <div class="fw-semibold mb-1">Датчик перепада (адрес 2)</div>
                                                 <div class="display-4 fw-bold font-monospace" id="wbSensorPollDiff">—</div>
                                                 <div class="badge rounded-pill text-bg-secondary mt-1" id="wbSensorPollDiffState">нет данных</div>
+                                                <div class="small text-body-secondary mt-1" id="wbSensorPollDiffUnit">единицы: —</div>
                                             </div>
                                         </div>
                                     </div>
@@ -434,7 +473,7 @@
                                         <canvas id="wbSensorChart" height="220" style="width:100%;height:220px;"></canvas>
                                     </div>
                                 </div>
-                                <div class="card mt-2">
+                                <div class="card mt-2 d-none">
                                     <div class="card-body py-2">
                                         <div class="row g-2 align-items-end">
                                             <div class="col-sm-4 col-md-2">
@@ -460,7 +499,7 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="small text-body-secondary mt-2">Регистр: <span class="font-monospace">0x0002</span> · обновление раз в секунду</div>
+                                <div class="small text-body-secondary mt-2 d-none">Регистр: <span class="font-monospace">0x0002</span> · обновление раз в секунду</div>
                             </div>
                         </div>
                     </div>

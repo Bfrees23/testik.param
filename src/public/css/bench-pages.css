@@ -639,6 +639,24 @@
     pointer-events: none;
 }
 
+#wbStep2Card.wb-step2-locked {
+    position: relative;
+}
+
+#wbStep2Card.wb-step2-locked .wb-step2-lock-banner {
+    display: block;
+}
+
+#wbStep2Card:not(.wb-step2-locked) .wb-step2-lock-banner {
+    display: none;
+}
+
+#wbStep2Card.wb-step2-locked > .card-body > *:not(.wb-step2-lock-banner) {
+    opacity: 0.55;
+    pointer-events: none;
+    user-select: none;
+}
+
 /* После завершения: полная «Параметризовать» недоступна; дозапись счётчика — да */
 .wb-param-section.wb-param-verify-mode #paramWriteAll {
     opacity: 0.55;
