@@ -2702,6 +2702,7 @@
         const SCAN_TIMEOUT_MS = 420;
         const SCAN_FALLBACK_BAUDS = [19200, 9600, 14400, 28800, 4800, 2400, 1200];
         const POLL_INTERVAL_MS = 1000;
+        const MAX_SENSOR_PRESSURE_KPA = 1000000;
         const POLL_INTERVAL_MIN_MS = 200;
         const POLL_INTERVAL_MAX_MS = 10000;
         const SENSOR_USB_VID = 0x0403; // FTDI (как у КАО)
@@ -2990,6 +2991,10 @@
             if (vizAdcTerm) vizAdcTerm.textContent = m.adcTerm == null ? '—' : String(m.adcTerm);
             if (vizPressureRaw) vizPressureRaw.textContent = m.pressureRaw == null ? '—' : String(m.pressureRaw);
             if (vizPressureKpa) vizPressureKpa.textContent = m.pressureKpa == null ? '—' : String(m.pressureKpa);
+        }
+
+        function isPlausiblePressure(raw) {
+            return Number.isFinite(raw) && Math.abs(raw) <= MAX_SENSOR_PRESSURE_KPA;
         }
 
         async function switchSensorBaud(baud) {
@@ -3377,25 +3382,43 @@
         async function readSensorLive(addr) {
             if (!sensorDev) return null;
             sensorDev.address = addr;
+            let pressureRaw = null;
+            let adcPress = null;
+            let adcTerm = null;
+
+            // Базовый (наиболее совместимый) путь как в MIDA: чтение float32 с входного регистра 0x0002.
+            try {
+                const meas = await readInputBytes(SENSOR_MEAS_REG, 2, 1200);
+                const p = KorrektorDevice.parseFloat32LE(meas.subarray(0, 4));
+                if (isPlausiblePressure(p)) {
+                    pressureRaw = p;
+                }
+            } catch (_e) {}
+
+            // Расширенный блок visualizer: читаем ADC метрики и альтернативные варианты расположения pressure.
             try {
                 const input = await readInputBytes(SENSOR_INPUT_BLOCK_REG, 4, 1200);
-                const adcPress = i16LEFromBytes(input[0], input[1]);
-                const adcTerm = i16LEFromBytes(input[2], input[3]);
-                const pressureRaw = KorrektorDevice.parseFloat32LE(input.subarray(4, 8));
-                return {
-                    adcPress: adcPress,
-                    adcTerm: adcTerm,
-                    pressureRaw: pressureRaw
-                };
-            } catch (_e) {
-                try {
-                    const meas = await readInputBytes(SENSOR_MEAS_REG, 2, 1200);
-                    const pressureRaw = KorrektorDevice.parseFloat32LE(meas.subarray(0, 4));
-                    return { adcPress: null, adcTerm: null, pressureRaw: pressureRaw };
-                } catch (_e2) {
-                    return null;
+                adcPress = i16LEFromBytes(input[0], input[1]);
+                adcTerm = i16LEFromBytes(input[2], input[3]);
+                const pFromReg3 = KorrektorDevice.parseFloat32LE(input.subarray(4, 8));
+                const pFromReg2 = KorrektorDevice.parseFloat32LE(input.subarray(2, 6));
+                if (pressureRaw == null) {
+                    if (isPlausiblePressure(pFromReg3)) {
+                        pressureRaw = pFromReg3;
+                    } else if (isPlausiblePressure(pFromReg2)) {
+                        pressureRaw = pFromReg2;
+                    }
                 }
+            } catch (_e2) {}
+
+            if (pressureRaw == null && adcPress == null && adcTerm == null) {
+                return null;
             }
+            return {
+                adcPress: adcPress,
+                adcTerm: adcTerm,
+                pressureRaw: pressureRaw
+            };
         }
 
         /** Инициализировать график (canvas). */
