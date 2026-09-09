@@ -2849,6 +2849,10 @@
             setVizRawMetrics(null);
         }
 
+        function showPollPanel() {
+            if (pollPanel) pollPanel.classList.remove('d-none');
+        }
+
         function isConnected() {
             return !!(sensorDev && sensorDev.port);
         }
@@ -4608,12 +4612,33 @@
             ensureSensorTargetOption(targetAddr);
             if (cfgTarget) cfgTarget.value = String(targetAddr);
             if (cfgModbusAddr) cfgModbusAddr.value = String(targetAddr);
+            showPollPanel();
+            await preloadPollMeta([targetAddr]);
             const live = await readSensorLive(targetAddr);
             const pressureText = formatWizardPressure(targetAddr, live ? live.pressureRaw : null);
             setMsg('Мастер ' + targetAddr + ' завершён: ' + name + ' закреплён на адресе ' + targetAddr + ', давление: ' + pressureText + '.');
             plog('Датчик: мастер ' + targetAddr + ' подтверждён после перезапуска, адрес ' + targetAddr + '.');
-            if (targetAddr === 1 && pollAbs) pollAbs.textContent = pressureText;
-            if (targetAddr === 2 && pollDiff) pollDiff.textContent = pressureText;
+            const unitText = live && live.resultUnit != null ? 'единицы: ' + formatSensorUnitLabel(live.resultUnit) : 'единицы: —';
+            if (targetAddr === 1) {
+                if (pollAbs) pollAbs.textContent = pressureText;
+                if (pollAbsUnit) pollAbsUnit.textContent = unitText;
+                if (pollAbsState) {
+                    pollAbsState.textContent = live && live.rangeAlarm ? 'вне диапазона' : 'норма';
+                    pollAbsState.className =
+                        'badge rounded-pill mt-1 ' +
+                        (live && live.rangeAlarm ? 'text-bg-warning' : 'text-bg-success');
+                }
+            }
+            if (targetAddr === 2) {
+                if (pollDiff) pollDiff.textContent = pressureText;
+                if (pollDiffUnit) pollDiffUnit.textContent = unitText;
+                if (pollDiffState) {
+                    pollDiffState.textContent = live && live.rangeAlarm ? 'вне диапазона' : 'норма';
+                    pollDiffState.className =
+                        'badge rounded-pill mt-1 ' +
+                        (live && live.rangeAlarm ? 'text-bg-warning' : 'text-bg-success');
+                }
+            }
         }
 
         function uniqueWizardProfiles(list) {
@@ -4987,7 +5012,7 @@
                 setMsg('Сначала подключите COM-порт.', true);
                 return;
             }
-            if (pollPanel) pollPanel.classList.remove('d-none');
+            showPollPanel();
             const periodMs = getPollIntervalMs();
             const targets = getPollTargetAddresses();
             if (pollTimer) {
