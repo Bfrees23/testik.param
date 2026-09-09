@@ -2760,6 +2760,7 @@
         let sensorBaud = 19200;
         let sensorLinkProfile = SENSOR_LINK_PROFILES[0];
         let sensorSerialProfile = SENSOR_SERIAL_PROFILES[0];
+        let sensorTraceMuted = false;
         let pollTimer = null;
         let pollBusy = false;
         let scanBusy = false;
@@ -2943,11 +2944,25 @@
 
         function logSensorExchangeToConsole(line, details) {
             if (typeof console === 'undefined' || typeof console.log !== 'function') return;
+            if (sensorTraceMuted) return;
             const prefix = '[WB:SENSOR]';
             if (details !== undefined) {
                 console.log(prefix + ' ' + line, details);
             } else {
                 console.log(prefix + ' ' + line);
+            }
+        }
+
+        async function runWithMutedSensorTrace(label, action) {
+            const title = label || 'операция';
+            plog('Датчик: ' + title + ' — подробный TRACE временно скрыт.');
+            const prevMuted = sensorTraceMuted;
+            sensorTraceMuted = true;
+            try {
+                return await action();
+            } finally {
+                sensorTraceMuted = prevMuted;
+                plog('Датчик: ' + title + ' — подробный TRACE снова включён.');
             }
         }
 
@@ -3200,13 +3215,13 @@
             return u16BEFromBytes(b[0], b[1]);
         }
 
-        async function writeHoldingU16(reg, value) {
+        async function writeHoldingU16(reg, value, timeoutMs) {
             if (!sensorDev) throw new Error('порт не подключён');
             const v = value & 0xffff;
             if (typeof sensorDev.writeSingleRegister !== 'function') {
                 throw new Error('Требуется поддержка Modbus 0x06 (writeSingleRegister).');
             }
-            await sensorDev.writeSingleRegister(reg, v, 2000, 0);
+            await sensorDev.writeSingleRegister(reg, v, timeoutMs || 2000, 0);
         }
 
         async function writeHoldingFp32LE(startReg, value) {
@@ -4227,49 +4242,81 @@
             if (targetAddr === 2 && pollDiff) pollDiff.textContent = pressureText;
         }
 
-        function buildWizardProbeSweep(preferInterfaceRaw) {
+        function uniqueWizardProfiles(list) {
+            const seen = new Set();
+            return (list || []).filter(function (p) {
+                if (!p || !p.key) return false;
+                if (seen.has(p.key)) return false;
+                seen.add(p.key);
+                return true;
+            });
+        }
+
+        function uniqueWizardBauds(list) {
+            const seen = new Set();
+            return (list || []).filter(function (b) {
+                const n = Number(b);
+                if (!Number.isFinite(n)) return false;
+                if (seen.has(n)) return false;
+                seen.add(n);
+                return true;
+            });
+        }
+
+        function buildWizardProbeSweep(preferInterfaceRaw, level) {
             const initialProfile = profileByKey(sensorLinkProfile && sensorLinkProfile.key);
             const activeSerial = serialProfileByKey(sensorSerialProfile && sensorSerialProfile.key);
             const hasInterfaceRaw = Number.isFinite(preferInterfaceRaw);
             const iface = hasInterfaceRaw ? decodeInterface(preferInterfaceRaw) : null;
             const preferBaud = (iface && INTERFACE_CODE_TO_BAUD[iface.baudCode]) || sensorBaud || getSelectedBaud();
             const preferSerial = iface ? recommendedSerialProfileForParity(iface.parity) : activeSerial;
+            const mode = String(level || 'quick');
+            if (mode === 'full') {
+                return {
+                    scanProfiles: profileOrder(initialProfile),
+                    scanSerialProfiles: serialProfileOrder(preferSerial),
+                    scanBauds: [preferBaud].concat(
+                        SCAN_FALLBACK_BAUDS.filter(function (b) {
+                            return b !== preferBaud;
+                        })
+                    )
+                };
+            }
+            const altLink = initialProfile.key === 'rts-high' ? profileByKey('rts-low') : profileByKey('rts-high');
             return {
-                scanProfiles: profileOrder(initialProfile),
-                scanSerialProfiles: serialProfileOrder(preferSerial),
-                scanBauds: [preferBaud].concat(
-                    SCAN_FALLBACK_BAUDS.filter(function (b) {
-                        return b !== preferBaud;
-                    })
-                )
+                scanProfiles: uniqueWizardProfiles([initialProfile, altLink]),
+                scanSerialProfiles: uniqueWizardProfiles([preferSerial, activeSerial, serialProfileByKey('8n2')]),
+                scanBauds: uniqueWizardBauds([preferBaud, sensorBaud, getSelectedBaud(), 19200, 9600, 14400]).slice(0, 4)
             };
         }
 
-        async function probeWizardTargetBySweep(targetAddr, preferInterfaceRaw) {
-            const sweep = buildWizardProbeSweep(preferInterfaceRaw);
-            for (let p = 0; p < sweep.scanProfiles.length; p += 1) {
-                const linkProfile = sweep.scanProfiles[p];
-                const switchedLink = await switchSensorLinkProfile(linkProfile);
-                if (!switchedLink) continue;
-                for (let s = 0; s < sweep.scanSerialProfiles.length; s += 1) {
-                    const serialProfile = sweep.scanSerialProfiles[s];
-                    for (let b = 0; b < sweep.scanBauds.length; b += 1) {
-                        const baud = sweep.scanBauds[b];
-                        const switchedSerial = await switchSensorSerialProfile(serialProfile, baud);
-                        if (!switchedSerial) continue;
-                        const probe = await probeAddress(targetAddr, true);
-                        if (probe && probe.ok) {
-                            return {
-                                probe: probe,
-                                linkProfile: linkProfile,
-                                serialProfile: serialProfile,
-                                baud: baud
-                            };
+        async function probeWizardTargetBySweep(targetAddr, preferInterfaceRaw, level) {
+            const sweep = buildWizardProbeSweep(preferInterfaceRaw, level);
+            return runWithMutedSensorTrace('проверка адреса после записи', async function () {
+                for (let p = 0; p < sweep.scanProfiles.length; p += 1) {
+                    const linkProfile = sweep.scanProfiles[p];
+                    const switchedLink = await switchSensorLinkProfile(linkProfile);
+                    if (!switchedLink) continue;
+                    for (let s = 0; s < sweep.scanSerialProfiles.length; s += 1) {
+                        const serialProfile = sweep.scanSerialProfiles[s];
+                        for (let b = 0; b < sweep.scanBauds.length; b += 1) {
+                            const baud = sweep.scanBauds[b];
+                            const switchedSerial = await switchSensorSerialProfile(serialProfile, baud);
+                            if (!switchedSerial) continue;
+                            const probe = await probeAddress(targetAddr, true);
+                            if (probe && probe.ok) {
+                                return {
+                                    probe: probe,
+                                    linkProfile: linkProfile,
+                                    serialProfile: serialProfile,
+                                    baud: baud
+                                };
+                            }
                         }
                     }
                 }
-            }
-            return null;
+                return null;
+            });
         }
 
         async function waitWizardReaddressConfirm(targetAddr, name, timeoutMs, options) {
@@ -4292,7 +4339,7 @@
             if (opts.deepScan === false) {
                 return false;
             }
-            const deepProbe = await probeWizardTargetBySweep(targetAddr, preferInterfaceRaw);
+            const deepProbe = await probeWizardTargetBySweep(targetAddr, preferInterfaceRaw, opts.scanLevel || 'quick');
             if (deepProbe && deepProbe.probe && deepProbe.probe.ok) {
                 plog(
                     'Датчик: подтверждение адреса ' +
@@ -4314,33 +4361,35 @@
         async function broadcastReaddressWizard(targetAddr, name) {
             if (!sensorDev) throw new Error('порт не подключён');
             const target = buildWizardTargetInterface(targetAddr);
-            const sweep = buildWizardProbeSweep(NaN);
+            const sweep = buildWizardProbeSweep(NaN, 'quick');
             const scanBauds = sweep.scanBauds;
             const scanProfiles = sweep.scanProfiles;
             const scanSerialProfiles = sweep.scanSerialProfiles;
             let lastErr = '';
             let sentCount = 0;
             setMsg('Мастер ' + targetAddr + ': шаг 2/6 — широковещательная запись Interface (адрес 0, без поиска адреса)…');
-            for (let p = 0; p < scanProfiles.length; p += 1) {
-                const linkProfile = scanProfiles[p];
-                const switchedLink = await switchSensorLinkProfile(linkProfile);
-                if (!switchedLink) continue;
-                for (let s = 0; s < scanSerialProfiles.length; s += 1) {
-                    const serialProfile = scanSerialProfiles[s];
-                    for (let b = 0; b < scanBauds.length; b += 1) {
-                        const baud = scanBauds[b];
-                        const switchedSerial = await switchSensorSerialProfile(serialProfile, baud);
-                        if (!switchedSerial) continue;
-                        try {
-                            sensorDev.address = 0;
-                            await writeHoldingU16(SENSOR_INTERFACE_REG, target.interfaceRaw);
-                            sentCount += 1;
-                        } catch (e) {
-                            lastErr = errText(e);
+            await runWithMutedSensorTrace('быстрая широковещательная запись Interface', async function () {
+                for (let p = 0; p < scanProfiles.length; p += 1) {
+                    const linkProfile = scanProfiles[p];
+                    const switchedLink = await switchSensorLinkProfile(linkProfile);
+                    if (!switchedLink) continue;
+                    for (let s = 0; s < scanSerialProfiles.length; s += 1) {
+                        const serialProfile = scanSerialProfiles[s];
+                        for (let b = 0; b < scanBauds.length; b += 1) {
+                            const baud = scanBauds[b];
+                            const switchedSerial = await switchSensorSerialProfile(serialProfile, baud);
+                            if (!switchedSerial) continue;
+                            try {
+                                sensorDev.address = 0;
+                                await writeHoldingU16(SENSOR_INTERFACE_REG, target.interfaceRaw, 120);
+                                sentCount += 1;
+                            } catch (e) {
+                                lastErr = errText(e);
+                            }
                         }
                     }
                 }
-            }
+            });
             if (sentCount <= 0) {
                 setMsg('Широковещательная запись Interface не выполнена: ' + (lastErr || 'нет ответа на всех профилях.'), true);
                 return false;
@@ -4372,9 +4421,10 @@
                 return true;
             }
             setMsg('Мастер ' + targetAddr + ': ожидаю перезапуск питания, проверяю ответ на адресе ' + targetAddr + '…');
-            const confirmed = await waitWizardReaddressConfirm(targetAddr, name, 30000, {
+            const confirmed = await waitWizardReaddressConfirm(targetAddr, name, 12000, {
                 preferInterfaceRaw: target.interfaceRaw,
-                deepScan: true
+                deepScan: true,
+                scanLevel: 'quick'
             });
             if (!confirmed) {
                 setMsg(
@@ -4411,7 +4461,8 @@
                     setMsg('Мастер ' + addr + ': шаг 2/6 — проверка после перезапуска питания…');
                     const confirmed = await waitWizardReaddressConfirm(addr, name, 12000, {
                         preferInterfaceRaw: pending.interfaceRaw,
-                        deepScan: true
+                        deepScan: true,
+                        scanLevel: 'full'
                     });
                     if (!confirmed) {
                         let oldProbe = null;
