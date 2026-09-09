@@ -4785,7 +4785,7 @@
             const periodMs = getPollIntervalMs();
             const targets = getPollTargetAddresses();
             setMsg(
-                'Живой опрос измерений MIDA15 (' +
+                'Опрос показателей MIDA15 (' +
                     periodMs +
                     ' мс, адреса: ' +
                     targets.join(', ') +
@@ -4948,6 +4948,7 @@
         const disconnectBtn = $('wbSensorComDisconnect');
         const scanBtn = $('wbSensorScan');
         const pollBtn = $('wbSensorPoll');
+        const pollStopBtn = $('wbSensorPollStop');
 
         /** Подключить USB-адаптер датчика. filterKao=true — только PID 0x7523, иначе любой USB. */
         async function connectSensorUsb(filterKao) {
@@ -5087,6 +5088,12 @@
         if (pollBtn) {
             pollBtn.addEventListener('click', function () {
                 startPoll();
+            });
+        }
+        if (pollStopBtn) {
+            pollStopBtn.addEventListener('click', function () {
+                stopPoll();
+                setMsg('Опрос показателей остановлен.');
             });
         }
 
