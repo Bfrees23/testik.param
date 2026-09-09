@@ -2654,18 +2654,20 @@
         const SENSOR_MEAS_REG = 0x0002; // входной регистр измерений
         const SCAN_ADDR_MIN = 1;
         const SCAN_ADDR_MAX = 16;
-        const SCAN_TIMEOUT_MS = 400;
+        const SCAN_TIMEOUT_MS = 650;
+        const SCAN_FALLBACK_BAUDS = [19200, 9600, 38400];
         const POLL_INTERVAL_MS = 1000;
         const SENSOR_USB_VID = 0x0403; // FTDI (как у КАО)
         const SENSOR_USB_PID = 0x7523; // адаптер датчика
 
         /** @type {KorrektorDevice|null} */
         let sensorDev = null;
+        let sensorBaud = 19200;
         let pollTimer = null;
         let pollBusy = false;
         let scanBusy = false;
         let autoBusy = false;
-        /** Найденные адреса: addr -> { type:number, typeHex:string } */
+        /** Найденные адреса: addr -> { type:number, typeHex:string, via:string } */
         const found = new Map();
 
         function setMsg(msg, isError) {
@@ -2706,6 +2708,35 @@
 
         function hex2(n) {
             return '0x' + (n & 0xffff).toString(16).toUpperCase().padStart(4, '0');
+        }
+
+        function getSelectedBaud() {
+            const v = parseInt(($('wbSensorComBaud') && $('wbSensorComBaud').value) || '19200', 10);
+            return Number.isFinite(v) && v > 0 ? v : 19200;
+        }
+
+        function setSelectedBaud(baud) {
+            const sel = $('wbSensorComBaud');
+            if (sel) sel.value = String(baud);
+        }
+
+        function errText(e) {
+            return (e && e.message) || String(e || '');
+        }
+
+        async function switchSensorBaud(baud) {
+            if (!sensorDev) return false;
+            if (sensorBaud === baud) return true;
+            try {
+                await sensorDev.switchBaudRate(baud);
+                sensorBaud = baud;
+                setSelectedBaud(baud);
+                plog('Датчик: скорость порта переключена на ' + baud + ' бод.');
+                return true;
+            } catch (e) {
+                plog('Датчик: ошибка переключения скорости на ' + baud + ' бод — ' + errText(e));
+                return false;
+            }
         }
 
         /** Множители пересчёта давления в кПа (как в Mida15Tool). */
@@ -2862,24 +2893,80 @@
                 const span = document.createElement('span');
                 span.className = 'badge rounded-pill text-bg-success';
                 span.textContent = 'адрес ' + addr + ' · тип ' + info.typeHex;
-                span.title = 'Тип/версия карты датчика (0x000A) = ' + info.type;
+                span.title =
+                    'Тип/версия карты датчика (0x000A) = ' +
+                    info.type +
+                    (info.via ? '; ответ через ' + info.via : '');
                 scanBadges.appendChild(span);
             });
         }
 
-        /** Прочитать регистр 0x000A на конкретном адресе. */
+        /** Пробный опрос адреса: 0x03/0x000A, затем 0x04/0x000A (если нужно). */
         async function probeAddress(addr) {
-            if (!sensorDev) return null;
+            if (!sensorDev) return { ok: false, error: 'порт не подключён' };
             sensorDev.address = addr;
-            try {
-                const resp = await sensorDev.readHolding(SENSOR_TYPE_REG, 1, SCAN_TIMEOUT_MS);
-                const b = KorrektorDevice.modbusDataBytes(resp);
-                if (b.length < 2) return null;
-                const type = b[0] | (b[1] << 8);
-                return { addr: addr, type: type, typeHex: hex2(type) };
-            } catch (_e) {
-                return null;
+            const probes = [
+                {
+                    via: '0x03/0x000A',
+                    run: function () {
+                        return sensorDev.readHolding(SENSOR_TYPE_REG, 1, SCAN_TIMEOUT_MS, 0);
+                    }
+                },
+                {
+                    via: '0x04/0x000A',
+                    run: function () {
+                        return sensorDev.readInputRegisters(SENSOR_TYPE_REG, 1, SCAN_TIMEOUT_MS, 0);
+                    }
+                }
+            ];
+            let lastErr = 'нет ответа';
+            for (let i = 0; i < probes.length; i += 1) {
+                const p = probes[i];
+                try {
+                    const resp = await p.run();
+                    const b = KorrektorDevice.modbusDataBytes(resp);
+                    if (b.length < 2) {
+                        lastErr = p.via + ': короткий ответ';
+                        continue;
+                    }
+                    const type = b[0] | (b[1] << 8);
+                    return { ok: true, data: { addr: addr, type: type, typeHex: hex2(type), via: p.via } };
+                } catch (e) {
+                    lastErr = p.via + ': ' + errText(e);
+                }
             }
+            return { ok: false, error: lastErr };
+        }
+
+        async function scanPass(baud) {
+            found.clear();
+            let noReply = 0;
+            let firstError = '';
+            for (let addr = SCAN_ADDR_MIN; addr <= SCAN_ADDR_MAX; addr += 1) {
+                const r = await probeAddress(addr);
+                if (r && r.ok) {
+                    found.set(addr, r.data);
+                    plog(
+                        'Датчик: адрес ' +
+                            addr +
+                            ' ответил, тип ' +
+                            r.data.typeHex +
+                            ' (через ' +
+                            r.data.via +
+                            ', ' +
+                            baud +
+                            ' бод).'
+                    );
+                    continue;
+                }
+                const msg = (r && r.error) || 'нет ответа';
+                if (/нет ответа/i.test(msg)) {
+                    noReply += 1;
+                } else if (!firstError) {
+                    firstError = 'адрес ' + addr + ': ' + msg;
+                }
+            }
+            return { noReply: noReply, firstError: firstError };
         }
 
         async function doScan() {
@@ -2889,22 +2976,52 @@
                 return;
             }
             scanBusy = true;
-            found.clear();
-            setMsg('Сканирование адресов 1–16…');
+            const initialBaud = sensorBaud || getSelectedBaud();
+            const scanBauds = [initialBaud].concat(
+                SCAN_FALLBACK_BAUDS.filter(function (b) {
+                    return b !== initialBaud;
+                })
+            );
+            let stats = { noReply: 0, firstError: '' };
+            let successBaud = null;
+            setMsg('Сканирование адресов 1–16 (' + initialBaud + ' бод)…');
             try {
-                for (let addr = SCAN_ADDR_MIN; addr <= SCAN_ADDR_MAX; addr += 1) {
-                    const r = await probeAddress(addr);
-                    if (r) {
-                        found.set(addr, r);
-                        plog('Датчик: адрес ' + addr + ' ответил, тип ' + r.typeHex + ' (0x000A).');
+                for (let i = 0; i < scanBauds.length; i += 1) {
+                    const baud = scanBauds[i];
+                    if (i > 0) {
+                        setMsg('Нет ответа на ' + sensorBaud + ' бод, пробую ' + baud + ' бод…');
+                        const switched = await switchSensorBaud(baud);
+                        if (!switched) {
+                            continue;
+                        }
                     }
+                    stats = await scanPass(baud);
+                    if (found.size > 0) {
+                        successBaud = baud;
+                        break;
+                    }
+                }
+                if (found.size === 0 && sensorBaud !== initialBaud) {
+                    await switchSensorBaud(initialBaud);
                 }
                 if (scanResults) scanResults.classList.remove('d-none');
                 paintScanBadges();
                 if (found.size === 0) {
-                    setMsg('Сканирование завершено: устройства не найдены (адреса 1–16).', true);
+                    let msg =
+                        'Сканирование завершено: датчики не ответили на адресах 1–16 ' +
+                        '(проверены 19200/9600/38400 бод).';
+                    if (stats.firstError) {
+                        msg += ' ' + stats.firstError;
+                    } else if (stats.noReply > 0) {
+                        msg += ' Проверьте питание датчика, линию A/B и полярность RS485.';
+                    }
+                    setMsg(msg, true);
                 } else {
-                    setMsg('Сканирование завершено: найдено устройств — ' + found.size + '.');
+                    setMsg(
+                        'Сканирование завершено: найдено устройств — ' +
+                            found.size +
+                            (successBaud ? ' (скорость ' + successBaud + ' бод).' : '.')
+                    );
                 }
             } finally {
                 scanBusy = false;
@@ -3153,8 +3270,19 @@
 
         /** Подключить USB-адаптер датчика. filterKao=true — только PID 0x7523, иначе любой USB. */
         async function connectSensorUsb(filterKao) {
+            const baud = getSelectedBaud();
             if (isConnected()) {
-                setMsg('USB-адаптер уже подключён.');
+                if (sensorBaud !== baud) {
+                    setMsg('USB-адаптер уже подключён, меняю скорость на ' + baud + ' бод…');
+                    const switched = await switchSensorBaud(baud);
+                    if (switched) {
+                        setMsg('Скорость датчика переключена на ' + baud + ' бод.');
+                    } else {
+                        setMsg('Не удалось переключить скорость на ' + baud + ' бод.', true);
+                    }
+                    return;
+                }
+                setMsg('USB-адаптер уже подключён (' + sensorBaud + ' бод).');
                 return;
             }
             const K = window.KorrektorDevice;
@@ -3162,7 +3290,6 @@
                 setMsg('Модуль KorrektorDevice не загружен.', true);
                 return;
             }
-            const baud = parseInt(($('wbSensorComBaud') && $('wbSensorComBaud').value) || '19200', 10);
             const opts = { baudRate: baud, rs485Rts: true };
             if (filterKao) {
                 opts.filters = [{ usbVendorId: SENSOR_USB_VID, usbProductId: SENSOR_USB_PID }];
@@ -3175,6 +3302,7 @@
                     await d.connect(opts);
                 }
                 sensorDev = d;
+                sensorBaud = baud;
                 setComStatus('подключено', true);
                 setMsg('USB-адаптер датчика подключён. Нажмите «Сканировать адреса».');
                 plog('Датчик: USB-адаптер подключён (' + baud + ' бод).');
@@ -3211,6 +3339,7 @@
                     } catch (_e) {}
                     sensorDev = null;
                 }
+                sensorBaud = getSelectedBaud();
                 found.clear();
                 if (scanResults) scanResults.classList.add('d-none');
                 if (scanBadges) scanBadges.innerHTML = '';

@@ -608,15 +608,15 @@ class KorrektorDevice {
         return true;
     }
 
-    async readHolding(startReg, regCount, timeoutMs = 2000) {
+    async readHolding(startReg, regCount, timeoutMs = 2000, retries = 1) {
         const p = [(startReg >> 8) & 0xff, startReg & 0xff, (regCount >> 8) & 0xff, regCount & 0xff];
-        return this.sendFrame(this.buildFrame(0x03, p), timeoutMs);
+        return this.sendFrame(this.buildFrame(0x03, p), timeoutMs, retries);
     }
 
     /** 0x04 — по протоколу идентично 0x03 (чтение входных регистров). */
-    async readInputRegisters(startReg, regCount) {
+    async readInputRegisters(startReg, regCount, timeoutMs = 2000, retries = 1) {
         const p = [(startReg >> 8) & 0xff, startReg & 0xff, (regCount >> 8) & 0xff, regCount & 0xff];
-        return this.sendFrame(this.buildFrame(0x04, p));
+        return this.sendFrame(this.buildFrame(0x04, p), timeoutMs, retries);
     }
 
     /**
