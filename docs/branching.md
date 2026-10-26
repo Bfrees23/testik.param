@@ -9,8 +9,26 @@
 | `dev` | Тестовая ветка: новые идеи, эксперименты, отладка. | Вся текущая разработка |
 | `feature/*` | Необязательно: одна крупная идея отдельно от `dev`. | Мержится в `dev` |
 
-Снимок прежней ветки `main` (коммит `25438d9`) пока сохранён в `origin/main`
-как архив — см. раздел «Что осталось сделать в GitHub».
+## Удалённые репозитории
+
+| Remote | URL | Роль |
+|--------|-----|------|
+| `origin` | `https://gitverse.ru/Bfrees/parametru.git` | Основной репозиторий (GitVerse) |
+| `github` | `https://github.com/Bfrees23/testik.param.git` | Зеркало, по желанию |
+
+```bash
+git push origin dev     # GitVerse (origin)
+git push github dev     # зеркало GitHub, если нужно синхронизировать
+```
+
+Авторизация на GitVerse — personal access token, сохранённый в Windows
+Credential Manager (Git Credential Manager). Логин `Bfrees`, токен — в поле
+пароля. SSH-ключ `~/.ssh/id_ed25519` подготовлен, но в аккаунте GitVerse пока
+не зарегистрирован.
+
+Снимок прежней ветки `main` (коммит `25438d9`) остался в репозитории GitHub
+(`origin/main` → теперь `github/main`) как архив — см. раздел «Что осталось
+сделать вручную».
 
 ## Повседневная работа (в dev)
 
@@ -42,7 +60,7 @@ git merge --no-ff feature/moya-ideya
 ## Выпуск в prod
 
 1. Убедиться, что `dev` протестирован на стенде и CI зелёный.
-2. Смержить `dev` в `prod` (локально или через Pull Request на GitHub):
+2. Смержить `dev` в `prod` (локально или через Pull Request на GitVerse):
 
 ```bash
 git switch prod
@@ -80,18 +98,23 @@ git push
 в эти же ветки: проверка JS-зеркал, критичных инвариантов, затем docker-стек и
 API smoke-тесты из `selenium-bot`.
 
-## Что осталось сделать в GitHub (один раз, вручную)
+## Что осталось сделать вручную
 
-1. **Default branch → `dev`**: Settings → Branches → Default branch → `dev`.
-   Так новые PR и `git clone` будут сразу нацелены на рабочую ветку.
-2. **Защитить `prod`** (по желанию): Settings → Branches → Add branch protection
-   rule для `prod`, включить «Require a pull request before merging».
-3. **Удалить архивный `main`**, когда убедитесь, что `prod` на месте:
+1. **GitVerse, default branch → `dev`**: профиль репозитория → Settings →
+   Default branch. Так новые PR и `git clone` будут сразу нацелены на рабочую ветку.
+2. **GitVerse, удалить стартовый `master`** (`df27e44` «Initial commit», история
+   не связана с проектом), когда `dev` станет основной:
 
 ```bash
-git push origin --delete main
-git branch -d main          # если локальная main ещё осталась
+git push origin --delete master
 ```
 
-Старые ветки `master` (локально и в origin) — легаси, можно удалить тем же
-способом: `git push origin --delete master`.
+3. **GitVerse, защитить `prod`** (по желанию): Settings → Branch protection для
+   `prod`, включить «Require a pull request before merging».
+4. **GitHub (зеркало)**: переключить default branch на `dev` и удалить архивные
+   `main` и `master`, когда убедитесь, что `prod` на месте:
+
+```bash
+git push github --delete main
+git push github --delete master
+```
